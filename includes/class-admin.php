@@ -11,6 +11,7 @@ class GMS_Admin {
     public function __construct() {
         add_action('admin_menu', array($this, 'addMenuPages'));
         add_action('admin_init', array($this, 'registerSettings'));
+        add_action('admin_init', array($this, 'ensureAgreementTemplateDefault'));
         add_action('admin_post_gms_save_template', array($this, 'saveTemplate'));
     }
     
@@ -68,6 +69,14 @@ class GMS_Admin {
         register_setting('gms_settings', 'gms_voipms_did');
         register_setting('gms_settings', 'gms_company_name');
         register_setting('gms_settings', 'gms_company_logo');
+    }
+
+    public function ensureAgreementTemplateDefault() {
+        $template = get_option('gms_agreement_template', '');
+
+        if (!is_string($template) || trim($template) === '') {
+            update_option('gms_agreement_template', $this->getDefaultAgreementTemplate());
+        }
     }
     
     public function templatesPage() {
