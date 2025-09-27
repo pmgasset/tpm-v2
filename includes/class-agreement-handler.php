@@ -3,11 +3,11 @@
  * Agreement Handler with PDF Generation
  * File: /wp-content/plugins/guest-management-system/includes/class-agreement-handler.php
  * 
- * Handles agreement submission and PDF generation using mPDF
+ * Handles agreement submission and PDF generation using TCPDF
  */
 
-// Require mPDF library
-require_once plugin_dir_path(__FILE__) . '../vendor/autoload.php';
+// Require TCPDF library
+require_once plugin_dir_path(__FILE__) . '../lib/tcpdf/tcpdf.php';
 
 class GMS_Agreement_Handler {
     
@@ -41,6 +41,12 @@ class GMS_Agreement_Handler {
         $ip_address = $this->getUserIP();
         $user_agent = sanitize_text_field($_SERVER['HTTP_USER_AGENT']);
         
+        $agreement_template = $this->getAgreementTemplate();
+
+        if ($agreement_template === '') {
+            wp_send_json_error(__('The agreement template is not configured. Please contact the property manager.', 'gms'));
+        }
+
         // Save agreement to database
         $agreements_table = $wpdb->prefix . 'gms_guest_agreements';
         $insert = $wpdb->insert(
@@ -48,7 +54,7 @@ class GMS_Agreement_Handler {
             array(
                 'reservation_id' => $reservation_id,
                 'guest_id' => $reservation['guest_id'],
-                'agreement_text' => get_option('gms_agreement_template'),
+                'agreement_text' => $agreement_template,
                 'signature_data' => $signature_data,
                 'ip_address' => $ip_address,
                 'user_agent' => $user_agent,
@@ -65,7 +71,7 @@ class GMS_Agreement_Handler {
         $agreement_id = $wpdb->insert_id;
         
         // Generate PDF
-        $pdf_result = $this->generatePDF($reservation, $signature_data, $ip_address, $user_agent);
+        $pdf_result = $this->generatePDF($reservation, $signature_data, $ip_address, $user_agent, $agreement_template);
         
         if (is_wp_error($pdf_result)) {
             wp_send_json_error($pdf_result->get_error_message());
@@ -89,23 +95,29 @@ class GMS_Agreement_Handler {
         ));
     }
     
-    private function generatePDF($reservation, $signature_data, $ip_address, $user_agent) {
+    private function generatePDF($reservation, $signature_data, $ip_address, $user_agent, $agreement_template) {
         try {
-            // Initialize mPDF
-            $mpdf = new \Mpdf\Mpdf([
-                'mode' => 'utf-8',
-                'format' => 'Letter',
-                'margin_left' => 15,
-                'margin_right' => 15,
-                'margin_top' => 20,
-                'margin_bottom' => 20,
-                'margin_header' => 10,
-                'margin_footer' => 10
-            ]);
-            
-            // Get agreement template
-            $agreement_template = get_option('gms_agreement_template');
-            
+            if ($agreement_template === '') {
+                return new WP_Error(
+                    'missing_agreement_template',
+                    __('The agreement template is not configured. Please contact the property manager.', 'gms')
+                );
+            }
+
+            // Initialize TCPDF
+            $pdf = new \TCPDF('P', 'mm', 'LETTER', true, 'UTF-8', false);
+            $pdf->SetCreator('Guest Management System');
+            $pdf->SetAuthor(get_option('gms_company_name', 'Property Management'));
+            $pdf->SetTitle(__('Guest Agreement', 'gms'));
+            $pdf->SetMargins(15, 20, 15);
+            $pdf->SetHeaderMargin(0);
+            $pdf->SetFooterMargin(0);
+            $pdf->setPrintHeader(false);
+            $pdf->setPrintFooter(false);
+            $pdf->SetAutoPageBreak(true, 20);
+            $pdf->AddPage();
+            $pdf->SetFont('helvetica', '', 11);
+
             // Replace placeholders with actual data
             $data = array(
                 'guest_name' => $reservation['guest_name'],
@@ -123,12 +135,12 @@ class GMS_Agreement_Handler {
             foreach ($data as $key => $value) {
                 $agreement_template = str_replace('{' . $key . '}', $value, $agreement_template);
             }
-            
+
             // Build HTML for PDF
             $html = $this->buildPDFHTML($agreement_template, $reservation, $signature_data, $ip_address, $user_agent);
-            
+
             // Write HTML to PDF
-            $mpdf->WriteHTML($html);
+            $pdf->writeHTML($html, true, false, true, false, '');
             
             // Generate filename: booking-reference.pdf
             $filename = sanitize_file_name($reservation['booking_reference']) . '.pdf';
@@ -143,7 +155,7 @@ class GMS_Agreement_Handler {
             }
             
             $pdf_path = $pdf_dir . $filename;
-            $mpdf->Output($pdf_path, \Mpdf\Output\Destination::FILE);
+            $pdf->Output($pdf_path, 'F');
             
             // Add to WordPress media library
             $attachment_id = $this->addToMediaLibrary($pdf_path, $filename, $reservation);
@@ -401,7 +413,19 @@ class GMS_Agreement_Handler {
         $sms_handler = new GMS_SMS_Handler();
         return $sms_handler->sendSMS($reservation['guest_phone'], $message);
     }
-    
+
+    private function getAgreementTemplate() {
+        $template = get_option('gms_agreement_template', '');
+
+        if (!is_string($template)) {
+            return '';
+        }
+
+        $template = trim($template);
+
+        return $template;
+    }
+
     private function getUserIP() {
         $ip = '';
         if (!empty($_SERVER['HTTP_CLIENT_IP'])) {

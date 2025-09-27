@@ -47,15 +47,20 @@ class GMS_Guest_Portal {
         $primary_color = get_option('gms_portal_primary_color', '#0073aa');
         $secondary_color = get_option('gms_portal_secondary_color', '#005a87');
         
-        $agreement_template = get_option('gms_agreement_template');
-        
+        $agreement_template = get_option('gms_agreement_template', '');
+
+        if (!is_string($agreement_template) || trim($agreement_template) === '') {
+            self::displayError(__('The agreement template is not configured. Please contact the property manager.', 'gms'));
+            return;
+        }
+
         // Replace template variables
         $agreement_display = str_replace(
-            ['{guest_name}', '{guest_email}', '{guest_phone}', '{property_name}', '{booking_reference}', 
+            ['{guest_name}', '{guest_email}', '{guest_phone}', '{property_name}', '{booking_reference}',
              '{checkin_date}', '{checkout_date}', '{checkin_time}', '{checkout_time}', '{company_name}'],
-            [$reservation['guest_name'], $reservation['guest_email'], $reservation['guest_phone'], 
+            [$reservation['guest_name'], $reservation['guest_email'], $reservation['guest_phone'],
              $reservation['property_name'], $reservation['booking_reference'],
-             date('F j, Y', strtotime($reservation['checkin_date'])), 
+             date('F j, Y', strtotime($reservation['checkin_date'])),
              date('F j, Y', strtotime($reservation['checkout_date'])),
              $reservation['checkin_time'] ?? '3:00 PM', $reservation['checkout_time'] ?? '11:00 AM',
              $company_name],
@@ -1084,8 +1089,12 @@ class GMS_Guest_Portal {
             wp_send_json_error('Agreement already signed');
         }
         
-        $agreement_text = get_option('gms_agreement_template');
-        
+        $agreement_text = get_option('gms_agreement_template', '');
+
+        if (!is_string($agreement_text) || trim($agreement_text) === '') {
+            wp_send_json_error(__('The agreement template is not configured. Please contact the property manager.', 'gms'));
+        }
+
         $agreement_data = array(
             'reservation_id' => $reservation_id,
             'guest_id' => $reservation['guest_id'],
