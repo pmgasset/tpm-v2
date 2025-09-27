@@ -1,0 +1,362 @@
+/**
+ * File: admin.css
+ * Location: /wp-content/plugins/guest-management-system/assets/css/admin.css
+ * 
+ * Admin Styles for Guest Management System
+ */
+
+/* Dashboard Stats */
+.gms-dashboard-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 20px;
+    margin: 20px 0;
+}
+
+.gms-stat-box {
+    background: #fff;
+    padding: 20px;
+    border: 1px solid #ccd0d4;
+    border-radius: 4px;
+    text-align: center;
+    box-shadow: 0 1px 1px rgba(0,0,0,0.04);
+}
+
+.gms-stat-box h3 {
+    font-size: 2em;
+    margin: 0 0 10px 0;
+    color: #0073aa;
+}
+
+.gms-stat-box p {
+    margin: 0;
+    color: #646970;
+}
+
+/* Recent Reservations */
+.gms-recent-reservations {
+    margin-top: 30px;
+}
+
+.gms-recent-reservations h2 {
+    font-size: 1.3em;
+    font-weight: 400;
+    margin-bottom: 15px;
+}
+
+/* Quick Actions */
+.gms-quick-actions {
+    margin-top: 30px;
+}
+
+.gms-quick-actions h2 {
+    font-size: 1.3em;
+    font-weight: 400;
+    margin-bottom: 15px;
+}
+
+.gms-quick-actions .button {
+    margin-right: 10px;
+}
+
+/* Status Badges */
+.status-badge {
+    padding: 4px 8px;
+    border-radius: 3px;
+    color: #fff;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.status-pending {
+    background: #f39c12;
+}
+
+.status-in-progress {
+    background: #3498db;
+}
+
+.status-completed {
+    background: #27ae60;
+}
+
+.status-cancelled {
+    background: #e74c3c;
+}
+
+/* Settings Tabs */
+.gms-settings-tabs .nav-tab-wrapper {
+    margin-bottom: 20px;
+    border-bottom: 1px solid #ccd0d4;
+}
+
+.gms-tab-content {
+    display: none;
+    padding: 20px 0;
+}
+
+.gms-tab-content.active {
+    display: block;
+}
+
+/* Template Info Box */
+.gms-template-info {
+    background: #f1f1f1;
+    padding: 15px;
+    margin-bottom: 20px;
+    border-left: 4px solid #0073aa;
+    border-radius: 2px;
+}
+
+.gms-template-info h3 {
+    margin-top: 0;
+}
+
+.gms-template-info code {
+    background: #fff;
+    padding: 2px 4px;
+    margin: 0 2px;
+    border-radius: 2px;
+}
+
+/* Test Result Messages */
+#sms-test-result,
+#email-test-result {
+    margin-top: 10px;
+}
+
+#sms-test-result p,
+#email-test-result p {
+    padding: 8px 12px;
+    border-radius: 3px;
+    margin: 5px 0;
+}
+
+/* Validation Feedback */
+.validation-feedback {
+    display: block;
+    margin-top: 5px;
+    font-size: 12px;
+}
+
+/* Loading Spinner */
+.spinner.is-active {
+    display: inline-block;
+    width: 20px;
+    height: 20px;
+    border: 3px solid rgba(0, 0, 0, 0.1);
+    border-radius: 50%;
+    border-top-color: #333;
+    animation: spin 1s ease-in-out infinite;
+    vertical-align: middle;
+    margin-right: 5px;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* Webhook URL Display */
+.webhook-url-box {
+    background: #f6f7f7;
+    padding: 15px;
+    border-radius: 4px;
+    margin: 15px 0;
+    border: 1px solid #c3c4c7;
+}
+
+.webhook-url-box code {
+    display: block;
+    background: #fff;
+    padding: 10px;
+    margin: 10px 0;
+    border-radius: 3px;
+    word-break: break-all;
+    font-size: 13px;
+}
+
+.webhook-url-box .copy-webhook-url {
+    cursor: pointer;
+    color: #2271b1;
+    text-decoration: none;
+    font-size: 12px;
+}
+
+.webhook-url-box .copy-webhook-url:hover {
+    text-decoration: underline;
+}
+
+/* Reservation Filters */
+.gms-filters {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 20px;
+    align-items: center;
+}
+
+.gms-filters select,
+.gms-filters input {
+    padding: 6px 8px;
+    border: 1px solid #8c8f94;
+    border-radius: 3px;
+}
+
+/* Character Counter */
+#sms-char-count {
+    margin-top: 5px;
+    font-size: 12px;
+}
+
+/* Bulk Action Selectors */
+.tablenav .actions select {
+    float: none;
+    margin: 0 6px 0 0;
+    padding: 3px 24px 3px 8px;
+}
+
+/* Table Enhancements */
+.wp-list-table .check-column {
+    width: 2.2em;
+    text-align: center;
+}
+
+.wp-list-table .check-column input[type="checkbox"] {
+    margin: 0;
+}
+
+/* Responsive Tables */
+@media screen and (max-width: 782px) {
+    .gms-dashboard-stats {
+        grid-template-columns: 1fr;
+    }
+
+    .gms-filters {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .gms-filters select,
+    .gms-filters input {
+        width: 100%;
+    }
+
+    .gms-quick-actions .button {
+        display: block;
+        margin: 5px 0;
+        width: 100%;
+    }
+}
+
+/* Dark Mode Support (WordPress 5.7+) */
+@media (prefers-color-scheme: dark) {
+    .gms-stat-box {
+        background: #1d2327;
+        border-color: #3c434a;
+    }
+
+    .gms-stat-box h3 {
+        color: #72aee6;
+    }
+
+    .gms-template-info {
+        background: #1d2327;
+        border-left-color: #72aee6;
+    }
+
+    .webhook-url-box {
+        background: #1d2327;
+        border-color: #3c434a;
+    }
+
+    .webhook-url-box code {
+        background: #2c3338;
+        color: #f0f0f1;
+    }
+}
+
+/* Admin Notice Styles */
+.gms-admin-notice {
+    margin: 15px 0;
+    padding: 12px;
+    border-left: 4px solid #0073aa;
+    background: #fff;
+    box-shadow: 0 1px 1px rgba(0,0,0,0.04);
+}
+
+.gms-admin-notice.notice-success {
+    border-left-color: #46b450;
+}
+
+.gms-admin-notice.notice-error {
+    border-left-color: #dc3232;
+}
+
+.gms-admin-notice.notice-warning {
+    border-left-color: #ffb900;
+}
+
+/* Platform Icons */
+.platform-icon {
+    display: inline-block;
+    width: 20px;
+    height: 20px;
+    vertical-align: middle;
+    margin-right: 5px;
+}
+
+/* Export/Import Buttons */
+.gms-export-import {
+    margin: 20px 0;
+    padding: 15px;
+    background: #f6f7f7;
+    border-radius: 4px;
+}
+
+.gms-export-import .button {
+    margin-right: 10px;
+}
+
+/* Settings Form Improvements */
+.form-table th {
+    width: 220px;
+}
+
+.form-table td input[type="text"],
+.form-table td input[type="email"],
+.form-table td input[type="url"],
+.form-table td input[type="password"] {
+    width: 400px;
+    max-width: 100%;
+}
+
+.form-table .description {
+    display: block;
+    margin-top: 5px;
+    color: #646970;
+    font-size: 13px;
+}
+
+/* Color Picker Enhancement */
+input[type="color"] {
+    width: 60px;
+    height: 40px;
+    border: 1px solid #8c8f94;
+    border-radius: 3px;
+    cursor: pointer;
+}
+
+/* API Key Fields */
+.api-key-field {
+    font-family: monospace;
+}
+
+/* Success/Error Animations */
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.gms-fade-in {
+    animation: fadeIn 0.3s ease-in-out;
+}

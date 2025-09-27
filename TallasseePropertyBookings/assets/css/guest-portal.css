@@ -1,0 +1,126 @@
+/**
+ * File: guest-portal.css
+ * Location: /wp-content/plugins/guest-management-system/assets/css/guest-portal.css
+ * 
+ * Guest Portal Styles for Guest Management System
+ */
+
+/* CSS Variables for theming */
+:root {
+    --primary-color: #0073aa;
+    --secondary-color: #005a87;
+    --success-color: #27ae60;
+    --warning-color: #f39c12;
+    --error-color: #e74c3c;
+    --text-color: #333;
+    --text-light: #666;
+    --border-color: #e0e0e0;
+    --background-light: #f8f9fa;
+}
+
+/* Loading Spinner */
+.spinner {
+    border: 4px solid #f3f3f3;
+    border-top: 4px solid var(--primary-color);
+    border-radius: 50%;
+    width: 40px;
+    height: 40px;
+    animation: spin 2s linear infinite;
+    margin: 0 auto;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+.loading {
+    text-align: center;
+    padding: 2rem;
+}
+
+.loading p {
+    margin-top: 1rem;
+    color: var(--text-light);
+}
+
+/* Messages */
+.error-message {
+    background: #f8d7da;
+    color: #721c24;
+    padding: 1rem;
+    border-radius: 4px;
+    margin: 1rem 0;
+    border-left: 4px solid var(--error-color);
+}
+
+.success-message {
+    background: #d4edda;
+    color: #155724;
+    padding: 1rem;
+    border-radius: 4px;
+    margin: 1rem 0;
+    border-left: 4px solid var(--success-color);
+}
+
+.info-message {
+    background: #d1ecf1;
+    color: #0c5460;
+    padding: 1rem;
+    border-radius: 4px;
+    margin: 1rem 0;
+    border-left: 4px solid #17a2b8;
+}
+
+/* Hidden utility class */
+.hidden {
+    display: none !important;
+}
+
+/* Responsive utilities */
+@media (max-width: 768px) {
+    .portal-container {
+        padding: 0 !important;
+    }
+    
+    .portal-content {
+        padding: 1rem !important;
+    }
+    
+    .booking-details {
+        grid-template-columns: 1fr !important;
+    }
+    
+    .checklist-item {
+        flex-direction: column;
+        text-align: center;
+    }
+    
+    .checklist-icon {
+        margin-right: 0 !important;
+        margin-bottom: 1rem;
+    }
+    
+    .signature-canvas {
+        width: 100% !important;
+        height: 150px !important;
+    }
+    
+    .btn {
+        width: 100%;
+        margin: 0.5rem 0 !important;
+    }
+}
+
+/* Print styles */
+@media print {
+    .portal-header,
+    .action-section button,
+    .btn {
+        display: none;
+    }
+    
+    .portal-content {
+        background: #fff !important;
+    }
+}
