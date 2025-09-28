@@ -41,6 +41,36 @@ class GMS_Stripe_Integration {
             'booking_reference' => isset($reservation['booking_reference']) ? (string) $reservation['booking_reference'] : '',
         );
 
+        $filtered_metadata = array();
+        foreach ($metadata as $key => $value) {
+            if ($value !== '') {
+                $filtered_metadata[$key] = $value;
+            }
+        }
+
+        // Stripe Identity expects an x-www-form-urlencoded payload. Casting the booleans to the
+        // literal string "true" preserves the expected semantics without triggering type coercion.
+        $document_options = array(
+            'allowed_types' => array('driving_license', 'passport', 'id_card'),
+            'require_id_number' => 'true',
+            'require_live_capture' => 'true',
+            'require_matching_selfie' => 'true',
+        );
+
+        $body_params = array(
+            'type' => 'document',
+            'options' => array(
+                'document' => $document_options,
+            ),
+        );
+
+        if (!empty($filtered_metadata)) {
+            $body_params['metadata'] = $filtered_metadata;
+        }
+
+        $encoded_body = http_build_query($body_params, '', '&', PHP_QUERY_RFC3986);
+
+=======
         // Stripe Identity expects an x-www-form-urlencoded payload. Casting the booleans to the
         // literal string "true" preserves the expected semantics without triggering type coercion.
         $body_params = array(
@@ -60,11 +90,14 @@ class GMS_Stripe_Integration {
             'headers' => array(
                 'Authorization' => 'Bearer ' . $this->secret_key,
             ),
+
+            'body' => $encoded_body,
             'body' => $body_params,
 
                 'Content-Type' => 'application/json',
             ),
             'body' => wp_json_encode($body_params),
+
 
             'timeout' => 30
         ));
