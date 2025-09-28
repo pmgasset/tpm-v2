@@ -441,6 +441,16 @@ class GMS_Admin {
         );
 
         $update_data = array();
+        $sanitizers = array(
+            'guest_name' => 'sanitize_text_field',
+            'guest_email' => 'sanitize_email',
+            'guest_phone' => 'sanitize_text_field',
+            'property_name' => 'sanitize_text_field',
+            'booking_reference' => 'sanitize_text_field',
+            'checkin_date' => 'sanitize_text_field',
+            'checkout_date' => 'sanitize_text_field',
+            'status' => 'sanitize_key',
+        );
 
         foreach ($allowed as $field) {
             if (!array_key_exists($field, $payload)) {
@@ -451,6 +461,10 @@ class GMS_Admin {
 
             if (is_array($value)) {
                 continue;
+            }
+
+            if (isset($sanitizers[$field]) && is_callable($sanitizers[$field])) {
+                $value = call_user_func($sanitizers[$field], $value);
             }
 
             $update_data[$field] = $value;
