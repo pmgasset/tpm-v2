@@ -524,44 +524,32 @@ class GMS_Webhook_Handler {
     }
     
     private function createOrFindGuest($booking_data) {
-        $email = sanitize_email($booking_data['guest_email']);
-        
-        // Check if user already exists
-        $existing_user = get_user_by('email', $email);
-        
-        if ($existing_user) {
-            return $existing_user->ID;
+        $full_name = isset($booking_data['guest_name']) ? sanitize_text_field($booking_data['guest_name']) : '';
+        $name_parts = array_values(array_filter(preg_split('/\s+/', trim($full_name ?? ''))));
+
+        $first_name = $name_parts[0] ?? '';
+        $last_name = '';
+
+        if (count($name_parts) > 1) {
+            $last_name = implode(' ', array_slice($name_parts, 1));
         }
-        
-        // Create new guest user
-        $username = sanitize_user($email);
-        $name_parts = explode(' ', trim($booking_data['guest_name']));
-        $first_name = sanitize_text_field($name_parts[0] ?? '');
-        $last_name = sanitize_text_field(implode(' ', array_slice($name_parts, 1)) ?? '');
-        
-        $user_data = array(
-            'user_login' => $username,
-            'user_email' => $email,
+
+        $first_name = sanitize_text_field($first_name);
+        $last_name = sanitize_text_field($last_name);
+
+        $guest_id = GMS_Database::upsert_guest(array(
+            'name' => $full_name,
             'first_name' => $first_name,
             'last_name' => $last_name,
-            'display_name' => sanitize_text_field($booking_data['guest_name']),
-            'role' => 'guest',
-            'user_pass' => wp_generate_password()
-        );
-        
-        $user_id = wp_insert_user($user_data);
-        
-        if (is_wp_error($user_id)) {
-            error_log('GMS: Failed to create guest user: ' . $user_id->get_error_message());
-            return false;
+            'email' => $booking_data['guest_email'] ?? '',
+            'phone' => $booking_data['guest_phone'] ?? '',
+        ));
+
+        if (!$guest_id) {
+            error_log('GMS: Failed to upsert guest for reservation payload.');
         }
-        
-        // Add guest phone if available
-        if (!empty($booking_data['guest_phone'])) {
-            update_user_meta($user_id, 'phone', sanitize_text_field($booking_data['guest_phone']));
-        }
-        
-        return $user_id;
+
+        return $guest_id;
     }
     
     private function sendGuestNotifications($reservation_id) {

@@ -1123,8 +1123,23 @@ class GMS_Admin {
                 $errors[] = __('Please enter a valid email address.', 'guest-management-system');
             }
 
+            $guest_id = 0;
+
+            if (empty($errors)) {
+                $guest_id = GMS_Database::upsert_guest(array(
+                    'name' => $form_values['guest_name'],
+                    'email' => $form_values['guest_email'],
+                    'phone' => $form_values['guest_phone'],
+                ));
+
+                if (!$guest_id) {
+                    $errors[] = __('Unable to save guest details. Please try again.', 'guest-management-system');
+                }
+            }
+
             if (empty($errors)) {
                 $reservation_data = array(
+                    'guest_id' => $guest_id,
                     'guest_name' => $form_values['guest_name'],
                     'guest_email' => $form_values['guest_email'],
                     'guest_phone' => $form_values['guest_phone'],
