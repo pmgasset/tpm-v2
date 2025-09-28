@@ -10,16 +10,66 @@
 
     $(document).ready(function() {
         
-        // Tab switching functionality
+        // Tab switching functionality for hash-based tabs only
         $('.nav-tab').on('click', function(e) {
-            e.preventDefault();
             var target = $(this).attr('href');
-            
-            $('.nav-tab').removeClass('nav-tab-active');
-            $(this).addClass('nav-tab-active');
-            
-            $('.gms-tab-content').removeClass('active');
-            $(target).addClass('active');
+            if (target && target.charAt(0) === '#') {
+                e.preventDefault();
+
+                $('.nav-tab').removeClass('nav-tab-active');
+                $(this).addClass('nav-tab-active');
+
+                $('.gms-tab-content').removeClass('active');
+                $(target).addClass('active');
+            }
+        });
+
+        // Media uploader for logo selection
+        $('.gms-upload-logo').on('click', function(e) {
+            e.preventDefault();
+
+            var button = $(this);
+            var field = $('#' + button.data('target'));
+            var preview = $('#' + button.data('preview'));
+
+            var frame = wp.media({
+                title: button.data('title') || 'Select Logo',
+                button: {
+                    text: button.data('button-text') || 'Use this logo'
+                },
+                multiple: false,
+                library: {
+                    type: ['image']
+                }
+            });
+
+            frame.on('select', function() {
+                var attachment = frame.state().get('selection').first().toJSON();
+                field.val(attachment.url).trigger('change');
+                var image = $('<img />', {
+                    src: attachment.url,
+                    alt: attachment.alt || '',
+                    css: {
+                        maxWidth: '200px',
+                        height: 'auto',
+                        marginTop: '10px'
+                    }
+                });
+                preview.html(image).show();
+            });
+
+            frame.open();
+        });
+
+        $('.gms-remove-logo').on('click', function(e) {
+            e.preventDefault();
+
+            var button = $(this);
+            var field = $('#' + button.data('target'));
+            var preview = $('#' + button.data('preview'));
+
+            field.val('').trigger('change');
+            preview.empty().hide();
         });
 
         // Test SMS functionality
