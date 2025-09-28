@@ -64,6 +64,203 @@ class GMS_Admin {
     public function __construct() {
         add_action('admin_menu', array($this, 'add_admin_menu'));
         add_action('admin_init', array($this, 'register_settings'));
+        add_action('wp_ajax_gms_test_sms', array($this, 'ajax_test_sms'));
+        add_action('wp_ajax_gms_test_email', array($this, 'ajax_test_email'));
+        add_action('wp_ajax_gms_resend_notification', array($this, 'ajax_resend_notification'));
+        add_action('wp_ajax_gms_bulk_action', array($this, 'ajax_bulk_action'));
+        add_action('wp_ajax_gms_autosave_template', array($this, 'ajax_autosave_template'));
+        add_action('wp_ajax_gms_refresh_stats', array($this, 'ajax_refresh_stats'));
+    }
+
+    public function ajax_test_sms() {
+        check_ajax_referer('gms_admin_nonce', 'nonce');
+        $this->ensure_ajax_permissions();
+
+        $number = isset($_POST['number']) ? sanitize_text_field(wp_unslash($_POST['number'])) : '';
+
+        if (empty($number)) {
+            wp_send_json_error(__('Please provide a phone number.', 'guest-management-system'));
+        }
+
+        $company_name = get_option('gms_company_name', get_option('blogname'));
+        $message = sprintf(__('This is a test SMS from %s.', 'guest-management-system'), $company_name);
+
+        $sms_handler = new GMS_SMS_Handler();
+        $sent = $sms_handler->sendSMS($number, $message);
+
+        if (!$sent) {
+            wp_send_json_error(__('Failed to send test SMS. Please verify your VoIP.ms configuration.', 'guest-management-system'));
+        }
+
+        wp_send_json_success(array(
+            'message' => __('Test SMS sent successfully.', 'guest-management-system'),
+        ));
+    }
+
+    public function ajax_test_email() {
+        check_ajax_referer('gms_admin_nonce', 'nonce');
+        $this->ensure_ajax_permissions();
+
+        $email = isset($_POST['email']) ? sanitize_email(wp_unslash($_POST['email'])) : '';
+
+        if (empty($email) || !is_email($email)) {
+            wp_send_json_error(__('Please enter a valid email address.', 'guest-management-system'));
+        }
+
+        $email_handler = new GMS_Email_Handler();
+        $subject = __('Test Email from Guest Management System', 'guest-management-system');
+        $message = __('This is a test email to confirm your notification settings are working.', 'guest-management-system');
+
+        $sent = $email_handler->sendEmail($email, $subject, $message);
+
+        if (!$sent) {
+            wp_send_json_error(__('Failed to send test email. Please verify your email configuration.', 'guest-management-system'));
+        }
+
+        wp_send_json_success(array(
+            'message' => __('Test email sent successfully.', 'guest-management-system'),
+        ));
+    }
+
+    public function ajax_resend_notification() {
+        check_ajax_referer('gms_admin_nonce', 'nonce');
+        $this->ensure_ajax_permissions();
+
+        $reservation_id = isset($_POST['reservation_id']) ? absint(wp_unslash($_POST['reservation_id'])) : 0;
+
+        if (!$reservation_id) {
+            wp_send_json_error(__('Invalid reservation selected.', 'guest-management-system'));
+        }
+
+        $reservation = GMS_Database::getReservationById($reservation_id);
+
+        if (!$reservation) {
+            wp_send_json_error(__('The reservation could not be found.', 'guest-management-system'));
+        }
+
+        $results = $this->send_reservation_notifications($reservation);
+
+        if (!$results['email_sent'] && !$results['sms_sent']) {
+            wp_send_json_error(__('Notifications could not be sent for this reservation.', 'guest-management-system'));
+        }
+
+        wp_send_json_success(array(
+            'results' => $results,
+        ));
+    }
+
+    public function ajax_bulk_action() {
+        check_ajax_referer('gms_admin_nonce', 'nonce');
+        $this->ensure_ajax_permissions();
+
+        $action = isset($_POST['bulk_action']) ? sanitize_key(wp_unslash($_POST['bulk_action'])) : '';
+        $ids_raw = isset($_POST['reservation_ids']) ? (array) wp_unslash($_POST['reservation_ids']) : array();
+        $reservation_ids = array_filter(array_map('absint', $ids_raw));
+
+        if (empty($action) || empty($reservation_ids)) {
+            wp_send_json_error(__('Please select at least one reservation and a valid action.', 'guest-management-system'));
+        }
+
+        $processed = 0;
+        $errors = array();
+
+        if (strpos($action, 'mark_') === 0) {
+            $status = str_replace('mark_', '', $action);
+            $status = str_replace('-', '_', $status);
+
+            foreach ($reservation_ids as $reservation_id) {
+                $updated = GMS_Database::updateReservation($reservation_id, array('status' => $status));
+                if ($updated) {
+                    $processed++;
+                } else {
+                    $errors[] = sprintf(__('Failed to update reservation #%d.', 'guest-management-system'), $reservation_id);
+                }
+            }
+        } elseif ($action === 'resend_notifications' || $action === 'resend_notification') {
+            foreach ($reservation_ids as $reservation_id) {
+                $reservation = GMS_Database::getReservationById($reservation_id);
+
+                if (!$reservation) {
+                    $errors[] = sprintf(__('Reservation #%d could not be found.', 'guest-management-system'), $reservation_id);
+                    continue;
+                }
+
+                $results = $this->send_reservation_notifications($reservation);
+                if ($results['email_sent'] || $results['sms_sent']) {
+                    $processed++;
+                } else {
+                    $errors[] = sprintf(__('Notifications failed for reservation #%d.', 'guest-management-system'), $reservation_id);
+                }
+            }
+        } else {
+            wp_send_json_error(__('Unsupported bulk action.', 'guest-management-system'));
+        }
+
+        if ($processed === 0) {
+            $message = !empty($errors)
+                ? implode(' ', $errors)
+                : __('No reservations were processed.', 'guest-management-system');
+
+            wp_send_json_error($message);
+        }
+
+        $response = array(
+            'processed' => $processed,
+        );
+
+        if (!empty($errors)) {
+            $response['errors'] = $errors;
+        }
+
+        wp_send_json_success($response);
+    }
+
+    public function ajax_autosave_template() {
+        check_ajax_referer('gms_admin_nonce', 'nonce');
+        $this->ensure_ajax_permissions();
+
+        $field = isset($_POST['field']) ? sanitize_key(wp_unslash($_POST['field'])) : '';
+        $value = isset($_POST['value']) ? wp_unslash($_POST['value']) : '';
+
+        $allowed = array(
+            'gms_agreement_template' => 'sanitize_template',
+            'gms_email_template' => 'sanitize_template',
+            'gms_sms_template' => 'sanitize_plain_textarea',
+            'gms_sms_reminder_template' => 'sanitize_plain_textarea',
+        );
+
+        if (!array_key_exists($field, $allowed)) {
+            wp_send_json_error(__('This template cannot be auto-saved.', 'guest-management-system'));
+        }
+
+        $callback = $allowed[$field];
+        $sanitized_value = call_user_func(array($this, $callback), $value);
+
+        update_option($field, $sanitized_value);
+
+        wp_send_json_success(array(
+            'message' => __('Template saved.', 'guest-management-system'),
+        ));
+    }
+
+    public function ajax_refresh_stats() {
+        check_ajax_referer('gms_admin_nonce', 'nonce');
+        $this->ensure_ajax_permissions();
+
+        $upcoming_checkins = gms_get_upcoming_checkins(7);
+        $pending_checkins = gms_get_pending_checkins();
+
+        $stats = array(
+            'total_reservations' => GMS_Database::get_record_count('reservations'),
+            'upcoming_checkins' => is_array($upcoming_checkins) ? count($upcoming_checkins) : 0,
+            'pending_checkins' => is_array($pending_checkins) ? count($pending_checkins) : 0,
+            'total_guests' => GMS_Database::get_record_count('guests'),
+            'refreshed_at' => current_time('mysql'),
+        );
+
+        wp_send_json_success(array(
+            'stats' => $stats,
+        ));
     }
 
     /**
@@ -356,6 +553,45 @@ class GMS_Admin {
      */
     public function sanitize_plain_textarea($value) {
         return sanitize_textarea_field($value);
+    }
+
+    private function ensure_ajax_permissions() {
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(__('You do not have permission to perform this action.', 'guest-management-system'));
+        }
+    }
+
+    private function send_reservation_notifications($reservation) {
+        $results = array(
+            'email_sent' => false,
+            'sms_sent' => false,
+        );
+
+        if (empty($reservation) || !is_array($reservation)) {
+            return $results;
+        }
+
+        if (!empty($reservation['guest_email']) && is_email($reservation['guest_email'])) {
+            static $email_handler = null;
+
+            if ($email_handler === null) {
+                $email_handler = new GMS_Email_Handler();
+            }
+
+            $results['email_sent'] = $email_handler->sendWelcomeEmail($reservation);
+        }
+
+        if (!empty($reservation['guest_phone'])) {
+            static $sms_handler = null;
+
+            if ($sms_handler === null) {
+                $sms_handler = new GMS_SMS_Handler();
+            }
+
+            $results['sms_sent'] = $sms_handler->sendWelcomeSMS($reservation);
+        }
+
+        return $results;
     }
 
     /**
