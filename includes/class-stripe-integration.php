@@ -70,12 +70,35 @@ class GMS_Stripe_Integration {
 
         $encoded_body = http_build_query($body_params, '', '&', PHP_QUERY_RFC3986);
 
+=======
+        // Stripe Identity expects an x-www-form-urlencoded payload. Casting the booleans to the
+        // literal string "true" preserves the expected semantics without triggering type coercion.
+        $body_params = array(
+            'type' => 'document',
+            'metadata' => array_filter($metadata, 'strlen'),
+            'options' => array(
+                'document' => array(
+                    'allowed_types' => array('driving_license', 'passport', 'id_card'),
+                    'require_id_number' => 'true',
+                    'require_live_capture' => 'true',
+                    'require_matching_selfie' => 'true',
+                ),
+            ),
+        );
+
         $response = wp_remote_post($endpoint, array(
             'headers' => array(
                 'Authorization' => 'Bearer ' . $this->secret_key,
-                'Content-Type' => 'application/x-www-form-urlencoded',
             ),
+
             'body' => $encoded_body,
+            'body' => $body_params,
+
+                'Content-Type' => 'application/json',
+            ),
+            'body' => wp_json_encode($body_params),
+
+
             'timeout' => 30
         ));
         
