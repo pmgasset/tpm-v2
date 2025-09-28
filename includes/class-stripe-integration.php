@@ -32,9 +32,9 @@ class GMS_Stripe_Integration {
             error_log('GMS: Stripe secret key not configured');
             return false;
         }
-        
+
         $endpoint = $this->api_url . '/identity/verification_sessions';
-        
+
         $metadata = array(
             'reservation_id' => isset($reservation['id']) ? (string) $reservation['id'] : '',
             'guest_id' => isset($reservation['guest_id']) ? (string) $reservation['guest_id'] : '',
@@ -48,115 +48,38 @@ class GMS_Stripe_Integration {
             }
         }
 
-        $document_options = array(
-            'allowed_types' => array('driving_license', 'passport', 'id_card'),
-            'require_id_number' => true,
-            'require_live_capture' => true,
-            'require_matching_selfie' => true
-        );
-
-        $body_params = array(
-            'type' => 'document'
-        );
-
-        $body_params['options'] = array(
-            'document' => $document_options
-        );
-
-        if (!empty($filtered_metadata)) {
-            $body_params['metadata'] = $filtered_metadata;
-        }
-
-        $encoded_body = wp_json_encode($body_params);
-
-        if (false === $encoded_body) {
-            error_log('GMS Stripe Error: Failed to encode verification session payload.');
-            return false;
-        }
-
-        $response = wp_remote_post($endpoint, array(
-            'headers' => array(
-                'Authorization' => 'Bearer ' . $this->secret_key,
-                'Content-Type' => 'application/json',
-            ),
-            'body' => $encoded_body,
-            'require_matching_selfie' => true,
-        // Stripe Identity expects an x-www-form-urlencoded payload. Casting the booleans to the
-        // literal string "true" preserves the expected semantics without triggering type coercion.
-        $document_options = array(
-            'allowed_types' => array('driving_license', 'passport', 'id_card'),
-            'require_id_number' => 'true',
-            'require_live_capture' => 'true',
-            'require_matching_selfie' => 'true',
-        );
-
         $body_params = array(
             'type' => 'document',
-
-            'options' => array(
-                'document' => $document_options,
-            ),
         );
 
-        if (!empty($filtered_metadata)) {
-            $body_params['metadata'] = $filtered_metadata;
+        foreach ($filtered_metadata as $key => $value) {
+            $body_params['metadata[' . $key . ']'] = $value;
         }
 
-        $encoded_body = wp_json_encode($body_params);
-
-        if (false === $encoded_body) {
-            error_log('GMS Stripe Error: Failed to encode verification session payload.');
-            return false;
+        $allowed_types = array('driving_license', 'passport', 'id_card');
+        foreach ($allowed_types as $index => $type) {
+            $body_params['options[document][allowed_types][' . $index . ']'] = $type;
         }
 
-        $response = wp_remote_post($endpoint, array(
-            'headers' => array(
-                'Authorization' => 'Bearer ' . $this->secret_key,
-                'Content-Type' => 'application/json',
-            ),
-            'body' => $encoded_body,
-
-            'options' => array(
-                'document' => $document_options,
-            ),
+        $document_flags = array(
+            'require_id_number' => true,
+            'require_live_capture' => true,
+            'require_matching_selfie' => true,
         );
 
-        if (!empty($filtered_metadata)) {
-            $body_params['metadata'] = $filtered_metadata;
+        foreach ($document_flags as $flag => $enabled) {
+            $body_params['options[document][' . $flag . ']'] = $enabled ? 'true' : 'false';
         }
 
         $encoded_body = http_build_query($body_params, '', '&', PHP_QUERY_RFC3986);
 
-
-        // Stripe Identity expects an x-www-form-urlencoded payload. Casting the booleans to the
-        // literal string "true" preserves the expected semantics without triggering type coercion.
-        $body_params = array(
-            'type' => 'document',
-            'metadata' => array_filter($metadata, 'strlen'),
-            'options' => array(
-                'document' => array(
-                    'allowed_types' => array('driving_license', 'passport', 'id_card'),
-                    'require_id_number' => 'true',
-                    'require_live_capture' => 'true',
-                    'require_matching_selfie' => 'true',
-                ),
-            ),
-        );
-
         $response = wp_remote_post($endpoint, array(
             'headers' => array(
                 'Authorization' => 'Bearer ' . $this->secret_key,
+                'Content-Type' => 'application/x-www-form-urlencoded',
             ),
-
             'body' => $encoded_body,
-            'body' => $body_params,
-
-                'Content-Type' => 'application/json',
-            ),
-            'body' => wp_json_encode($body_params),
-
-
-            'timeout' => 30
+            'timeout' => 30,
         ));
         
         if (is_wp_error($response)) {
