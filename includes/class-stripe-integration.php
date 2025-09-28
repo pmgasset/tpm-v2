@@ -57,10 +57,9 @@ class GMS_Stripe_Integration {
         $response = wp_remote_post($endpoint, array(
             'headers' => array(
                 'Authorization' => 'Bearer ' . $this->secret_key,
-                'Content-Type' => 'application/x-www-form-urlencoded',
+                'Content-Type' => 'application/json',
             ),
-            'body' => http_build_query($body_params, '', '&'),
-            'data_format' => 'body',
+            'body' => wp_json_encode($body_params),
             'timeout' => 30
         ));
         
