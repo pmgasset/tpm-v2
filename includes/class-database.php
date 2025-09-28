@@ -22,6 +22,7 @@ class GMS_Database {
         $sql_reservations = "CREATE TABLE $table_reservations (
             id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
             guest_id bigint(20) unsigned DEFAULT 0,
+            guest_record_id bigint(20) unsigned DEFAULT 0,
             guest_name varchar(255) NOT NULL DEFAULT '',
             guest_email varchar(255) NOT NULL DEFAULT '',
             guest_phone varchar(50) NOT NULL DEFAULT '',
@@ -40,6 +41,7 @@ class GMS_Database {
             updated_at datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
             PRIMARY KEY  (id),
             KEY guest_id (guest_id),
+            KEY guest_record_id (guest_record_id),
             KEY booking_reference (booking_reference),
             KEY portal_token (portal_token),
             KEY platform (platform),
@@ -54,9 +56,12 @@ class GMS_Database {
             last_name varchar(100) NOT NULL DEFAULT '',
             email varchar(255) NOT NULL DEFAULT '',
             phone varchar(50) NOT NULL DEFAULT '',
+            wp_user_id bigint(20) unsigned NOT NULL DEFAULT 0,
             created_at datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
+            updated_at datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
             PRIMARY KEY  (id),
-            UNIQUE KEY email (email)
+            UNIQUE KEY email (email),
+            KEY wp_user_id (wp_user_id)
         ) $charset_collate;";
         dbDelta($sql_guests);
 
@@ -121,7 +126,7 @@ class GMS_Database {
         dbDelta($sql_communications);
     }
 
-    public static function upsert_guest($guest_data) {
+    public static function upsert_guest($guest_data, $options = array()) {
         global $wpdb;
 
         $defaults = array(
@@ -130,9 +135,14 @@ class GMS_Database {
             'name' => '',
             'email' => '',
             'phone' => '',
+            'wp_user_id' => 0,
         );
 
         $guest_data = wp_parse_args($guest_data, $defaults);
+        $options = wp_parse_args($options, array(
+            'suppress_user_sync' => false,
+            'force_user_creation' => false,
+        ));
 
         $full_name = trim((string) $guest_data['name']);
         $first_name = trim((string) $guest_data['first_name']);
@@ -205,6 +215,8 @@ class GMS_Database {
             );
         }
 
+        $guest_id = 0;
+
         if ($existing_row) {
             $update_data = array();
 
@@ -226,8 +238,16 @@ class GMS_Database {
                 $update_data['email'] = $placeholder_email;
             }
 
+            if (!empty($guest_data['wp_user_id'])) {
+                $update_data['wp_user_id'] = intval($guest_data['wp_user_id']);
+            }
+
             if (!empty($update_data)) {
-                $formats = array_fill(0, count($update_data), '%s');
+                $update_data['updated_at'] = current_time('mysql');
+                $formats = array();
+                foreach ($update_data as $key => $value) {
+                    $formats[] = $key === 'wp_user_id' ? '%d' : '%s';
+                }
                 $wpdb->update(
                     $table_guests,
                     $update_data,
@@ -237,27 +257,41 @@ class GMS_Database {
                 );
             }
 
-            return (int) $existing_row['id'];
+            $guest_id = (int) $existing_row['id'];
+        } else {
+            $insert_data = array(
+                'first_name' => $first_name,
+                'last_name' => $last_name,
+                'email' => $email !== '' ? $email : $placeholder_email,
+                'phone' => $phone,
+                'wp_user_id' => intval($guest_data['wp_user_id']),
+                'created_at' => current_time('mysql'),
+                'updated_at' => current_time('mysql'),
+            );
+
+            $formats = array('%s', '%s', '%s', '%s', '%d', '%s', '%s');
+
+            $result = $wpdb->insert($table_guests, $insert_data, $formats);
+
+            if ($result === false) {
+                error_log('GMS: Failed to upsert guest record: ' . $wpdb->last_error);
+                return 0;
+            }
+
+            $guest_id = (int) $wpdb->insert_id;
         }
 
-        $insert_data = array(
-            'first_name' => $first_name,
-            'last_name' => $last_name,
-            'email' => $email !== '' ? $email : $placeholder_email,
-            'phone' => $phone,
-            'created_at' => current_time('mysql'),
-        );
-
-        $formats = array('%s', '%s', '%s', '%s', '%s');
-
-        $result = $wpdb->insert($table_guests, $insert_data, $formats);
-
-        if ($result === false) {
-            error_log('GMS: Failed to upsert guest record: ' . $wpdb->last_error);
-            return 0;
+        if ($guest_id > 0 && !$options['suppress_user_sync']) {
+            self::syncGuestToUser($guest_id, array(
+                'first_name' => $first_name,
+                'last_name' => $last_name,
+                'full_name' => $full_name,
+                'email' => $email !== '' ? $email : $placeholder_email,
+                'phone' => $phone,
+            ), $options['force_user_creation']);
         }
 
-        return (int) $wpdb->insert_id;
+        return $guest_id;
     }
 
     public static function getReservationByToken($token) {
@@ -267,12 +301,264 @@ class GMS_Database {
         return self::formatReservationRow($row);
     }
 
+    public static function ensure_guest_user($guest_id, $guest_profile = array(), $force_create = false) {
+        return self::syncGuestToUser($guest_id, $guest_profile, $force_create);
+    }
+
+    private static function syncGuestToUser($guest_id, $guest_profile, $force_create = false) {
+        $guest_id = intval($guest_id);
+
+        if ($guest_id <= 0) {
+            return 0;
+        }
+
+        $guest_row = self::get_guest_by_id($guest_id);
+
+        if (!$guest_row) {
+            return 0;
+        }
+
+        $email = sanitize_email($guest_profile['email'] ?? $guest_row['email'] ?? '');
+        $first_name = sanitize_text_field($guest_profile['first_name'] ?? $guest_row['first_name'] ?? '');
+        $last_name = sanitize_text_field($guest_profile['last_name'] ?? $guest_row['last_name'] ?? '');
+        $full_name = sanitize_text_field($guest_profile['full_name'] ?? trim($first_name . ' ' . $last_name));
+        $phone = sanitize_text_field($guest_profile['phone'] ?? $guest_row['phone'] ?? '');
+
+        $user_id = intval($guest_row['wp_user_id'] ?? 0);
+
+        if ($user_id > 0) {
+            $user = get_user_by('id', $user_id);
+            if (!$user) {
+                self::updateGuestWpUserId($guest_id, 0);
+                $user_id = 0;
+            }
+        }
+
+        if ($user_id === 0 && $email !== '' && is_email($email)) {
+            $user = get_user_by('email', $email);
+            if ($user) {
+                $user_id = (int) $user->ID;
+            }
+        }
+
+        if ($user_id === 0 && $force_create && $email !== '' && is_email($email)) {
+            $username_base = sanitize_user(current(explode('@', $email)), true);
+            if ($username_base === '') {
+                $username_base = 'guest_' . $guest_id;
+            }
+
+            $username = $username_base;
+            $attempt = 1;
+
+            while (username_exists($username)) {
+                $username = $username_base . '_' . $attempt;
+                $attempt++;
+            }
+
+            $user_id = wp_insert_user(array(
+                'user_login' => $username,
+                'user_pass' => wp_generate_password(32, true, true),
+                'user_email' => $email,
+                'display_name' => $full_name !== '' ? $full_name : $username,
+                'first_name' => $first_name,
+                'last_name' => $last_name,
+            ));
+
+            if (is_wp_error($user_id)) {
+                error_log('GMS: Failed to create guest user - ' . $user_id->get_error_message());
+                $user_id = 0;
+            } else {
+                $user_id = (int) $user_id;
+            }
+        }
+
+        if ($user_id <= 0) {
+            return 0;
+        }
+
+        $update_user = array('ID' => $user_id);
+
+        if ($first_name !== '') {
+            $update_user['first_name'] = $first_name;
+        }
+
+        if ($last_name !== '') {
+            $update_user['last_name'] = $last_name;
+        }
+
+        if ($email !== '' && is_email($email)) {
+            $update_user['user_email'] = $email;
+        }
+
+        if (!empty($update_user['first_name']) || !empty($update_user['last_name'])) {
+            $display_name = trim(($update_user['first_name'] ?? $first_name) . ' ' . ($update_user['last_name'] ?? $last_name));
+            if ($display_name !== '') {
+                $update_user['display_name'] = $display_name;
+            }
+        } elseif ($full_name !== '') {
+            $update_user['display_name'] = $full_name;
+        }
+
+        $result = wp_update_user($update_user);
+
+        if (is_wp_error($result)) {
+            error_log('GMS: Failed to update guest user #' . $user_id . ' - ' . $result->get_error_message());
+        }
+
+        $user = get_user_by('id', $user_id);
+        if ($user && !in_array('guest', (array) $user->roles, true)) {
+            $user->add_role('guest');
+        }
+
+        if ($phone !== '') {
+            update_user_meta($user_id, 'gms_guest_phone', $phone);
+        }
+
+        self::updateGuestWpUserId($guest_id, $user_id);
+
+        global $wpdb;
+        $table_reservations = $wpdb->prefix . 'gms_reservations';
+        $wpdb->update(
+            $table_reservations,
+            array('guest_id' => $user_id),
+            array('guest_record_id' => $guest_id),
+            array('%d'),
+            array('%d')
+        );
+
+        return $user_id;
+    }
+
+    private static function updateGuestWpUserId($guest_id, $user_id) {
+        global $wpdb;
+
+        $table_guests = $wpdb->prefix . 'gms_guests';
+        $wpdb->update(
+            $table_guests,
+            array(
+                'wp_user_id' => intval($user_id),
+                'updated_at' => current_time('mysql'),
+            ),
+            array('id' => intval($guest_id)),
+            array('%d', '%s'),
+            array('%d')
+        );
+    }
+
+    public static function get_guest_wp_user_id($guest_id) {
+        global $wpdb;
+
+        $table_guests = $wpdb->prefix . 'gms_guests';
+        $value = $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT wp_user_id FROM {$table_guests} WHERE id = %d",
+                intval($guest_id)
+            )
+        );
+
+        return intval($value);
+    }
+
+    public static function get_guest_by_wp_user_id($user_id) {
+        global $wpdb;
+
+        $table_guests = $wpdb->prefix . 'gms_guests';
+
+        $row = $wpdb->get_row(
+            $wpdb->prepare(
+                "SELECT g.*, TRIM(CONCAT(g.first_name, ' ', g.last_name)) AS name FROM {$table_guests} g WHERE wp_user_id = %d",
+                intval($user_id)
+            ),
+            ARRAY_A
+        );
+
+        if (!$row) {
+            return null;
+        }
+
+        if (empty($row['name'])) {
+            $row['name'] = trim(trim($row['first_name'] ?? '') . ' ' . trim($row['last_name'] ?? ''));
+        }
+
+        if (!empty($row['email']) && str_ends_with($row['email'], '@' . self::GUEST_PLACEHOLDER_DOMAIN)) {
+            $row['email'] = '';
+        }
+
+        return $row;
+    }
+
+    public static function syncUserToGuest($user_id) {
+        $user = get_user_by('id', $user_id);
+
+        if (!$user) {
+            return false;
+        }
+
+        $first_name = $user->first_name;
+        $last_name = $user->last_name;
+        $email = $user->user_email;
+        $phone = get_user_meta($user_id, 'gms_guest_phone', true);
+
+        global $wpdb;
+        $table_guests = $wpdb->prefix . 'gms_guests';
+
+        $guest_row = $wpdb->get_row(
+            $wpdb->prepare("SELECT * FROM {$table_guests} WHERE wp_user_id = %d", intval($user_id)),
+            ARRAY_A
+        );
+
+        $guest_data = array(
+            'first_name' => $first_name,
+            'last_name' => $last_name,
+            'email' => $email,
+            'phone' => $phone,
+            'wp_user_id' => $user_id,
+        );
+
+        if ($guest_row) {
+            $sanitized_email = sanitize_email($email);
+            if ($sanitized_email === '' && !empty($guest_row['email'])) {
+                $sanitized_email = $guest_row['email'];
+            }
+
+            $sanitized_phone = sanitize_text_field($phone);
+            if ($sanitized_phone === '' && !empty($guest_row['phone'])) {
+                $sanitized_phone = $guest_row['phone'];
+            }
+
+            $update = array(
+                'first_name' => sanitize_text_field($first_name),
+                'last_name' => sanitize_text_field($last_name),
+                'email' => $sanitized_email,
+                'phone' => $sanitized_phone,
+                'updated_at' => current_time('mysql'),
+            );
+
+            $wpdb->update(
+                $table_guests,
+                $update,
+                array('id' => intval($guest_row['id'])),
+                array('%s', '%s', '%s', '%s', '%s'),
+                array('%d')
+            );
+
+            return true;
+        }
+
+        self::upsert_guest($guest_data, array(
+            'suppress_user_sync' => true,
+        ));
+
+        return true;
+    }
+
     public static function createReservation($data) {
         global $wpdb;
         $table_name = $wpdb->prefix . 'gms_reservations';
 
         $defaults = array(
             'guest_id' => 0,
+            'guest_record_id' => 0,
             'guest_name' => '',
             'guest_email' => '',
             'guest_phone' => '',
@@ -305,6 +591,7 @@ class GMS_Database {
 
         $insert_data = array(
             'guest_id' => intval($data['guest_id']),
+            'guest_record_id' => intval($data['guest_record_id']),
             'guest_name' => sanitize_text_field($data['guest_name']),
             'guest_email' => sanitize_email($data['guest_email']),
             'guest_phone' => $guest_phone,
@@ -323,7 +610,7 @@ class GMS_Database {
             'updated_at' => current_time('mysql'),
         );
 
-        $formats = array('%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s');
+        $formats = array('%d', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s');
 
         $result = $wpdb->insert($table_name, $insert_data, $formats);
 
@@ -348,7 +635,7 @@ class GMS_Database {
         $table_name = $wpdb->prefix . 'gms_reservations';
 
         $allowed = array(
-            'guest_id', 'guest_name', 'guest_email', 'guest_phone', 'property_id', 'property_name',
+            'guest_id', 'guest_record_id', 'guest_name', 'guest_email', 'guest_phone', 'property_id', 'property_name',
             'booking_reference', 'checkin_date', 'checkout_date', 'status',
             'agreement_status', 'verification_status', 'portal_token', 'platform', 'webhook_data'
         );
@@ -362,6 +649,9 @@ class GMS_Database {
             switch ($field) {
                 case 'guest_id':
                     $update_data['guest_id'] = intval($data[$field]);
+                    break;
+                case 'guest_record_id':
+                    $update_data['guest_record_id'] = intval($data[$field]);
                     break;
                 case 'guest_email':
                     $update_data['guest_email'] = sanitize_email($data[$field]);
@@ -711,7 +1001,7 @@ class GMS_Database {
             "SELECT r.*, r.guest_name AS reservation_guest_name,
                 COALESCE(NULLIF(TRIM(CONCAT(g.first_name, ' ', g.last_name)), ''), r.guest_name) AS guest_name
             FROM {$table_reservations} r
-            LEFT JOIN {$table_guests} g ON r.guest_id = g.id
+            LEFT JOIN {$table_guests} g ON r.guest_record_id = g.id
             ORDER BY r.checkin_date DESC
             LIMIT %d OFFSET %d",
             $per_page,
@@ -872,7 +1162,7 @@ class GMS_Database {
         $rows = $wpdb->get_results(
             $wpdb->prepare(
                 "SELECT id, guest_name, guest_email, guest_phone FROM {$table_reservations}
-                 WHERE (guest_id IS NULL OR guest_id = 0)
+                 WHERE (guest_record_id IS NULL OR guest_record_id = 0)
                    AND (guest_name <> '' OR guest_email <> '' OR guest_phone <> '')
                  ORDER BY id ASC
                  LIMIT %d",
@@ -895,7 +1185,22 @@ class GMS_Database {
             ));
 
             if ($guest_id) {
-                self::updateReservation($row['id'], array('guest_id' => $guest_id));
+                $guest_profile = self::get_guest_by_id($guest_id);
+                $wp_user_id = 0;
+
+                if ($guest_profile) {
+                    $wp_user_id = self::ensure_guest_user($guest_id, array(
+                        'first_name' => $guest_profile['first_name'] ?? '',
+                        'last_name' => $guest_profile['last_name'] ?? '',
+                        'email' => $guest_profile['email'] ?? '',
+                        'phone' => $guest_profile['phone'] ?? '',
+                    ), !empty($guest_profile['email']) && is_email($guest_profile['email']));
+                }
+
+                self::updateReservation($row['id'], array(
+                    'guest_record_id' => $guest_id,
+                    'guest_id' => $wp_user_id,
+                ));
                 $processed++;
             }
         }
@@ -909,7 +1214,7 @@ class GMS_Database {
         $table_reservations = $wpdb->prefix . 'gms_reservations';
 
         $count = (int) $wpdb->get_var(
-            "SELECT COUNT(id) FROM {$table_reservations} WHERE (guest_id IS NULL OR guest_id = 0) AND (guest_name <> '' OR guest_email <> '' OR guest_phone <> '')"
+            "SELECT COUNT(id) FROM {$table_reservations} WHERE (guest_record_id IS NULL OR guest_record_id = 0) AND (guest_name <> '' OR guest_email <> '' OR guest_phone <> '')"
         );
 
         return $count > 0;
@@ -967,6 +1272,14 @@ class GMS_Database {
 
         if (isset($row['guest_name'])) {
             $row['guest_name'] = trim($row['guest_name']);
+        }
+
+        if (isset($row['guest_id'])) {
+            $row['guest_id'] = intval($row['guest_id']);
+        }
+
+        if (isset($row['guest_record_id'])) {
+            $row['guest_record_id'] = intval($row['guest_record_id']);
         }
 
         if (empty($row['guest_name']) && isset($row['reservation_guest_name'])) {

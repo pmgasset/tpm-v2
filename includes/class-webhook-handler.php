@@ -235,15 +235,16 @@ class GMS_Webhook_Handler {
             }
             
             // Create or find guest user
-            $guest_id = $this->createOrFindGuest($booking_data);
-            
-            if (!$guest_id) {
+            $guest_profile = $this->createOrFindGuest($booking_data);
+
+            if (empty($guest_profile['guest_record_id'])) {
                 throw new Exception('Failed to create guest user');
             }
-            
+
             // Create reservation
             $reservation_data = array_merge($booking_data, array(
-                'guest_id' => $guest_id,
+                'guest_id' => intval($guest_profile['wp_user_id'] ?? 0),
+                'guest_record_id' => intval($guest_profile['guest_record_id']),
                 'platform' => 'booking.com',
                 'webhook_data' => $data
             ));
@@ -281,14 +282,15 @@ class GMS_Webhook_Handler {
                 throw new Exception('Invalid Airbnb data received');
             }
             
-            $guest_id = $this->createOrFindGuest($booking_data);
-            
-            if (!$guest_id) {
+            $guest_profile = $this->createOrFindGuest($booking_data);
+
+            if (empty($guest_profile['guest_record_id'])) {
                 throw new Exception('Failed to create guest user');
             }
-            
+
             $reservation_data = array_merge($booking_data, array(
-                'guest_id' => $guest_id,
+                'guest_id' => intval($guest_profile['wp_user_id'] ?? 0),
+                'guest_record_id' => intval($guest_profile['guest_record_id']),
                 'platform' => 'airbnb',
                 'webhook_data' => $data
             ));
@@ -325,14 +327,15 @@ class GMS_Webhook_Handler {
                 throw new Exception('Invalid VRBO data received');
             }
             
-            $guest_id = $this->createOrFindGuest($booking_data);
-            
-            if (!$guest_id) {
+            $guest_profile = $this->createOrFindGuest($booking_data);
+
+            if (empty($guest_profile['guest_record_id'])) {
                 throw new Exception('Failed to create guest user');
             }
-            
+
             $reservation_data = array_merge($booking_data, array(
-                'guest_id' => $guest_id,
+                'guest_id' => intval($guest_profile['wp_user_id'] ?? 0),
+                'guest_record_id' => intval($guest_profile['guest_record_id']),
                 'platform' => 'vrbo',
                 'webhook_data' => $data
             ));
@@ -369,14 +372,15 @@ class GMS_Webhook_Handler {
                 throw new Exception('Invalid generic booking data received');
             }
             
-            $guest_id = $this->createOrFindGuest($booking_data);
-            
-            if (!$guest_id) {
+            $guest_profile = $this->createOrFindGuest($booking_data);
+
+            if (empty($guest_profile['guest_record_id'])) {
                 throw new Exception('Failed to create guest user');
             }
-            
+
             $reservation_data = array_merge($booking_data, array(
-                'guest_id' => $guest_id,
+                'guest_id' => intval($guest_profile['wp_user_id'] ?? 0),
+                'guest_record_id' => intval($guest_profile['guest_record_id']),
                 'platform' => $platform,
                 'webhook_data' => $data
             ));
@@ -536,20 +540,39 @@ class GMS_Webhook_Handler {
 
         $first_name = sanitize_text_field($first_name);
         $last_name = sanitize_text_field($last_name);
+        $email = isset($booking_data['guest_email']) ? sanitize_email($booking_data['guest_email']) : '';
+        $phone = isset($booking_data['guest_phone']) ? sanitize_text_field($booking_data['guest_phone']) : '';
 
-        $guest_id = GMS_Database::upsert_guest(array(
+        $guest_record_id = GMS_Database::upsert_guest(array(
             'name' => $full_name,
             'first_name' => $first_name,
             'last_name' => $last_name,
-            'email' => $booking_data['guest_email'] ?? '',
-            'phone' => $booking_data['guest_phone'] ?? '',
+            'email' => $email,
+            'phone' => $phone,
+        ), array(
+            'force_user_creation' => !empty($email) && is_email($email),
         ));
 
-        if (!$guest_id) {
+        if (!$guest_record_id) {
             error_log('GMS: Failed to upsert guest for reservation payload.');
+            return array(
+                'guest_record_id' => 0,
+                'wp_user_id' => 0,
+            );
         }
 
-        return $guest_id;
+        $wp_user_id = GMS_Database::ensure_guest_user($guest_record_id, array(
+            'first_name' => $first_name,
+            'last_name' => $last_name,
+            'full_name' => $full_name,
+            'email' => $email,
+            'phone' => $phone,
+        ), !empty($email) && is_email($email));
+
+        return array(
+            'guest_record_id' => $guest_record_id,
+            'wp_user_id' => $wp_user_id,
+        );
     }
     
     private function sendGuestNotifications($reservation_id) {

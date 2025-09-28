@@ -1300,22 +1300,32 @@ class GMS_Admin {
             }
 
             $guest_id = 0;
+            $guest_record_id = 0;
 
             if (empty($errors)) {
-                $guest_id = GMS_Database::upsert_guest(array(
+                $guest_record_id = GMS_Database::upsert_guest(array(
                     'name' => $form_values['guest_name'],
                     'email' => $form_values['guest_email'],
                     'phone' => $form_values['guest_phone'],
+                ), array(
+                    'force_user_creation' => !empty($form_values['guest_email']) && is_email($form_values['guest_email']),
                 ));
 
-                if (!$guest_id) {
+                if (!$guest_record_id) {
                     $errors[] = __('Unable to save guest details. Please try again.', 'guest-management-system');
                 }
             }
 
             if (empty($errors)) {
+                $guest_id = GMS_Database::ensure_guest_user($guest_record_id, array(
+                    'full_name' => $form_values['guest_name'],
+                    'email' => $form_values['guest_email'],
+                    'phone' => $form_values['guest_phone'],
+                ), !empty($form_values['guest_email']) && is_email($form_values['guest_email']));
+
                 $reservation_data = array(
                     'guest_id' => $guest_id,
+                    'guest_record_id' => $guest_record_id,
                     'guest_name' => $form_values['guest_name'],
                     'guest_email' => $form_values['guest_email'],
                     'guest_phone' => $form_values['guest_phone'],
@@ -1548,34 +1558,26 @@ class GMS_Admin {
                 $form_values['guest_email'] = $normalized_email;
                 $form_values['guest_phone'] = $normalized_phone;
 
-                $guest_upsert_result = GMS_Database::upsert_guest(array(
+                $guest_record_id = GMS_Database::upsert_guest(array(
                     'name' => $form_values['guest_name'],
                     'email' => $form_values['guest_email'],
                     'phone' => $form_values['guest_phone'],
+                ), array(
+                    'force_user_creation' => !empty($form_values['guest_email']) && is_email($form_values['guest_email']),
                 ));
 
-                $guest_id = 0;
-
-                if (is_array($guest_upsert_result)) {
-                    $guest_id = isset($guest_upsert_result['id']) ? (int) $guest_upsert_result['id'] : 0;
-                    if (isset($guest_upsert_result['name'])) {
-                        $form_values['guest_name'] = (string) $guest_upsert_result['name'];
-                    }
-                    if (isset($guest_upsert_result['email'])) {
-                        $form_values['guest_email'] = (string) $guest_upsert_result['email'];
-                    }
-                    if (isset($guest_upsert_result['phone'])) {
-                        $form_values['guest_phone'] = (string) $guest_upsert_result['phone'];
-                    }
-                } else {
-                    $guest_id = (int) $guest_upsert_result;
-                }
-
-                if ($guest_id <= 0) {
+                if ($guest_record_id <= 0) {
                     $errors[] = __('Unable to save guest details. Please try again.', 'guest-management-system');
                 } else {
+                    $guest_id = GMS_Database::ensure_guest_user($guest_record_id, array(
+                        'full_name' => $form_values['guest_name'],
+                        'email' => $form_values['guest_email'],
+                        'phone' => $form_values['guest_phone'],
+                    ), !empty($form_values['guest_email']) && is_email($form_values['guest_email']));
+
                     $update_data = array(
                         'guest_id' => $guest_id,
+                        'guest_record_id' => $guest_record_id,
                         'guest_name' => $form_values['guest_name'],
                         'guest_email' => $form_values['guest_email'],
                         'guest_phone' => $form_values['guest_phone'],

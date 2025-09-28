@@ -101,11 +101,24 @@ function gms_get_guest_user($reservation_id) {
         return false;
     }
 
-    if (empty($reservation['guest_id'])) {
-        return false;
+    if (!empty($reservation['guest_id'])) {
+        $user = get_user_by('id', intval($reservation['guest_id']));
+        if ($user) {
+            return $user;
+        }
     }
 
-    return GMS_Database::get_guest_by_id($reservation['guest_id']);
+    if (!empty($reservation['guest_record_id'])) {
+        $guest = GMS_Database::get_guest_by_id(intval($reservation['guest_record_id']));
+        if ($guest && !empty($guest['wp_user_id'])) {
+            $user = get_user_by('id', intval($guest['wp_user_id']));
+            if ($user) {
+                return $user;
+            }
+        }
+    }
+
+    return false;
 }
 
 /**
@@ -130,13 +143,84 @@ function gms_is_guest($user_id = null) {
  */
 function gms_get_guest_reservations($guest_id) {
     global $wpdb;
-    
+
     $table = $wpdb->prefix . 'gms_reservations';
-    
+
     return $wpdb->get_results($wpdb->prepare(
         "SELECT * FROM $table WHERE guest_id = %d ORDER BY checkin_date DESC",
         $guest_id
     ), ARRAY_A);
+}
+
+add_action('profile_update', 'gms_sync_guest_profile_from_user', 10, 1);
+add_action('user_register', 'gms_sync_guest_profile_from_user', 10, 1);
+add_action('added_user_meta', 'gms_maybe_sync_guest_phone_meta', 10, 4);
+add_action('updated_user_meta', 'gms_maybe_sync_guest_phone_meta', 10, 4);
+add_filter('pre_get_avatar_data', 'gms_use_stripe_selfie_avatar', 10, 2);
+
+function gms_sync_guest_profile_from_user($user_id) {
+    $user_id = intval($user_id);
+
+    if ($user_id <= 0 || !class_exists('GMS_Database')) {
+        return;
+    }
+
+    GMS_Database::syncUserToGuest($user_id);
+}
+
+function gms_maybe_sync_guest_phone_meta($meta_id, $user_id, $meta_key, $meta_value) {
+    if ($meta_key !== 'gms_guest_phone' || !class_exists('GMS_Database')) {
+        return;
+    }
+
+    gms_sync_guest_profile_from_user($user_id);
+}
+
+function gms_use_stripe_selfie_avatar($args, $id_or_email) {
+    $user = null;
+
+    if (is_numeric($id_or_email)) {
+        $user = get_user_by('id', intval($id_or_email));
+    } elseif (is_object($id_or_email) && isset($id_or_email->user_id)) {
+        $user = get_user_by('id', intval($id_or_email->user_id));
+    } elseif (is_string($id_or_email) && is_email($id_or_email)) {
+        $user = get_user_by('email', $id_or_email);
+    }
+
+    if (!$user) {
+        return $args;
+    }
+
+    $attachment_id = (int) get_user_meta($user->ID, 'profile_photo_id', true);
+    $avatar_url = '';
+
+    if ($attachment_id > 0) {
+        $size = isset($args['size']) ? intval($args['size']) : 96;
+        $avatar_url = wp_get_attachment_image_url($attachment_id, array($size, $size));
+
+        $srcset = wp_get_attachment_image_srcset($attachment_id, array($size, $size));
+        if ($srcset) {
+            $args['srcset'] = $srcset;
+        }
+
+        $sizes = wp_get_attachment_image_sizes($attachment_id, array($size, $size));
+        if ($sizes) {
+            $args['sizes'] = $sizes;
+        }
+    }
+
+    if (!$avatar_url) {
+        $avatar_url = esc_url_raw(get_user_meta($user->ID, 'profile_photo_url', true));
+    }
+
+    if (!$avatar_url) {
+        return $args;
+    }
+
+    $args['url'] = $avatar_url;
+    $args['found_avatar'] = true;
+
+    return $args;
 }
 
 /**
