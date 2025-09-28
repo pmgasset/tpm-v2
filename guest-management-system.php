@@ -200,6 +200,7 @@ class GuestManagementSystem {
             'gms-admin',
             'gmsAdmin',
             [
+                'ajaxUrl' => admin_url('admin-ajax.php'),
                 'gms_admin_nonce' => wp_create_nonce('gms_admin_nonce'),
                 'gms_webhook_url' => $webhook_base,
                 'webhookUrls' => $webhook_urls,
@@ -222,6 +223,7 @@ class GuestManagementSystem {
                     'checkinDate' => __('Check-in Date', 'guest-management-system'),
                     'checkoutDate' => __('Check-out Date', 'guest-management-system'),
                     'statusLabel' => __('Status', 'guest-management-system'),
+                    'ajaxUnavailable' => __('Unable to communicate with the server.', 'guest-management-system'),
                 ],
             ]
         );
