@@ -1312,11 +1312,29 @@ class GMS_Admin {
     }
 
     public function render_templates_page() {
+        if (!current_user_can('manage_options')) {
+            return;
+        }
+
+        if (isset($_GET['settings-updated'])) {
+            add_settings_error('gms_settings_messages', 'gms_settings_updated', __('Settings saved.', 'guest-management-system'), 'updated');
+        }
+
         ?>
-        <div class="wrap">
+        <div class="wrap gms-settings">
             <h1 class="wp-heading-inline"><?php esc_html_e('Templates', 'guest-management-system'); ?></h1>
             <hr class="wp-header-end">
             <p><?php esc_html_e('Customize notification and agreement templates used throughout the guest journey.', 'guest-management-system'); ?></p>
+
+            <?php settings_errors('gms_settings_messages'); ?>
+
+            <form action="options.php" method="post">
+                <?php
+                settings_fields('gms_settings_templates');
+                do_settings_sections('gms_settings_templates');
+                submit_button();
+                ?>
+            </form>
         </div>
         <?php
     }
