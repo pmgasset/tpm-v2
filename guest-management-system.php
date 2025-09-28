@@ -205,14 +205,6 @@ class GuestManagementSystem {
                 'gms_webhook_url' => $webhook_base,
                 'webhookUrls' => $webhook_urls,
                 'strings' => [
-                    'loadingReservation' => __('Loading reservation…', 'guest-management-system'),
-                    'editReservationTitle' => __('Edit Reservation', 'guest-management-system'),
-                    'saveChanges' => __('Save Changes', 'guest-management-system'),
-                    'saving' => __('Saving…', 'guest-management-system'),
-                    'cancel' => __('Cancel', 'guest-management-system'),
-                    'updateSuccess' => __('Reservation updated.', 'guest-management-system'),
-                    'updateError' => __('Unable to save the reservation. Please try again.', 'guest-management-system'),
-                    'loadError' => __('Unable to load reservation details. Please try again.', 'guest-management-system'),
                     'copySuccess' => __('Portal link copied to clipboard.', 'guest-management-system'),
                     'copyError' => __('Unable to copy the portal link.', 'guest-management-system'),
                     'guestName' => __('Guest Name', 'guest-management-system'),
@@ -224,6 +216,7 @@ class GuestManagementSystem {
                     'checkoutDate' => __('Check-out Date', 'guest-management-system'),
                     'statusLabel' => __('Status', 'guest-management-system'),
                     'ajaxUnavailable' => __('Unable to communicate with the server.', 'guest-management-system'),
+
                 ],
             ]
         );

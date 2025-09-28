@@ -46,8 +46,6 @@
         return fallback;
     }
 
-    var reservationCache = {};
-
     function copyTextToClipboard(text) {
         var deferred = $.Deferred();
 
@@ -130,6 +128,7 @@
             }
         }, 2000);
     }
+
 
     function getColumnCount($row) {
         var count = $row.children('th, td').length;
