@@ -1610,16 +1610,6 @@ class GMS_Admin {
 
         $cancel_url = $list_url;
 
-                    wp_safe_redirect($redirect_url);
-                    exit;
-                }
-
-                $errors[] = __('Unable to update reservation. Please try again.', 'guest-management-system');
-            }
-        }
-
-        $cancel_url = add_query_arg(array('page' => 'guest-management-reservations'), admin_url('admin.php'));
-
 
         ?>
         <div class="wrap">
