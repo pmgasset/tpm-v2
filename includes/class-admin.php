@@ -279,6 +279,9 @@ class GMS_Admin {
      * Register plugin settings and sections
      */
     public function register_settings() {
+        if (!current_user_can('manage_options')) {
+            return;
+        }
         // General tab - contact defaults
         register_setting('gms_settings_general', 'gms_email_from_name', array(
             'sanitize_callback' => array($this, 'sanitize_text')
@@ -343,9 +346,7 @@ class GMS_Admin {
         add_settings_section(
             'gms_integrations_section',
             __('API Integrations', 'guest-management-system'),
-            function() {
-                echo '<p>' . esc_html__('Provide credentials for payment processing, SMS delivery, URL shortening, and webhook security.', 'guest-management-system') . '</p>';
-            },
+            array($this, 'render_integrations_help'),
             'gms_settings_integrations'
         );
 
@@ -763,6 +764,40 @@ class GMS_Admin {
             printf('<li><code>%1$s</code> — %2$s</li>', esc_html($token), esc_html($description));
         }
         echo '</ul></div>';
+    }
+
+    /**
+     * Render contextual guidance for integrations, including webhook endpoints
+     */
+    public function render_integrations_help() {
+        echo '<p>' . esc_html__('Provide credentials for payment processing, SMS delivery, URL shortening, and webhook security.', 'guest-management-system') . '</p>';
+
+        $webhook_urls = function_exists('gms_get_webhook_urls') ? gms_get_webhook_urls() : array();
+
+        if (empty($webhook_urls) || !is_array($webhook_urls)) {
+            return;
+        }
+
+        echo '<div class="notice notice-info inline webhook-url-box">';
+        echo '<p><strong>' . esc_html__('Webhook Endpoints', 'guest-management-system') . '</strong></p>';
+        echo '<ul>';
+
+        foreach ($webhook_urls as $platform => $url) {
+            if (empty($url)) {
+                continue;
+            }
+
+            $label = ucwords(str_replace(array('-', '_'), ' ', $platform));
+            printf(
+                '<li><span class="webhook-label">%1$s:</span> <code>%2$s</code></li>',
+                esc_html($label),
+                esc_html($url)
+            );
+        }
+
+        echo '</ul>';
+        echo '<p>' . esc_html__('Authenticate webhook requests by sending the shared secret saved below as the X-Webhook-Token header or as a webhook_token query parameter.', 'guest-management-system') . '</p>';
+        echo '</div>';
     }
     
     public function add_admin_menu() {
