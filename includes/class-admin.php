@@ -1,256 +1,277 @@
 <?php
 /**
- * Admin Class - Guest Management System
- * File: /wp-content/plugins/guest-management-system/includes/class-admin.php
- * 
- * Handles admin interface including Templates menu with rich text editor
+ * File: class-admin.php
+ * Location: /wp-content/plugins/guest-management-system/includes/class-admin.php
+ * * Handles all admin-facing functionality
  */
+
+if (!defined('ABSPATH')) {
+    exit;
+}
+
+if (!class_exists('WP_List_Table')) {
+    require_once(ABSPATH . 'wp-admin/includes/class-wp-list-table.php');
+}
+
+// Custom List Table for Reservations
+class GMS_Reservations_List_Table extends WP_List_Table {
+
+    public function __construct() {
+        parent::__construct(array(
+            'singular' => 'Reservation',
+            'plural'   => 'Reservations',
+            'ajax'     => false
+        ));
+    }
+
+    public function get_columns() {
+        return array(
+            'cb'                => '<input type="checkbox" />',
+            'guest_name'        => 'Guest',
+            'property_name'     => 'Property',
+            'checkin_date'      => 'Check-in',
+            'checkout_date'     => 'Check-out',
+            'status'            => 'Status',
+            'booking_reference' => 'Booking Ref',
+            'platform'          => 'Platform'
+        );
+    }
+
+    public function column_default($item, $column_name) {
+        switch ($column_name) {
+            case 'property_name':
+            case 'status':
+            case 'booking_reference':
+            case 'platform':
+                return $item[$column_name];
+            case 'guest_name':
+                 // This assumes guest data is joined in the query. 
+                 // We will need to create a function that gets guest name by ID if not.
+                return 'Guest Name'; // Placeholder
+            case 'checkin_date':
+            case 'checkout_date':
+                return date('M j, Y g:i a', strtotime($item[$column_name]));
+            default:
+                return print_r($item, true);
+        }
+    }
+    
+    public function column_cb($item) {
+        return sprintf('<input type="checkbox" name="reservation[]" value="%s" />', $item['id']);
+    }
+
+    function prepare_items() {
+        $columns = $this->get_columns();
+        $hidden = array();
+        $sortable = array();
+        $this->_column_headers = array($columns, $hidden, $sortable);
+
+        // FIX: Explicitly fetch the data from our new database function
+        $data = GMS_Database::get_all_reservations_for_admin();
+
+        // Assign the data to the items property, which WP_List_Table uses
+        $this->items = $data;
+    }
+}
+
+// Custom List Table for Guests
+class GMS_Guests_List_Table extends WP_List_Table {
+    public function __construct() {
+        parent::__construct(array(
+            'singular' => 'Guest',
+            'plural'   => 'Guests',
+            'ajax'     => false
+        ));
+    }
+
+    public function get_columns() {
+        return array(
+            'cb'        => '<input type="checkbox" />',
+            'name'      => 'Name',
+            'email'     => 'Email',
+            'phone'     => 'Phone',
+            'total_bookings' => 'Total Bookings'
+        );
+    }
+    
+    public function column_default($item, $column_name) {
+        switch($column_name) {
+            case 'email':
+            case 'phone':
+            case 'total_bookings':
+                return $item[$column_name];
+            case 'name':
+                return $item['first_name'] . ' ' . $item['last_name'];
+            default:
+                return print_r($item, true);
+        }
+    }
+
+    public function column_cb($item) {
+        return sprintf('<input type="checkbox" name="guest[]" value="%s" />', $item['id']);
+    }
+
+    function prepare_items() {
+        $columns = $this->get_columns();
+        $hidden = array();
+        $sortable = array();
+        $this->_column_headers = array($columns, $hidden, $sortable);
+        
+        // FIX: Explicitly fetch the data from our new database function
+        $this->items = GMS_Database::get_all_guests_for_admin(); 
+    }
+}
+
 
 class GMS_Admin {
     
     public function __construct() {
-        add_action('admin_menu', array($this, 'addMenuPages'));
-        add_action('admin_init', array($this, 'registerSettings'));
-        add_action('admin_init', array($this, 'ensureAgreementTemplateDefault'));
-        add_action('admin_post_gms_save_template', array($this, 'saveTemplate'));
+        add_action('admin_menu', array($this, 'add_admin_menu'));
+        add_action('admin_init', array($this, 'register_settings'));
     }
     
-    public function addMenuPages() {
-        // Main menu
+    public function add_admin_menu() {
         add_menu_page(
             'Guest Management',
             'Guest Management',
             'manage_options',
-            'guest-management',
-            array($this, 'dashboardPage'),
-            'dashicons-groups',
-            30
+            'guest-management-dashboard',
+            array($this, 'render_dashboard_page'),
+            'dashicons-businessperson',
+            25
         );
         
-        // Reservations submenu
         add_submenu_page(
-            'guest-management',
+            'guest-management-dashboard',
+            'Dashboard',
+            'Dashboard',
+            'manage_options',
+            'guest-management-dashboard',
+            array($this, 'render_dashboard_page')
+        );
+        
+        add_submenu_page(
+            'guest-management-dashboard',
             'Reservations',
             'Reservations',
             'manage_options',
-            'gms-reservations',
-            array($this, 'reservationsPage')
+            'guest-management-reservations',
+            array($this, 'render_reservations_page')
+        );
+
+        add_submenu_page(
+            'guest-management-dashboard',
+            'Guests',
+            'Guests',
+            'manage_options',
+            'guest-management-guests',
+            array($this, 'render_guests_page')
         );
         
-        // Templates submenu - NEW
         add_submenu_page(
-            'guest-management',
+            'guest-management-dashboard',
             'Templates',
             'Templates',
             'manage_options',
-            'gms-templates',
-            array($this, 'templatesPage')
+            'guest-management-templates',
+            array($this, 'render_templates_page')
         );
         
-        // Settings submenu
         add_submenu_page(
-            'guest-management',
+            'guest-management-dashboard',
             'Settings',
             'Settings',
             'manage_options',
-            'gms-settings',
-            array($this, 'settingsPage')
+            'guest-management-settings',
+            array($this, 'render_settings_page')
         );
     }
     
-    public function registerSettings() {
-        register_setting('gms_settings', 'gms_agreement_template');
-        register_setting('gms_settings', 'gms_email_template');
-        register_setting('gms_settings', 'gms_sms_template');
-        register_setting('gms_settings', 'gms_stripe_publishable_key');
-        register_setting('gms_settings', 'gms_stripe_secret_key');
-        register_setting('gms_settings', 'gms_voipms_username');
-        register_setting('gms_settings', 'gms_voipms_password');
-        register_setting('gms_settings', 'gms_voipms_did');
-        register_setting('gms_settings', 'gms_company_name');
-        register_setting('gms_settings', 'gms_company_logo');
-    }
-
-    public function ensureAgreementTemplateDefault() {
-        $template = get_option('gms_agreement_template', '');
-
-        if (!is_string($template) || trim($template) === '') {
-            update_option('gms_agreement_template', $this->getDefaultAgreementTemplate());
-        }
-    }
-    
-    public function templatesPage() {
-        // Load current template
-        $agreement_template = get_option('gms_agreement_template', $this->getDefaultAgreementTemplate());
-        
+    public function render_dashboard_page() {
         ?>
         <div class="wrap">
-            <h1>Agreement Template</h1>
-            
-            <div class="notice notice-info">
-                <p><strong>Available Variables:</strong> Use these in your template and they'll be replaced with actual data:</p>
-                <p>
-                    <code>{guest_name}</code>, 
-                    <code>{guest_email}</code>, 
-                    <code>{guest_phone}</code>, 
-                    <code>{property_name}</code>, 
-                    <code>{booking_reference}</code>, 
-                    <code>{checkin_date}</code>, 
-                    <code>{checkout_date}</code>, 
-                    <code>{checkin_time}</code>, 
-                    <code>{checkout_time}</code>, 
-                    <code>{company_name}</code>
-                </p>
-            </div>
-            
-            <form method="post" action="<?php echo admin_url('admin-post.php'); ?>">
-                <?php wp_nonce_field('gms_save_template', 'gms_template_nonce'); ?>
-                <input type="hidden" name="action" value="gms_save_template">
-                
-                <table class="form-table">
-                    <tr>
-                        <th scope="row">
-                            <label for="gms_agreement_template">Agreement Template</label>
-                        </th>
-                        <td>
-                            <?php
-                            // Rich text editor
-                            wp_editor(
-                                $agreement_template,
-                                'gms_agreement_template',
-                                array(
-                                    'textarea_name' => 'gms_agreement_template',
-                                    'textarea_rows' => 20,
-                                    'media_buttons' => false,
-                                    'teeny' => false,
-                                    'quicktags' => true,
-                                    'tinymce' => array(
-                                        'toolbar1' => 'formatselect,bold,italic,underline,strikethrough,bullist,numlist,blockquote,hr,alignleft,aligncenter,alignright,link,unlink,removeformat,undo,redo',
-                                        'toolbar2' => ''
-                                    )
-                                )
-                            );
-                            ?>
-                            <p class="description">
-                                This template will be shown to guests before they sign. 
-                                Use the variables above to personalize the agreement.
-                            </p>
-                        </td>
-                    </tr>
-                </table>
-                
-                <?php submit_button('Save Template'); ?>
-            </form>
-            
-            <hr>
-            
-            <h2>Preview</h2>
-            <div style="border: 1px solid #ccc; padding: 20px; background: #fff; max-width: 800px;">
-                <?php echo wpautop($this->replaceTemplatePlaceholders($agreement_template)); ?>
-            </div>
+            <h1>Guest Management Dashboard</h1>
+            <p>Welcome to your guest management system. Here you'll find an overview of your upcoming reservations and guest activity.</p>
         </div>
         <?php
     }
     
-    public function saveTemplate() {
-        // Verify nonce
-        if (!isset($_POST['gms_template_nonce']) || !wp_verify_nonce($_POST['gms_template_nonce'], 'gms_save_template')) {
-            wp_die('Security check failed');
-        }
-        
-        // Check permissions
-        if (!current_user_can('manage_options')) {
-            wp_die('Unauthorized access');
-        }
-        
-        // Save template
-        $template = wp_kses_post($_POST['gms_agreement_template']);
-        update_option('gms_agreement_template', $template);
-        
-        // Redirect with success message
-        wp_redirect(add_query_arg(
-            array(
-                'page' => 'gms-templates',
-                'updated' => 'true'
-            ),
-            admin_url('admin.php')
-        ));
-        exit;
+    public function render_reservations_page() {
+        $reservations_table = new GMS_Reservations_List_Table();
+        ?>
+        <div class="wrap">
+            <h1 class="wp-heading-inline">Reservations</h1>
+            <a href="#" class="page-title-action">Add New</a>
+            <hr class="wp-header-end">
+            <?php $reservations_table->prepare_items(); ?>
+            <form method="post">
+                <?php $reservations_table->display(); ?>
+            </form>
+        </div>
+        <?php
     }
-    
-    private function getDefaultAgreementTemplate() {
-        return '<h2>Guest Agreement for {property_name}</h2>
 
-<p><strong>Guest Information:</strong></p>
-<ul>
-    <li>Name: {guest_name}</li>
-    <li>Email: {guest_email}</li>
-    <li>Phone: {guest_phone}</li>
-    <li>Booking Reference: {booking_reference}</li>
-    <li>Check-in: {checkin_date} at {checkin_time}</li>
-    <li>Check-out: {checkout_date} at {checkout_time}</li>
-</ul>
-
-<h3>House Rules</h3>
-<ol>
-    <li><strong>Maximum Occupancy:</strong> The property may not be occupied by more than the number of guests specified in the reservation.</li>
-    <li><strong>Quiet Hours:</strong> Please observe quiet hours between 10 PM and 8 AM.</li>
-    <li><strong>No Smoking:</strong> This is a non-smoking property. Smoking is not permitted anywhere on the premises.</li>
-    <li><strong>No Pets:</strong> Pets are not allowed unless explicitly authorized in your reservation.</li>
-    <li><strong>No Parties:</strong> No parties or events are permitted without prior written approval.</li>
-    <li><strong>Property Care:</strong> Please treat the property with respect and report any damages immediately.</li>
-    <li><strong>Check-out:</strong> Please ensure the property is left in good condition at check-out.</li>
-</ol>
-
-<h3>Terms and Conditions</h3>
-<p>By signing this agreement, you acknowledge that you have read and agree to:</p>
-<ul>
-    <li>Comply with all house rules stated above</li>
-    <li>Be responsible for any damages caused during your stay</li>
-    <li>Understand that violation of these rules may result in immediate eviction without refund</li>
-    <li>Agree to allow property inspection if deemed necessary</li>
-    <li>Accept liability for any additional cleaning fees if property is left in unacceptable condition</li>
-</ul>
-
-<p><strong>I agree to the terms and conditions stated above.</strong></p>';
+    public function render_guests_page() {
+        $guests_table = new GMS_Guests_List_Table();
+        ?>
+        <div class="wrap">
+            <h1 class="wp-heading-inline">Guests</h1>
+            <a href="#" class="page-title-action">Add New</a>
+            <hr class="wp-header-end">
+            <?php $guests_table->prepare_items(); ?>
+            <form method="post">
+                <?php $guests_table->display(); ?>
+            </form>
+        </div>
+        <?php
     }
     
-    private function replaceTemplatePlaceholders($template, $data = null) {
-        // Sample data for preview
-        if (!$data) {
-            $data = array(
-                'guest_name' => 'John Doe',
-                'guest_email' => 'john@example.com',
-                'guest_phone' => '+1 (555) 123-4567',
-                'property_name' => 'Sunset Beach House',
-                'booking_reference' => 'DEMO-123456',
-                'checkin_date' => 'June 15, 2025',
-                'checkout_date' => 'June 20, 2025',
-                'checkin_time' => '3:00 PM',
-                'checkout_time' => '11:00 AM',
-                'company_name' => get_option('gms_company_name', 'Your Company')
-            );
-        }
+    public function render_templates_page() {
+        ?>
+        <div class="wrap">
+            <h1>Templates</h1>
+            <form method="post" action="options.php">
+                <?php
+                settings_fields('gms_templates_group');
+                do_settings_sections('guest-management-templates');
+                submit_button();
+                ?>
+            </form>
+        </div>
+        <?php
+    }
+
+    public function render_settings_page() {
+        ?>
+        <div class="wrap">
+            <h1>Settings</h1>
+            <form method="post" action="options.php">
+                <?php
+                settings_fields('gms_settings_group');
+                do_settings_sections('guest-management-settings');
+                submit_button();
+                ?>
+            </form>
+        </div>
+        <?php
+    }
+
+    public function register_settings() {
+        // Settings API for Templates page
+        register_setting('gms_templates_group', 'gms_email_template');
+        register_setting('gms_templates_group', 'gms_sms_template');
+        register_setting('gms_templates_group', 'gms_agreement_template');
         
-        foreach ($data as $key => $value) {
-            $template = str_replace('{' . $key . '}', $value, $template);
-        }
+        add_settings_section('gms_templates_section', 'Communication Templates', null, 'guest-management-templates');
         
-        return $template;
+        add_settings_field('gms_email_template_field', 'Email Template', array($this, 'render_template_field'), 'guest-management-templates', 'gms_templates_section', ['name' => 'gms_email_template']);
+        add_settings_field('gms_sms_template_field', 'SMS Template', array($this, 'render_template_field'), 'guest-management-templates', 'gms_templates_section', ['name' => 'gms_sms_template']);
+        add_settings_field('gms_agreement_template_field', 'Agreement Template', array($this, 'render_template_field'), 'guest-management-templates', 'gms_templates_section', ['name' => 'gms_agreement_template']);
     }
-    
-    public function dashboardPage() {
-        // Dashboard content (keep existing)
-        echo '<div class="wrap"><h1>Guest Management Dashboard</h1></div>';
-    }
-    
-    public function reservationsPage() {
-        // Reservations content (keep existing)
-        echo '<div class="wrap"><h1>Reservations</h1></div>';
-    }
-    
-    public function settingsPage() {
-        // Settings content (keep existing)
-        echo '<div class="wrap"><h1>Settings</h1></div>';
+
+    public function render_template_field($args) {
+        $option = get_option($args['name']);
+        wp_editor($option, $args['name'], ['textarea_rows' => 15]);
+        echo '<p class="description">Available placeholders: {guest_name}, {property_name}, {checkin_date}, {checkout_date}, {portal_link}, etc.</p>';
     }
 }
