@@ -42,7 +42,6 @@ class GMS_Database {
             PRIMARY KEY  (id),
             KEY guest_id (guest_id),
             KEY property_id (property_id),
-            -- FIX: Changed UNIQUE KEY to KEY to prevent duplicate key errors on activation
             KEY portal_token (portal_token)
         ) $charset_collate;";
         dbDelta($sql_reservations);
@@ -130,9 +129,6 @@ class GMS_Database {
         dbDelta($sql_agreements);
     }
     
-    // Add other database interaction methods here...
-    // e.g., getReservation, updateReservation, getGuest, etc.
-
     public static function getReservationByToken($token) {
         global $wpdb;
         $table_name = $wpdb->prefix . 'gms_reservations';
@@ -200,5 +196,46 @@ class GMS_Database {
         $table_name = $wpdb->prefix . 'gms_reservations';
         $data['updated_at'] = current_time('mysql');
         return $wpdb->update($table_name, $data, array('id' => $id));
+    }
+
+    /**
+     * NEW FUNCTION
+     * Fetches all reservations with guest names for the admin list table.
+     */
+    public static function get_all_reservations_for_admin() {
+        global $wpdb;
+        $reservations_table = $wpdb->prefix . 'gms_reservations';
+        $guests_table = $wpdb->prefix . 'gms_guests';
+        
+        $query = "
+            SELECT r.*, g.first_name, g.last_name, CONCAT(g.first_name, ' ', g.last_name) AS guest_name
+            FROM {$reservations_table} r
+            LEFT JOIN {$guests_table} g ON r.guest_id = g.id
+            ORDER BY r.checkin_date DESC
+        ";
+        
+        $results = $wpdb->get_results($query, ARRAY_A);
+        return is_array($results) ? $results : array();
+    }
+
+    /**
+     * NEW FUNCTION
+     * Fetches all guests with their booking counts for the admin list table.
+     */
+    public static function get_all_guests_for_admin() {
+        global $wpdb;
+        $guests_table = $wpdb->prefix . 'gms_guests';
+        $reservations_table = $wpdb->prefix . 'gms_reservations';
+        
+        $query = "
+            SELECT g.id, g.first_name, g.last_name, g.email, g.phone, COUNT(r.id) as total_bookings
+            FROM {$guests_table} g
+            LEFT JOIN {$reservations_table} r ON g.id = r.guest_id
+            GROUP BY g.id
+            ORDER BY g.last_name, g.first_name
+        ";
+        
+        $results = $wpdb->get_results($query, ARRAY_A);
+        return is_array($results) ? $results : array();
     }
 }
