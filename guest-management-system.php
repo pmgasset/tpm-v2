@@ -190,6 +190,19 @@ class GuestManagementSystem {
         wp_enqueue_script('gms-admin', GMS_PLUGIN_URL . 'assets/js/admin.js', ['jquery'], GMS_VERSION, true);
         wp_enqueue_style('gms-admin', GMS_PLUGIN_URL . 'assets/css/admin.css', [], GMS_VERSION);
         wp_enqueue_media(); // For handling media uploads in settings (e.g., logo)
+
+        $webhook_base = untrailingslashit(home_url('/webhook'));
+        $webhook_urls = function_exists('gms_get_webhook_urls') ? gms_get_webhook_urls() : [];
+
+        wp_localize_script(
+            'gms-admin',
+            'gmsAdmin',
+            [
+                'gms_admin_nonce' => wp_create_nonce('gms_admin_nonce'),
+                'gms_webhook_url' => $webhook_base,
+                'webhookUrls' => $webhook_urls,
+            ]
+        );
     }
     
     private function getDefaultAgreementTemplate() {

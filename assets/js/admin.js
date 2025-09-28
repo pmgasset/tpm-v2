@@ -8,6 +8,24 @@
 (function($) {
     'use strict';
 
+    var adminConfig = window.gmsAdmin || {};
+
+    function getNonce() {
+        return adminConfig.gms_admin_nonce || adminConfig.nonce || '';
+    }
+
+    function getGenericWebhookUrl() {
+        if (adminConfig.webhookUrls && adminConfig.webhookUrls.generic) {
+            return adminConfig.webhookUrls.generic;
+        }
+
+        if (adminConfig.gms_webhook_url) {
+            return adminConfig.gms_webhook_url.replace(/\/$/, '') + '/generic';
+        }
+
+        return '';
+    }
+
     $(document).ready(function() {
         
         // Tab switching functionality for hash-based tabs only
@@ -92,7 +110,7 @@
                 data: {
                     action: 'gms_test_sms',
                     number: number,
-                    nonce: gms_admin_nonce
+                    nonce: getNonce()
                 },
                 success: function(response) {
                     if (response.success) {
@@ -130,7 +148,7 @@
                 data: {
                     action: 'gms_test_email',
                     email: email,
-                    nonce: gms_admin_nonce
+                    nonce: getNonce()
                 },
                 success: function(response) {
                     if (response.success) {
@@ -165,7 +183,7 @@
                 data: {
                     action: 'gms_resend_notification',
                     reservation_id: reservationId,
-                    nonce: gms_admin_nonce
+                    nonce: getNonce()
                 },
                 success: function(response) {
                     if (response.success) {
@@ -213,7 +231,7 @@
                     action: 'gms_bulk_action',
                     bulk_action: action,
                     reservation_ids: selectedIds,
-                    nonce: gms_admin_nonce
+                    nonce: getNonce()
                 },
                 success: function(response) {
                     if (response.success) {
@@ -249,8 +267,16 @@
                 currency: 'USD'
             };
             
+            var genericWebhookUrl = getGenericWebhookUrl();
+
+            if (!genericWebhookUrl) {
+                alert('Webhook URL is not configured.');
+                button.prop('disabled', false).text('Test Webhook');
+                return;
+            }
+
             $.ajax({
-                url: gms_webhook_url + '/generic',
+                url: genericWebhookUrl,
                 type: 'POST',
                 contentType: 'application/json',
                 data: JSON.stringify(testData),
@@ -383,7 +409,7 @@
                         action: 'gms_autosave_template',
                         field: field,
                         value: value,
-                        nonce: gms_admin_nonce
+                        nonce: getNonce()
                     },
                     success: function() {
                         console.log('Template auto-saved');
@@ -402,7 +428,7 @@
                 type: 'POST',
                 data: {
                     action: 'gms_refresh_stats',
-                    nonce: gms_admin_nonce
+                    nonce: getNonce()
                 },
                 success: function(response) {
                     if (response.success) {
