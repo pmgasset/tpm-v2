@@ -53,11 +53,20 @@ class GMS_Stripe_Integration {
             )
         );
         
+        $body_json = wp_json_encode($body_params);
+
+        if (false === $body_json) {
+            error_log('GMS Stripe Error: Unable to encode verification session body.');
+            return false;
+        }
+
         $response = wp_remote_post($endpoint, array(
             'headers' => array(
                 'Authorization' => 'Bearer ' . $this->secret_key,
+                'Content-Type' => 'application/json',
             ),
-            'body' => $body_params,
+            'body' => $body_json,
+            'data_format' => 'body',
             'timeout' => 30
         ));
         
