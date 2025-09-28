@@ -488,6 +488,7 @@
             });
         });
 
+
         // Tab switching functionality for hash-based tabs only
         $('.nav-tab').on('click', function(e) {
             var target = $(this).attr('href');

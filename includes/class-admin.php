@@ -1247,6 +1247,8 @@ class GMS_Admin {
             return;
         }
 
+        $list_url = add_query_arg(array('page' => 'guest-management-reservations'), admin_url('admin.php'));
+
         $form_values = array(
             'guest_name' => '',
             'guest_email' => '',
@@ -1260,6 +1262,8 @@ class GMS_Admin {
         );
 
         $errors = array();
+
+        $success_notice = '';
 
         if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             check_admin_referer('gms_create_reservation');
@@ -1334,21 +1338,41 @@ class GMS_Admin {
                         admin_url('admin.php')
                     );
 
-                    wp_safe_redirect($redirect_url);
-                    exit;
-                }
+                    $redirected = false;
 
-                $errors[] = __('Unable to create reservation. Please try again.', 'guest-management-system');
+                    if (!headers_sent()) {
+                        $redirected = wp_safe_redirect($redirect_url);
+                    }
+
+                    if ($redirected) {
+                        exit;
+                    }
+
+                    $success_notice = sprintf(
+                        /* translators: 1: opening anchor tag, 2: closing anchor tag */
+                        __('Reservation created successfully. %1$sReturn to Reservations%2$s.', 'guest-management-system'),
+                        '<a href="' . esc_url($list_url) . '">',
+                        '</a>'
+                    );
+                } else {
+                    $errors[] = __('Unable to create reservation. Please try again.', 'guest-management-system');
+                }
             }
         }
 
-        $cancel_url = add_query_arg(array('page' => 'guest-management-reservations'), admin_url('admin.php'));
+        $cancel_url = $list_url;
 
         ?>
         <div class="wrap">
             <h1 class="wp-heading-inline"><?php esc_html_e('Add New Reservation', 'guest-management-system'); ?></h1>
             <a href="<?php echo esc_url($cancel_url); ?>" class="page-title-action"><?php esc_html_e('Back to Reservations', 'guest-management-system'); ?></a>
             <hr class="wp-header-end">
+
+            <?php if ($success_notice) : ?>
+                <div class="notice notice-success is-dismissible">
+                    <p><?php echo wp_kses_post($success_notice); ?></p>
+                </div>
+            <?php endif; ?>
 
             <?php if (!empty($errors)) : ?>
                 <div class="notice notice-error">
@@ -1441,6 +1465,10 @@ class GMS_Admin {
             return;
         }
 
+
+        $list_url = add_query_arg(array('page' => 'guest-management-reservations'), admin_url('admin.php'));
+
+
         $form_values = array(
             'guest_name' => isset($reservation['guest_name']) ? $reservation['guest_name'] : '',
             'guest_email' => isset($reservation['guest_email']) ? $reservation['guest_email'] : '',
@@ -1454,6 +1482,10 @@ class GMS_Admin {
         );
 
         $errors = array();
+
+
+        $success_notice = '';
+
 
         if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             check_admin_referer('gms_edit_reservation_' . $reservation_id);
@@ -1522,10 +1554,36 @@ class GMS_Admin {
                             'page' => 'guest-management-reservations',
                             'action' => 'edit',
                             'reservation_id' => $reservation_id,
+
                             'gms_reservation_updated' => 1,
                         ),
                         admin_url('admin.php')
                     );
+
+
+                    $redirected = false;
+
+                    if (!headers_sent()) {
+                        $redirected = wp_safe_redirect($redirect_url);
+                    }
+
+                    if ($redirected) {
+                        exit;
+                    }
+
+                    $success_notice = sprintf(
+                        /* translators: 1: opening anchor tag, 2: closing anchor tag */
+                        __('Reservation updated successfully. %1$sReturn to Reservations%2$s.', 'guest-management-system'),
+                        '<a href="' . esc_url($list_url) . '">',
+                        '</a>'
+                    );
+                } else {
+                    $errors[] = __('Unable to update reservation. Please try again.', 'guest-management-system');
+                }
+            }
+        }
+
+        $cancel_url = $list_url;
 
                     wp_safe_redirect($redirect_url);
                     exit;
@@ -1537,6 +1595,7 @@ class GMS_Admin {
 
         $cancel_url = add_query_arg(array('page' => 'guest-management-reservations'), admin_url('admin.php'));
 
+
         ?>
         <div class="wrap">
             <h1 class="wp-heading-inline"><?php esc_html_e('Edit Reservation', 'guest-management-system'); ?></h1>
@@ -1546,6 +1605,13 @@ class GMS_Admin {
             <?php if (isset($_GET['gms_reservation_updated'])) : ?>
                 <div class="notice notice-success is-dismissible">
                     <p><?php esc_html_e('Reservation updated successfully.', 'guest-management-system'); ?></p>
+                </div>
+            <?php endif; ?>
+
+
+            <?php if ($success_notice) : ?>
+                <div class="notice notice-success is-dismissible">
+                    <p><?php echo wp_kses_post($success_notice); ?></p>
                 </div>
             <?php endif; ?>
 
