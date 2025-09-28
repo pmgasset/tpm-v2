@@ -207,6 +207,17 @@ class GuestManagementSystem {
                 'strings' => [
                     'copySuccess' => __('Portal link copied to clipboard.', 'guest-management-system'),
                     'copyError' => __('Unable to copy the portal link.', 'guest-management-system'),
+                    'guestName' => __('Guest Name', 'guest-management-system'),
+                    'guestEmail' => __('Guest Email', 'guest-management-system'),
+                    'guestPhone' => __('Guest Phone', 'guest-management-system'),
+                    'propertyName' => __('Property Name', 'guest-management-system'),
+                    'bookingReference' => __('Booking Reference', 'guest-management-system'),
+                    'checkinDate' => __('Check-in Date', 'guest-management-system'),
+                    'checkoutDate' => __('Check-out Date', 'guest-management-system'),
+                    'statusLabel' => __('Status', 'guest-management-system'),
+                    'ajaxUnavailable' => __('Unable to communicate with the server.', 'guest-management-system'),
+
+
                 ],
             ]
         );
