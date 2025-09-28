@@ -5,7 +5,7 @@
  * * Plugin Name: Guest Management System
  * Plugin URI: https://yoursite.com
  * Description: Complete guest management system for short-term rentals with webhook integration, identity verification, and agreement signing.
- * Version: 1.1.2
+ * Version: 1.0.0
  * Author: Your Company
  * License: GPL v2 or later
  * Requires at least: 6.0
@@ -21,7 +21,7 @@ if (!defined('ABSPATH')) {
 // Define plugin constants
 define('GMS_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('GMS_PLUGIN_PATH', plugin_dir_path(__FILE__));
-define('GMS_VERSION', '1.1.2');
+define('GMS_VERSION', '1.0.0');
 
 class GuestManagementSystem {
     
@@ -35,9 +35,9 @@ class GuestManagementSystem {
     }
     
     private function __construct() {
-        // FIX: Load includes immediately in the constructor to ensure all classes are available early.
+        // Load includes immediately so they're available for activation
         $this->loadIncludes();
-
+        
         add_action('init', array($this, 'init'));
         register_activation_hook(__FILE__, array($this, 'activate'));
         register_deactivation_hook(__FILE__, array($this, 'deactivate'));
@@ -45,6 +45,8 @@ class GuestManagementSystem {
     
     public function init() {
         // Initialize plugin components
+        
+        // Initialize components
         new GMS_Database();
         new GMS_Admin();
         new GMS_Webhook_Handler();
@@ -53,7 +55,6 @@ class GuestManagementSystem {
         new GMS_SMS_Handler();
         new GMS_Stripe_Integration();
         new GMS_Agreement_Handler();
-        new GMS_AJAX_Handler();
         
         // Add custom user role
         $this->addGuestRole();
@@ -78,7 +79,6 @@ class GuestManagementSystem {
             'class-sms-handler.php',
             'class-stripe-integration.php',
             'class-agreement-handler.php',
-            'class-ajax-handler.php', // Load the new class file
             'functions.php'
         );
         
@@ -87,26 +87,21 @@ class GuestManagementSystem {
             if (file_exists($filepath)) {
                 require_once $filepath;
             } else {
-                error_log('GMS Error: Missing required file - ' . $filepath);
+                error_log('GMS Error: Missing file - ' . $filepath);
             }
         }
     }
     
     public function activate() {
-        // We need to load includes during activation to access the Database class
-        $this->loadIncludes();
-
+        // Verify that the Database class is loaded
         if (!class_exists('GMS_Database')) {
-            add_action('admin_notices', function() {
-                echo '<div class="error"><p>Guest Management System Error: The GMS_Database class was not found. The plugin could not be activated. Please ensure all plugin files are uploaded correctly.</p></div>';
-            });
-            return;
+            wp_die('GMS Error: GMS_Database class not found. Please ensure all plugin files are uploaded correctly.');
         }
         
         // Create database tables
         GMS_Database::createTables();
         
-        // Add rewrite rules and flush them
+        // Add rewrite rules
         $this->addRewriteRules();
         flush_rewrite_rules();
         
@@ -170,21 +165,32 @@ class GuestManagementSystem {
     
     public function enqueueScripts() {
         if (get_query_var('guest_portal')) {
+            // Enqueue Stripe.js
             wp_enqueue_script('stripe-js', 'https://js.stripe.com/v3/', array(), null, true);
             
-            wp_enqueue_script('gms-guest-portal', GMS_PLUGIN_URL . 'assets/js/guest-portal.js', array('stripe-js', 'jquery'), GMS_VERSION, true);
+            // Enqueue guest portal scripts
+            wp_enqueue_script('gms-guest-portal', GMS_PLUGIN_URL . 'assets/js/guest-portal.js', array('stripe-js'), GMS_VERSION, true);
             wp_enqueue_style('gms-guest-portal', GMS_PLUGIN_URL . 'assets/css/guest-portal.css', array(), GMS_VERSION);
             
+            // Get reservation data
             $token = get_query_var('guest_token');
             $reservation = GMS_Database::getReservationByToken($token);
             
+            // Localize script for AJAX and global variables
             wp_localize_script('gms-guest-portal', 'gmsConfig', array(
                 'ajaxUrl' => admin_url('admin-ajax.php'),
                 'nonce' => wp_create_nonce('gms_guest_nonce'),
                 'stripeKey' => get_option('gms_stripe_pk'),
-                'reservationId' => $reservation ? $reservation['id'] : 0,
-                'generic_error' => __('An unexpected error occurred. Please try again.', 'guest-management-system')
+                'reservationId' => $reservation ? $reservation['id'] : 0
             ));
+            
+            // Add inline script to set global variables
+            wp_add_inline_script('gms-guest-portal', '
+                window.gmsAjaxUrl = "' . admin_url('admin-ajax.php') . '";
+                window.gmsNonce = "' . wp_create_nonce('gms_guest_nonce') . '";
+                window.gmsStripeKey = "' . esc_js(get_option('gms_stripe_pk')) . '";
+                window.gmsReservationId = ' . ($reservation ? $reservation['id'] : 0) . ';
+            ', 'before');
         }
     }
     
@@ -193,12 +199,20 @@ class GuestManagementSystem {
             wp_enqueue_script('gms-admin', GMS_PLUGIN_URL . 'assets/js/admin.js', array('jquery'), GMS_VERSION, true);
             wp_enqueue_style('gms-admin', GMS_PLUGIN_URL . 'assets/css/admin.css', array(), GMS_VERSION);
             
+            // Localize admin script
             wp_localize_script('gms-admin', 'gmsAdmin', array(
                 'ajaxUrl' => admin_url('admin-ajax.php'),
                 'nonce' => wp_create_nonce('gms_admin_nonce'),
                 'webhookUrl' => home_url('/webhook')
             ));
-
+            
+            // Add inline script for global variables
+            wp_add_inline_script('gms-admin', '
+                var gms_admin_nonce = "' . wp_create_nonce('gms_admin_nonce') . '";
+                var gms_webhook_url = "' . home_url('/webhook') . '";
+            ', 'before');
+            
+            // Enqueue media uploader for logo upload
             wp_enqueue_media();
         }
     }
