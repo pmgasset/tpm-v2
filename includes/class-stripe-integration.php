@@ -35,31 +35,37 @@ class GMS_Stripe_Integration {
         
         $endpoint = $this->api_url . '/identity/verification_sessions';
         
-        // BUG FIX: Use a robust array for the body instead of a manual string.
-        // This prevents errors with special characters in reservation data.
+        $metadata = array(
+            'reservation_id' => isset($reservation['id']) ? (string) $reservation['id'] : '',
+            'guest_id' => isset($reservation['guest_id']) ? (string) $reservation['guest_id'] : '',
+            'booking_reference' => isset($reservation['booking_reference']) ? (string) $reservation['booking_reference'] : '',
+        );
+
+        // Stripe Identity expects an x-www-form-urlencoded payload. Casting the booleans to the
+        // literal string "true" preserves the expected semantics without triggering type coercion.
         $body_params = array(
             'type' => 'document',
-            'metadata' => array(
-                'reservation_id' => $reservation['id'],
-                'guest_id' => $reservation['guest_id'],
-                'booking_reference' => $reservation['booking_reference']
-            ),
+            'metadata' => array_filter($metadata, 'strlen'),
             'options' => array(
                 'document' => array(
-                    'allowed_types' => ['driving_license', 'passport', 'id_card'],
-                    'require_id_number' => true,
-                    'require_live_capture' => true,
-                    'require_matching_selfie' => true
-                )
-            )
+                    'allowed_types' => array('driving_license', 'passport', 'id_card'),
+                    'require_id_number' => 'true',
+                    'require_live_capture' => 'true',
+                    'require_matching_selfie' => 'true',
+                ),
+            ),
         );
-        
+
         $response = wp_remote_post($endpoint, array(
             'headers' => array(
                 'Authorization' => 'Bearer ' . $this->secret_key,
+            ),
+            'body' => $body_params,
+
                 'Content-Type' => 'application/json',
             ),
             'body' => wp_json_encode($body_params),
+
             'timeout' => 30
         ));
         
