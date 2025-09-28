@@ -14,6 +14,18 @@
         return adminConfig.gms_admin_nonce || adminConfig.nonce || '';
     }
 
+    function getAjaxUrl() {
+        if (adminConfig.ajaxUrl) {
+            return adminConfig.ajaxUrl;
+        }
+
+        if (typeof window.ajaxurl !== 'undefined') {
+            return window.ajaxurl;
+        }
+
+        return '';
+    }
+
     function getGenericWebhookUrl() {
         if (adminConfig.webhookUrls && adminConfig.webhookUrls.generic) {
             return adminConfig.webhookUrls.generic;
@@ -235,8 +247,16 @@
     }
 
     function fetchReservation(reservationId) {
+        var ajaxUrl = getAjaxUrl();
+
+        if (!ajaxUrl) {
+            return $.Deferred().reject({
+                data: getString('ajaxUnavailable', 'Unable to communicate with the server.')
+            }).promise();
+        }
+
         return $.ajax({
-            url: ajaxurl,
+            url: ajaxUrl,
             type: 'POST',
             dataType: 'json',
             data: {
@@ -364,8 +384,14 @@
                 } else {
                     handleReservationError($editorRow, getString('loadError', 'Unable to load reservation details. Please try again.'));
                 }
-            }).fail(function() {
-                handleReservationError($editorRow, getString('loadError', 'Unable to load reservation details. Please try again.'));
+            }).fail(function(response) {
+                var message = getString('loadError', 'Unable to load reservation details. Please try again.');
+
+                if (response && response.data) {
+                    message = response.data;
+                }
+
+                handleReservationError($editorRow, message);
             });
         });
 
@@ -409,8 +435,16 @@
                 }
             });
 
+            var ajaxUrl = getAjaxUrl();
+
+            if (!ajaxUrl) {
+                $feedback.addClass('is-error').text(getString('ajaxUnavailable', 'Unable to communicate with the server.'));
+                $submitButton.prop('disabled', false).text(originalSubmitText);
+                return;
+            }
+
             $.ajax({
-                url: ajaxurl,
+                url: ajaxUrl,
                 type: 'POST',
                 dataType: 'json',
                 data: {
