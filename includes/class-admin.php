@@ -26,6 +26,7 @@ class GMS_Reservations_List_Table extends WP_List_Table {
             'checkin_date' => 'Check-in',
             'status' => 'Status',
             'booking_reference' => 'Booking Ref',
+            'portal_link' => 'Guest Portal',
         ];
     }
 
@@ -35,13 +36,60 @@ class GMS_Reservations_List_Table extends WP_List_Table {
                 return '<strong>' . esc_html($item[$column_name]) . '</strong>';
             case 'property_name':
             case 'status':
-            case 'booking_reference':
                 return esc_html($item[$column_name]);
             case 'checkin_date':
+                if (empty($item[$column_name]) || $item[$column_name] === '0000-00-00 00:00:00') {
+                    return '&mdash;';
+                }
+
                 return date('M j, Y, g:i a', strtotime($item[$column_name]));
             default:
                 return '';
         }
+    }
+
+    public function column_booking_reference($item) {
+        $reservation_id = isset($item['id']) ? absint($item['id']) : 0;
+        $reference = isset($item['booking_reference']) ? (string) $item['booking_reference'] : '';
+
+        if (!$reservation_id) {
+            return esc_html($reference);
+        }
+
+        $label = $reference !== '' ? $reference : __('Edit Reservation', 'guest-management-system');
+
+        return sprintf(
+            '<button type="button" class="button-link gms-reservation-toggle" data-reservation-id="%1$d" data-reference="%2$s" aria-expanded="false">%3$s</button>',
+            $reservation_id,
+            esc_attr($reference),
+            esc_html($label)
+        );
+    }
+
+    public function column_portal_link($item) {
+        $reservation_id = isset($item['id']) ? absint($item['id']) : 0;
+
+        if (!$reservation_id) {
+            return '&mdash;';
+        }
+
+        $portal_url = gms_get_portal_url($reservation_id);
+
+        if (empty($portal_url)) {
+            return '&mdash;';
+        }
+
+        $copy_label = __('Copy portal link', 'guest-management-system');
+        $button_label = __('Open Portal', 'guest-management-system');
+        $aria_label = __('Open the guest portal in a new tab. The link will be copied to your clipboard.', 'guest-management-system');
+
+        return sprintf(
+            '<a class="button button-small gms-open-portal" href="%1$s" target="_blank" rel="noopener noreferrer" data-copy-url="%1$s" aria-label="%2$s" data-copy-label="%3$s">%4$s</a>',
+            esc_url($portal_url),
+            esc_attr($aria_label),
+            esc_attr($copy_label),
+            esc_html($button_label)
+        );
     }
     
     public function column_cb($item) {
@@ -149,6 +197,8 @@ class GMS_Admin {
         add_action('wp_ajax_gms_bulk_action', array($this, 'ajax_bulk_action'));
         add_action('wp_ajax_gms_autosave_template', array($this, 'ajax_autosave_template'));
         add_action('wp_ajax_gms_refresh_stats', array($this, 'ajax_refresh_stats'));
+        add_action('wp_ajax_gms_get_reservation', array($this, 'ajax_get_reservation'));
+        add_action('wp_ajax_gms_update_reservation', array($this, 'ajax_update_reservation'));
     }
 
     public function ajax_test_sms() {
@@ -340,6 +390,89 @@ class GMS_Admin {
         wp_send_json_success(array(
             'stats' => $stats,
         ));
+    }
+
+    public function ajax_get_reservation() {
+        check_ajax_referer('gms_admin_nonce', 'nonce');
+        $this->ensure_ajax_permissions();
+
+        $reservation_id = isset($_REQUEST['reservation_id']) ? absint(wp_unslash($_REQUEST['reservation_id'])) : 0;
+
+        if (!$reservation_id) {
+            wp_send_json_error(__('Invalid reservation ID supplied.', 'guest-management-system'));
+        }
+
+        $reservation = GMS_Database::getReservationById($reservation_id);
+
+        if (!$reservation) {
+            wp_send_json_error(__('Reservation not found.', 'guest-management-system'));
+        }
+
+        $response = $this->prepare_reservation_response($reservation);
+
+        wp_send_json_success($response);
+    }
+
+    public function ajax_update_reservation() {
+        check_ajax_referer('gms_admin_nonce', 'nonce');
+        $this->ensure_ajax_permissions();
+
+        $reservation_id = isset($_POST['reservation_id']) ? absint(wp_unslash($_POST['reservation_id'])) : 0;
+
+        if (!$reservation_id) {
+            wp_send_json_error(__('Invalid reservation ID supplied.', 'guest-management-system'));
+        }
+
+        $payload = isset($_POST['reservation']) ? wp_unslash($_POST['reservation']) : array();
+
+        if (!is_array($payload)) {
+            $payload = array();
+        }
+
+        $allowed = array(
+            'guest_name',
+            'guest_email',
+            'guest_phone',
+            'property_name',
+            'booking_reference',
+            'checkin_date',
+            'checkout_date',
+            'status',
+        );
+
+        $update_data = array();
+
+        foreach ($allowed as $field) {
+            if (!array_key_exists($field, $payload)) {
+                continue;
+            }
+
+            $value = $payload[$field];
+
+            if (is_array($value)) {
+                continue;
+            }
+
+            $update_data[$field] = $value;
+        }
+
+        if (!empty($update_data)) {
+            $updated = GMS_Database::updateReservation($reservation_id, $update_data);
+
+            if (!$updated) {
+                wp_send_json_error(__('Unable to save the reservation. Please try again.', 'guest-management-system'));
+            }
+        }
+
+        $reservation = GMS_Database::getReservationById($reservation_id);
+
+        if (!$reservation) {
+            wp_send_json_error(__('Unable to load the updated reservation.', 'guest-management-system'));
+        }
+
+        $response = $this->prepare_reservation_response($reservation);
+
+        wp_send_json_success($response);
     }
 
     /**
@@ -639,6 +772,35 @@ class GMS_Admin {
         if (!current_user_can('manage_options')) {
             wp_send_json_error(__('You do not have permission to perform this action.', 'guest-management-system'));
         }
+    }
+
+    private function prepare_reservation_response($reservation) {
+        if (empty($reservation) || !is_array($reservation)) {
+            return array();
+        }
+
+        $table = new GMS_Reservations_List_Table();
+        $columns = $table->get_columns();
+        $display = array();
+
+        foreach ($columns as $column_key => $label) {
+            if ($column_key === 'cb') {
+                continue;
+            }
+
+            $method = 'column_' . $column_key;
+
+            if (method_exists($table, $method)) {
+                $display[$column_key] = $table->$method($reservation);
+            } else {
+                $display[$column_key] = $table->column_default($reservation, $column_key);
+            }
+        }
+
+        return array(
+            'reservation' => $reservation,
+            'display' => $display,
+        );
     }
 
     private function send_reservation_notifications($reservation) {
