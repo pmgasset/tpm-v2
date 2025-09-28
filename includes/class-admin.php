@@ -1033,18 +1033,238 @@ class GMS_Admin {
     }
     
     public function render_reservations_page() {
+        $action = isset($_GET['action']) ? sanitize_key(wp_unslash($_GET['action'])) : '';
+
+        if ($action === 'new') {
+            $this->render_reservation_creation_page();
+            return;
+        }
+
         $reservations_table = new GMS_Reservations_List_Table();
+        $reservations_table->prepare_items();
+
+        $add_new_url = add_query_arg(
+            array(
+                'page' => 'guest-management-reservations',
+                'action' => 'new',
+            ),
+            admin_url('admin.php')
+        );
+
         ?>
         <div class="wrap">
             <h1 class="wp-heading-inline">Reservations</h1>
-            <a href="#" class="page-title-action">Add New</a>
+            <a href="<?php echo esc_url($add_new_url); ?>" class="page-title-action"><?php esc_html_e('Add New', 'guest-management-system'); ?></a>
             <hr class="wp-header-end">
-            <?php $reservations_table->prepare_items(); ?>
+
+            <?php if (isset($_GET['gms_reservation_created'])) : ?>
+                <div class="notice notice-success is-dismissible">
+                    <p><?php esc_html_e('Reservation created successfully.', 'guest-management-system'); ?></p>
+                </div>
+            <?php endif; ?>
+
             <form method="post">
                 <?php $reservations_table->display(); ?>
             </form>
         </div>
         <?php
+    }
+
+    protected function render_reservation_creation_page() {
+        if (!current_user_can('manage_options')) {
+            return;
+        }
+
+        $form_values = array(
+            'guest_name' => '',
+            'guest_email' => '',
+            'guest_phone' => '',
+            'property_name' => '',
+            'property_id' => '',
+            'booking_reference' => '',
+            'checkin_date' => '',
+            'checkout_date' => '',
+            'status' => 'pending',
+        );
+
+        $errors = array();
+
+        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+            check_admin_referer('gms_create_reservation');
+
+            foreach ($form_values as $key => $default) {
+                if (isset($_POST[$key])) {
+                    $value = wp_unslash($_POST[$key]);
+                    switch ($key) {
+                        case 'guest_email':
+                            $form_values[$key] = sanitize_email($value);
+                            break;
+                        case 'checkin_date':
+                        case 'checkout_date':
+                            $form_values[$key] = $this->format_datetime_for_input($value);
+                            break;
+                        default:
+                            $form_values[$key] = sanitize_text_field($value);
+                            break;
+                    }
+                }
+            }
+
+            $allowed_statuses = array('pending', 'confirmed', 'cancelled');
+            if (!in_array($form_values['status'], $allowed_statuses, true)) {
+                $form_values['status'] = 'pending';
+            }
+
+            if (empty($form_values['guest_name'])) {
+                $errors[] = __('Guest name is required.', 'guest-management-system');
+            }
+
+            if (!empty($form_values['guest_email']) && !is_email($form_values['guest_email'])) {
+                $errors[] = __('Please enter a valid email address.', 'guest-management-system');
+            }
+
+            if (empty($errors)) {
+                $reservation_data = array(
+                    'guest_name' => $form_values['guest_name'],
+                    'guest_email' => $form_values['guest_email'],
+                    'guest_phone' => $form_values['guest_phone'],
+                    'property_name' => $form_values['property_name'],
+                    'property_id' => $form_values['property_id'],
+                    'booking_reference' => $form_values['booking_reference'],
+                    'checkin_date' => $this->format_datetime_for_database($form_values['checkin_date']),
+                    'checkout_date' => $this->format_datetime_for_database($form_values['checkout_date']),
+                    'status' => $form_values['status'],
+                );
+
+                $result = GMS_Database::createReservation($reservation_data);
+
+                if ($result) {
+                    $redirect_url = add_query_arg(
+                        array(
+                            'page' => 'guest-management-reservations',
+                            'gms_reservation_created' => 1,
+                        ),
+                        admin_url('admin.php')
+                    );
+
+                    wp_safe_redirect($redirect_url);
+                    exit;
+                }
+
+                $errors[] = __('Unable to create reservation. Please try again.', 'guest-management-system');
+            }
+        }
+
+        $cancel_url = add_query_arg(array('page' => 'guest-management-reservations'), admin_url('admin.php'));
+
+        ?>
+        <div class="wrap">
+            <h1 class="wp-heading-inline"><?php esc_html_e('Add New Reservation', 'guest-management-system'); ?></h1>
+            <a href="<?php echo esc_url($cancel_url); ?>" class="page-title-action"><?php esc_html_e('Back to Reservations', 'guest-management-system'); ?></a>
+            <hr class="wp-header-end">
+
+            <?php if (!empty($errors)) : ?>
+                <div class="notice notice-error">
+                    <ul>
+                        <?php foreach ($errors as $error) : ?>
+                            <li><?php echo esc_html($error); ?></li>
+                        <?php endforeach; ?>
+                    </ul>
+                </div>
+            <?php endif; ?>
+
+            <form method="post">
+                <?php wp_nonce_field('gms_create_reservation'); ?>
+                <table class="form-table" role="presentation">
+                    <tbody>
+                        <tr>
+                            <th scope="row"><label for="gms_guest_name"><?php esc_html_e('Guest Name', 'guest-management-system'); ?></label></th>
+                            <td><input name="guest_name" type="text" id="gms_guest_name" value="<?php echo esc_attr($form_values['guest_name']); ?>" class="regular-text" required></td>
+                        </tr>
+                        <tr>
+                            <th scope="row"><label for="gms_guest_email"><?php esc_html_e('Guest Email', 'guest-management-system'); ?></label></th>
+                            <td><input name="guest_email" type="email" id="gms_guest_email" value="<?php echo esc_attr($form_values['guest_email']); ?>" class="regular-text"></td>
+                        </tr>
+                        <tr>
+                            <th scope="row"><label for="gms_guest_phone"><?php esc_html_e('Guest Phone', 'guest-management-system'); ?></label></th>
+                            <td><input name="guest_phone" type="text" id="gms_guest_phone" value="<?php echo esc_attr($form_values['guest_phone']); ?>" class="regular-text"></td>
+                        </tr>
+                        <tr>
+                            <th scope="row"><label for="gms_property_name"><?php esc_html_e('Property Name', 'guest-management-system'); ?></label></th>
+                            <td><input name="property_name" type="text" id="gms_property_name" value="<?php echo esc_attr($form_values['property_name']); ?>" class="regular-text"></td>
+                        </tr>
+                        <tr>
+                            <th scope="row"><label for="gms_property_id"><?php esc_html_e('Property ID', 'guest-management-system'); ?></label></th>
+                            <td><input name="property_id" type="text" id="gms_property_id" value="<?php echo esc_attr($form_values['property_id']); ?>" class="regular-text"></td>
+                        </tr>
+                        <tr>
+                            <th scope="row"><label for="gms_booking_reference"><?php esc_html_e('Booking Reference', 'guest-management-system'); ?></label></th>
+                            <td><input name="booking_reference" type="text" id="gms_booking_reference" value="<?php echo esc_attr($form_values['booking_reference']); ?>" class="regular-text"></td>
+                        </tr>
+                        <tr>
+                            <th scope="row"><label for="gms_checkin_date"><?php esc_html_e('Check-in Date', 'guest-management-system'); ?></label></th>
+                            <td><input name="checkin_date" type="datetime-local" id="gms_checkin_date" value="<?php echo esc_attr($form_values['checkin_date']); ?>" class="regular-text"></td>
+                        </tr>
+                        <tr>
+                            <th scope="row"><label for="gms_checkout_date"><?php esc_html_e('Check-out Date', 'guest-management-system'); ?></label></th>
+                            <td><input name="checkout_date" type="datetime-local" id="gms_checkout_date" value="<?php echo esc_attr($form_values['checkout_date']); ?>" class="regular-text"></td>
+                        </tr>
+                        <tr>
+                            <th scope="row"><label for="gms_status"><?php esc_html_e('Status', 'guest-management-system'); ?></label></th>
+                            <td>
+                                <select name="status" id="gms_status">
+                                    <?php
+                                    $statuses = array(
+                                        'pending' => __('Pending', 'guest-management-system'),
+                                        'confirmed' => __('Confirmed', 'guest-management-system'),
+                                        'cancelled' => __('Cancelled', 'guest-management-system'),
+                                    );
+                                    foreach ($statuses as $status_key => $status_label) :
+                                        ?>
+                                        <option value="<?php echo esc_attr($status_key); ?>"<?php selected($form_values['status'], $status_key); ?>><?php echo esc_html($status_label); ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <?php submit_button(__('Create Reservation', 'guest-management-system')); ?>
+            </form>
+        </div>
+        <?php
+    }
+
+    protected function format_datetime_for_input($value) {
+        $value = trim((string) $value);
+
+        if ($value === '') {
+            return '';
+        }
+
+        $timestamp = strtotime($value);
+
+        if ($timestamp === false) {
+            return '';
+        }
+
+        return date('Y-m-d\TH:i', $timestamp);
+    }
+
+    protected function format_datetime_for_database($value) {
+        $value = trim((string) $value);
+
+        if ($value === '') {
+            return '';
+        }
+
+        $timestamp = strtotime($value);
+
+        if ($timestamp === false) {
+            return '';
+        }
+
+        return date('Y-m-d H:i:s', $timestamp);
     }
 
     public function render_guests_page() {
