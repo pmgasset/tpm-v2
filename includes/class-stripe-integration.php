@@ -47,8 +47,8 @@ class GMS_Stripe_Integration {
                 'document' => array(
                     'allowed_types' => ['driving_license', 'passport', 'id_card'],
                     'require_id_number' => true,
-                    'require_live_capture' => false,
-                    'require_matching_selfie' => false
+                    'require_live_capture' => true,
+                    'require_matching_selfie' => true
                 )
             )
         );

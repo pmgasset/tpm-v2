@@ -454,7 +454,7 @@ class GMS_Guest_Portal {
                             </div>
                             <div class="checklist-content">
                                 <div class="checklist-title">Identity Verification</div>
-                                <div class="checklist-description">Verify your identity with a government ID</div>
+                                <div class="checklist-description">Verify your identity with your government ID and a live selfie</div>
                             </div>
                         </div>
                     </div>
@@ -506,8 +506,8 @@ class GMS_Guest_Portal {
                     <div class="action-section" id="verification-section" <?php echo (!$agreement || $agreement['status'] !== 'signed') ? 'style="display: none;"' : ''; ?>>
                         <h3 class="section-title">🆔 Identity Verification</h3>
                         
-                        <p>Please verify your identity by uploading a photo of your government-issued ID. This helps us ensure the security of our properties.</p>
-                        
+                        <p>Please verify your identity by uploading a photo of your government-issued ID and capturing a live selfie that matches your ID photo. This helps us ensure the security of our properties.</p>
+
                         <div id="verification-content">
                             <?php if ($verification && $verification['verification_status'] === 'verified'): ?>
                                 <div class="success-message">
@@ -520,6 +520,9 @@ class GMS_Guest_Portal {
                                     <button id="check-verification" class="btn btn-secondary">Check Status</button>
                                 </div>
                             <?php else: ?>
+                                <div class="verification-help">
+                                    <p style="margin-bottom: 0.75rem; color: #555;">When you start, Stripe will guide you through taking photos of your ID and a matching selfie. Please ensure you are in a well-lit area.</p>
+                                </div>
                                 <button id="start-verification" class="btn btn-primary">Start Identity Verification</button>
                             <?php endif; ?>
                         </div>
@@ -1184,7 +1187,10 @@ class GMS_Guest_Portal {
                 'verification_data' => $status
             ));
             
-            wp_send_json_success(array('status' => $status['status']));
+            wp_send_json_success(array(
+                'status' => $status['status'],
+                'last_error' => isset($status['last_error']) ? $status['last_error'] : null
+            ));
         } else {
             wp_send_json_error('Failed to check verification status');
         }

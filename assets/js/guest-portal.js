@@ -268,14 +268,28 @@
         })
         .then(result => {
             if (result.error) {
-                throw new Error(result.error.message);
+                const code = result.error.code || '';
+                let errorMessage = result.error.message || 'Verification was not completed.';
+
+                if (typeof code === 'string' && code.toLowerCase().includes('selfie')) {
+                    errorMessage = 'Selfie verification failed. Please allow camera access and capture a clear, well-lit selfie that matches your ID.';
+                }
+
+                messageDiv.innerHTML = '<div class="error-message">❌ ' + errorMessage + '</div>';
+                startBtn.disabled = false;
             } else {
                 // Verification completed, check status
                 checkVerificationStatus();
             }
         })
         .catch(error => {
-            messageDiv.innerHTML = '<div class="error-message">❌ Error: ' + error.message + '</div>';
+            let errorMessage = error.message || 'Unexpected error occurred.';
+
+            if (errorMessage.toLowerCase().includes('selfie')) {
+                errorMessage += ' Please make sure you complete the selfie step and follow the on-screen prompts from Stripe.';
+            }
+
+            messageDiv.innerHTML = '<div class="error-message">❌ Error: ' + errorMessage + '</div>';
             startBtn.disabled = false;
             console.error('Error:', error);
         });
@@ -299,10 +313,12 @@
             if (data.success) {
                 const status = data.data.status;
                 
+                const lastError = data.data.last_error || null;
+
                 if (status === 'verified') {
-                    document.getElementById('verification-content').innerHTML = 
+                    document.getElementById('verification-content').innerHTML =
                         '<div class="success-message">✅ Identity verification completed successfully!</div>';
-                    
+
                     const verificationChecklist = document.getElementById('verification-checklist');
                     verificationChecklist.classList.add('completed');
                     verificationChecklist.querySelector('.checklist-icon').textContent = '✓';
@@ -315,13 +331,34 @@
                     }, 2000);
                     
                 } else if (status === 'requires_input') {
-                    messageDiv.innerHTML = '<div class="error-message">❌ Additional information required. Please try again.</div>';
-                    document.getElementById('verification-content').innerHTML = 
+                    let needsSelfieHelp = false;
+                    let requiresMessage = 'Additional information required. Please try again.';
+
+                    if (lastError) {
+                        const code = (lastError.code || '').toLowerCase();
+                        const reason = lastError.reason || '';
+                        const requirement = (lastError.requirement || '').toLowerCase();
+
+                        if (code.includes('selfie') || requirement === 'selfie') {
+                            needsSelfieHelp = true;
+                            requiresMessage = 'Your selfie could not be verified. Please retake the live selfie so Stripe can match it to your ID.';
+                        } else if (reason) {
+                            requiresMessage = reason;
+                        }
+                    }
+
+                    if (!needsSelfieHelp) {
+                        requiresMessage += ' Ensure you complete every step, including the live selfie capture.';
+                    }
+
+                    messageDiv.innerHTML = '<div class="error-message">❌ ' + requiresMessage + '</div>';
+                    document.getElementById('verification-content').innerHTML =
+                        '<div class="verification-help"><p style="margin-bottom: 0.75rem; color: #555;">Stripe will walk you through uploading your ID and taking a live selfie. Find a well-lit area and remove hats or glasses before trying again.</p></div>' +
                         '<button id="start-verification" class="btn btn-primary">Retry Identity Verification</button>';
-                    
+
                     // Re-attach event listener
                     document.getElementById('start-verification').addEventListener('click', startIdentityVerification);
-                    
+
                 } else {
                     messageDiv.innerHTML = '<div class="loading"><div class="spinner"></div><p>Still processing...</p><button id="check-verification" class="btn btn-secondary">Check Again</button></div>';
                     
