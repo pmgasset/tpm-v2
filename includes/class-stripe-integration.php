@@ -85,7 +85,49 @@ class GMS_Stripe_Integration {
         return false;
     }
     
-    // ... (other functions like checkVerificationStatus are unchanged)
+    public function checkVerificationStatus($session_id) {
+        $session_id = trim((string) $session_id);
+
+        if (empty($session_id)) {
+            error_log('GMS Stripe Error: Missing verification session ID.');
+            return false;
+        }
+
+        if (empty($this->secret_key)) {
+            error_log('GMS Stripe Error: Secret key not configured.');
+            return false;
+        }
+
+        $endpoint = $this->api_url . '/identity/verification_sessions/' . rawurlencode($session_id);
+
+        $response = wp_remote_get($endpoint, array(
+            'headers' => array(
+                'Authorization' => 'Bearer ' . $this->secret_key,
+            ),
+            'timeout' => 30,
+        ));
+
+        if (is_wp_error($response)) {
+            error_log('GMS Stripe Error: ' . $response->get_error_message());
+            return false;
+        }
+
+        $body = wp_remote_retrieve_body($response);
+        $result = json_decode($body, true);
+
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            error_log('GMS Stripe Error: Unable to decode verification status response.');
+            return false;
+        }
+
+        if (isset($result['error'])) {
+            $message = isset($result['error']['message']) ? $result['error']['message'] : 'Unknown Stripe API error.';
+            error_log('GMS Stripe API Error: ' . $message);
+            return false;
+        }
+
+        return $result;
+    }
 
     public function handleStripeWebhook($request) {
         $payload = $request->get_body();
@@ -110,9 +152,17 @@ class GMS_Stripe_Integration {
             case 'identity.verification_session.verified':
                 $this->handleVerificationVerified($event['data']['object']);
                 break;
-            // ... (other cases remain the same)
+            case 'identity.verification_session.processing':
+                $this->handleVerificationProcessing($event['data']['object']);
+                break;
+            case 'identity.verification_session.requires_input':
+                $this->handleVerificationRequiresInput($event['data']['object']);
+                break;
+            case 'identity.verification_session.canceled':
+                $this->handleVerificationCanceled($event['data']['object']);
+                break;
         }
-        
+
         return new WP_REST_Response(array('success' => true), 200);
     }
     
@@ -165,5 +215,147 @@ class GMS_Stripe_Integration {
         return json_decode($payload, true);
     }
 
-    // ... (other handler functions like handleVerificationVerified are unchanged)
+    private function handleVerificationVerified($session) {
+        $reservation_id = $this->syncVerificationSession($session);
+
+        if (empty($reservation_id)) {
+            return;
+        }
+
+        $reservation = GMS_Database::getReservationById($reservation_id);
+        if (empty($reservation)) {
+            return;
+        }
+
+        $email_handler = new GMS_Email_Handler();
+        $email_handler->sendCompletionEmail($reservation);
+
+        $guest_phone = $reservation['guest_phone'] ?? '';
+        if (!empty($guest_phone) && !empty(get_option('gms_voipms_user'))) {
+            $sms_handler = new GMS_SMS_Handler();
+            $message = sprintf(
+                'Hi %s, your identity verification for %s is complete. Thank you!',
+                trim($reservation['guest_name'] ?? ''),
+                $reservation['property_name'] ?? __('your stay', 'gms')
+            );
+
+            $result = $sms_handler->sendSMS($guest_phone, $message);
+
+            GMS_Database::logCommunication(array(
+                'reservation_id' => $reservation_id,
+                'guest_id' => intval($reservation['guest_id'] ?? 0),
+                'type' => 'sms',
+                'recipient' => $guest_phone,
+                'message' => $message,
+                'status' => $result ? 'sent' : 'failed',
+                'response_data' => array('result' => $result),
+            ));
+        }
+    }
+
+    private function handleVerificationProcessing($session) {
+        $this->syncVerificationSession($session);
+    }
+
+    private function handleVerificationRequiresInput($session) {
+        $reservation_id = $this->syncVerificationSession($session);
+
+        if (empty($reservation_id)) {
+            return;
+        }
+
+        $reason = $session['last_error']['reason'] ?? '';
+        if (!empty($reason)) {
+            error_log('GMS Stripe Notice: Verification requires input for reservation ' . $reservation_id . ' - ' . $reason);
+        }
+    }
+
+    private function handleVerificationCanceled($session) {
+        $reservation_id = $this->syncVerificationSession($session);
+
+        if (empty($reservation_id)) {
+            return;
+        }
+
+        error_log('GMS Stripe Notice: Verification canceled for reservation ' . $reservation_id . '.');
+    }
+
+    private function syncVerificationSession($session) {
+        if (!is_array($session) || empty($session['id'])) {
+            return 0;
+        }
+
+        $update = array(
+            'status' => $session['status'] ?? 'pending',
+            'verification_data' => $session,
+        );
+
+        if (!empty($session['client_secret'])) {
+            $update['stripe_client_secret'] = $session['client_secret'];
+        }
+
+        GMS_Database::updateVerification($session['id'], $update);
+
+        if (!empty($session['metadata']['reservation_id'])) {
+            return intval($session['metadata']['reservation_id']);
+        }
+
+        return 0;
+    }
+
+    public function testConnection() {
+        if (empty($this->secret_key)) {
+            return array(
+                'success' => false,
+                'message' => 'Secret key not configured',
+            );
+        }
+
+        $endpoint = $this->api_url . '/account';
+
+        $response = wp_remote_get($endpoint, array(
+            'headers' => array(
+                'Authorization' => 'Bearer ' . $this->secret_key,
+            ),
+            'timeout' => 15,
+        ));
+
+        if (is_wp_error($response)) {
+            return array(
+                'success' => false,
+                'message' => $response->get_error_message(),
+            );
+        }
+
+        $code = wp_remote_retrieve_response_code($response);
+        $body = wp_remote_retrieve_body($response);
+        $data = json_decode($body, true);
+
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            return array(
+                'success' => false,
+                'message' => 'Unable to parse Stripe response',
+            );
+        }
+
+        if ($code >= 200 && $code < 300 && isset($data['id'])) {
+            return array(
+                'success' => true,
+                'message' => 'Connection successful',
+                'account' => $data['id'],
+                'details' => array(
+                    'email' => $data['email'] ?? '',
+                    'business_type' => $data['business_type'] ?? '',
+                ),
+            );
+        }
+
+        $error_message = $data['error']['message'] ?? 'Unexpected Stripe response';
+
+        return array(
+            'success' => false,
+            'message' => $error_message,
+            'code' => $code,
+        );
+    }
 }
