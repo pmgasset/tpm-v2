@@ -1534,66 +1534,81 @@ class GMS_Admin {
             }
 
             if (empty($errors)) {
-                $update_data = array(
-                    'guest_name' => $form_values['guest_name'],
-                    'guest_email' => $form_values['guest_email'],
-                    'guest_phone' => $form_values['guest_phone'],
-                    'property_name' => $form_values['property_name'],
-                    'property_id' => $form_values['property_id'],
-                    'booking_reference' => $form_values['booking_reference'],
-                    'checkin_date' => $this->format_datetime_for_database($form_values['checkin_date']),
-                    'checkout_date' => $this->format_datetime_for_database($form_values['checkout_date']),
-                    'status' => $form_values['status'],
-                );
+                $normalized_name = trim(sanitize_text_field($form_values['guest_name']));
+                $normalized_email = sanitize_email($form_values['guest_email']);
+                $normalized_phone = $form_values['guest_phone'];
 
-                $updated = GMS_Database::updateReservation($reservation_id, $update_data);
-
-                if ($updated) {
-                    $redirect_url = add_query_arg(
-                        array(
-                            'page' => 'guest-management-reservations',
-                            'action' => 'edit',
-                            'reservation_id' => $reservation_id,
-
-                            'gms_reservation_updated' => 1,
-                        ),
-                        admin_url('admin.php')
-                    );
-
-
-                    $redirected = false;
-
-                    if (!headers_sent()) {
-                        $redirected = wp_safe_redirect($redirect_url);
-                    }
-
-                    if ($redirected) {
-                        exit;
-                    }
-
-                    $success_notice = sprintf(
-                        /* translators: 1: opening anchor tag, 2: closing anchor tag */
-                        __('Reservation updated successfully. %1$sReturn to Reservations%2$s.', 'guest-management-system'),
-                        '<a href="' . esc_url($list_url) . '">',
-                        '</a>'
-                    );
+                if (function_exists('gms_sanitize_phone')) {
+                    $normalized_phone = gms_sanitize_phone($normalized_phone);
                 } else {
-                    $errors[] = __('Unable to update reservation. Please try again.', 'guest-management-system');
+                    $normalized_phone = sanitize_text_field($normalized_phone);
+                }
+
+                $guest_id = GMS_Database::upsert_guest(array(
+                    'name' => $normalized_name,
+                    'email' => $normalized_email,
+                    'phone' => $normalized_phone,
+                ));
+
+                if (!$guest_id) {
+                    $errors[] = __('Unable to save guest details. Please try again.', 'guest-management-system');
+                } else {
+                    $form_values['guest_name'] = $normalized_name;
+                    $form_values['guest_email'] = $normalized_email;
+                    $form_values['guest_phone'] = $normalized_phone;
+
+                    $update_data = array(
+                        'guest_id' => $guest_id,
+                        'guest_name' => $form_values['guest_name'],
+                        'guest_email' => $form_values['guest_email'],
+                        'guest_phone' => $form_values['guest_phone'],
+                        'property_name' => $form_values['property_name'],
+                        'property_id' => $form_values['property_id'],
+                        'booking_reference' => $form_values['booking_reference'],
+                        'checkin_date' => $this->format_datetime_for_database($form_values['checkin_date']),
+                        'checkout_date' => $this->format_datetime_for_database($form_values['checkout_date']),
+                        'status' => $form_values['status'],
+                    );
+
+                    $updated = GMS_Database::updateReservation($reservation_id, $update_data);
+
+                    if ($updated) {
+                        $redirect_url = add_query_arg(
+                            array(
+                                'page' => 'guest-management-reservations',
+                                'action' => 'edit',
+                                'reservation_id' => $reservation_id,
+
+                                'gms_reservation_updated' => 1,
+                            ),
+                            admin_url('admin.php')
+                        );
+
+
+                        $redirected = false;
+
+                        if (!headers_sent()) {
+                            $redirected = wp_safe_redirect($redirect_url);
+                        }
+
+                        if ($redirected) {
+                            exit;
+                        }
+
+                        $success_notice = sprintf(
+                            /* translators: 1: opening anchor tag, 2: closing anchor tag */
+                            __('Reservation updated successfully. %1$sReturn to Reservations%2$s.', 'guest-management-system'),
+                            '<a href="' . esc_url($list_url) . '">',
+                            '</a>'
+                        );
+                    } else {
+                        $errors[] = __('Unable to update reservation. Please try again.', 'guest-management-system');
+                    }
                 }
             }
         }
 
         $cancel_url = $list_url;
-
-                    wp_safe_redirect($redirect_url);
-                    exit;
-                }
-
-                $errors[] = __('Unable to update reservation. Please try again.', 'guest-management-system');
-            }
-        }
-
-        $cancel_url = add_query_arg(array('page' => 'guest-management-reservations'), admin_url('admin.php'));
 
 
         ?>
