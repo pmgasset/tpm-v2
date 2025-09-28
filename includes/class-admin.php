@@ -63,8 +63,470 @@ class GMS_Reservations_List_Table extends WP_List_Table {
 class GMS_Admin {
     public function __construct() {
         add_action('admin_menu', array($this, 'add_admin_menu'));
-        // The fatal error was caused by a call to a non-existent `register_settings` method here.
-        // The correct implementation for the settings page is handled within the page rendering functions.
+        add_action('admin_init', array($this, 'register_settings'));
+    }
+
+    /**
+     * Return available settings tabs
+     */
+    private function get_settings_tabs() {
+        return array(
+            'general' => __('General', 'guest-management-system'),
+            'integrations' => __('Integrations', 'guest-management-system'),
+            'branding' => __('Branding', 'guest-management-system'),
+            'templates' => __('Templates', 'guest-management-system')
+        );
+    }
+
+    /**
+     * Register plugin settings and sections
+     */
+    public function register_settings() {
+        // General tab - contact defaults
+        register_setting('gms_settings_general', 'gms_email_from_name', array(
+            'sanitize_callback' => array($this, 'sanitize_text')
+        ));
+        register_setting('gms_settings_general', 'gms_email_from', array(
+            'sanitize_callback' => array($this, 'sanitize_email')
+        ));
+
+        add_settings_section(
+            'gms_general_contact',
+            __('Contact Defaults', 'guest-management-system'),
+            function() {
+                echo '<p>' . esc_html__('Configure the default sender details used for guest communications.', 'guest-management-system') . '</p>';
+            },
+            'gms_settings_general'
+        );
+
+        add_settings_field(
+            'gms_email_from_name',
+            __('From Name', 'guest-management-system'),
+            array($this, 'render_text_field'),
+            'gms_settings_general',
+            'gms_general_contact',
+            array(
+                'option_name' => 'gms_email_from_name',
+                'placeholder' => get_option('blogname'),
+                'description' => __('Displayed as the sender name in outgoing emails.', 'guest-management-system')
+            )
+        );
+
+        add_settings_field(
+            'gms_email_from',
+            __('From Email', 'guest-management-system'),
+            array($this, 'render_email_field'),
+            'gms_settings_general',
+            'gms_general_contact',
+            array(
+                'option_name' => 'gms_email_from',
+                'placeholder' => get_option('admin_email'),
+                'description' => __('Used as the reply-to address for guest notifications.', 'guest-management-system')
+            )
+        );
+
+        // Integrations tab - API credentials
+        $integration_options = array(
+            'gms_stripe_pk' => array('label' => __('Stripe Publishable Key', 'guest-management-system')),
+            'gms_stripe_sk' => array('label' => __('Stripe Secret Key', 'guest-management-system')),
+            'gms_stripe_webhook_secret' => array('label' => __('Stripe Webhook Secret', 'guest-management-system')),
+            'gms_voipms_user' => array('label' => __('VoIP.ms Username', 'guest-management-system')),
+            'gms_voipms_pass' => array('label' => __('VoIP.ms API Password', 'guest-management-system')),
+            'gms_voipms_did' => array('label' => __('VoIP.ms SMS DID', 'guest-management-system')),
+            'gms_bitly_token' => array('label' => __('Bitly Access Token', 'guest-management-system')),
+            'gms_webhook_token' => array('label' => __('Webhook Shared Secret', 'guest-management-system'))
+        );
+
+        foreach ($integration_options as $option => $meta) {
+            register_setting('gms_settings_integrations', $option, array(
+                'sanitize_callback' => array($this, 'sanitize_api_credential')
+            ));
+        }
+
+        add_settings_section(
+            'gms_integrations_section',
+            __('API Integrations', 'guest-management-system'),
+            function() {
+                echo '<p>' . esc_html__('Provide credentials for payment processing, SMS delivery, URL shortening, and webhook security.', 'guest-management-system') . '</p>';
+            },
+            'gms_settings_integrations'
+        );
+
+        foreach ($integration_options as $option => $meta) {
+            add_settings_field(
+                $option,
+                $meta['label'],
+                array($this, 'render_api_field'),
+                'gms_settings_integrations',
+                'gms_integrations_section',
+                array(
+                    'option_name' => $option,
+                    'description' => isset($meta['description']) ? $meta['description'] : ''
+                )
+            );
+        }
+
+        // Branding tab - appearance
+        register_setting('gms_settings_branding', 'gms_company_name', array(
+            'sanitize_callback' => array($this, 'sanitize_text')
+        ));
+        register_setting('gms_settings_branding', 'gms_company_logo', array(
+            'sanitize_callback' => array($this, 'sanitize_url')
+        ));
+        register_setting('gms_settings_branding', 'gms_portal_primary_color', array(
+            'sanitize_callback' => array($this, 'sanitize_color')
+        ));
+        register_setting('gms_settings_branding', 'gms_portal_secondary_color', array(
+            'sanitize_callback' => array($this, 'sanitize_color')
+        ));
+
+        add_settings_section(
+            'gms_branding_section',
+            __('Branding', 'guest-management-system'),
+            function() {
+                echo '<p>' . esc_html__('Customize the branding shown in guest emails and the portal experience.', 'guest-management-system') . '</p>';
+            },
+            'gms_settings_branding'
+        );
+
+        add_settings_field(
+            'gms_company_name',
+            __('Company Name', 'guest-management-system'),
+            array($this, 'render_text_field'),
+            'gms_settings_branding',
+            'gms_branding_section',
+            array(
+                'option_name' => 'gms_company_name',
+                'placeholder' => get_option('blogname'),
+                'description' => __('Displayed across the guest portal and in notification templates.', 'guest-management-system')
+            )
+        );
+
+        add_settings_field(
+            'gms_company_logo',
+            __('Company Logo', 'guest-management-system'),
+            array($this, 'render_logo_field'),
+            'gms_settings_branding',
+            'gms_branding_section',
+            array(
+                'option_name' => 'gms_company_logo',
+                'description' => __('Upload a logo to display on guest emails and portal headers.', 'guest-management-system')
+            )
+        );
+
+        add_settings_field(
+            'gms_portal_primary_color',
+            __('Primary Color', 'guest-management-system'),
+            array($this, 'render_color_field'),
+            'gms_settings_branding',
+            'gms_branding_section',
+            array(
+                'option_name' => 'gms_portal_primary_color',
+                'default' => '#0073aa',
+                'description' => __('Used for primary buttons and accents.', 'guest-management-system')
+            )
+        );
+
+        add_settings_field(
+            'gms_portal_secondary_color',
+            __('Secondary Color', 'guest-management-system'),
+            array($this, 'render_color_field'),
+            'gms_settings_branding',
+            'gms_branding_section',
+            array(
+                'option_name' => 'gms_portal_secondary_color',
+                'default' => '#005a87',
+                'description' => __('Used for backgrounds and supporting UI elements.', 'guest-management-system')
+            )
+        );
+
+        // Templates tab - communication content
+        $template_options = array(
+            'gms_agreement_template' => array(
+                'label' => __('Guest Agreement Template', 'guest-management-system'),
+                'description' => __('Displayed to guests prior to signing their agreement.', 'guest-management-system'),
+                'sanitize_callback' => array($this, 'sanitize_template'),
+                'rows' => 8
+            ),
+            'gms_email_template' => array(
+                'label' => __('Welcome Email Template', 'guest-management-system'),
+                'description' => __('Sent when a reservation is created. Supports HTML.', 'guest-management-system'),
+                'sanitize_callback' => array($this, 'sanitize_template'),
+                'rows' => 8
+            ),
+            'gms_sms_template' => array(
+                'label' => __('Welcome SMS Template', 'guest-management-system'),
+                'description' => __('Used for initial SMS notifications to guests.', 'guest-management-system'),
+                'sanitize_callback' => array($this, 'sanitize_plain_textarea'),
+                'rows' => 4
+            ),
+            'gms_sms_reminder_template' => array(
+                'label' => __('Reminder SMS Template', 'guest-management-system'),
+                'description' => __('Used for reminder SMS follow-ups.', 'guest-management-system'),
+                'sanitize_callback' => array($this, 'sanitize_plain_textarea'),
+                'rows' => 4
+            )
+        );
+
+        foreach ($template_options as $option => $meta) {
+            register_setting('gms_settings_templates', $option, array(
+                'sanitize_callback' => $meta['sanitize_callback']
+            ));
+        }
+
+        add_settings_section(
+            'gms_templates_section',
+            __('Message Templates', 'guest-management-system'),
+            array($this, 'render_template_tokens_help'),
+            'gms_settings_templates'
+        );
+
+        foreach ($template_options as $option => $meta) {
+            add_settings_field(
+                $option,
+                $meta['label'],
+                array($this, 'render_textarea_field'),
+                'gms_settings_templates',
+                'gms_templates_section',
+                array(
+                    'option_name' => $option,
+                    'description' => $meta['description'],
+                    'rows' => $meta['rows']
+                )
+            );
+        }
+    }
+
+    /**
+     * Sanitize helper for generic text fields
+     */
+    public function sanitize_text($value) {
+        return sanitize_text_field($value);
+    }
+
+    /**
+     * Sanitize helper for emails
+     */
+    public function sanitize_email($value) {
+        return sanitize_email($value);
+    }
+
+    /**
+     * Sanitize helper for API credentials
+     */
+    public function sanitize_api_credential($value) {
+        return trim(wp_strip_all_tags($value));
+    }
+
+    /**
+     * Sanitize helper for URLs
+     */
+    public function sanitize_url($value) {
+        return esc_url_raw($value);
+    }
+
+    /**
+     * Sanitize helper for color values
+     */
+    public function sanitize_color($value) {
+        $color = sanitize_hex_color($value);
+        return $color ? $color : '';
+    }
+
+    /**
+     * Sanitize template content allowing limited HTML
+     */
+    public function sanitize_template($value) {
+        $allowed_tags = array(
+            'a' => array('href' => array(), 'title' => array(), 'target' => array()),
+            'br' => array(),
+            'em' => array(),
+            'strong' => array(),
+            'p' => array(),
+            'ul' => array(),
+            'ol' => array(),
+            'li' => array(),
+        );
+
+        return wp_kses($value, $allowed_tags);
+    }
+
+    /**
+     * Sanitize plain text area fields
+     */
+    public function sanitize_plain_textarea($value) {
+        return sanitize_textarea_field($value);
+    }
+
+    /**
+     * Render a generic text input field
+     */
+    public function render_text_field($args) {
+        $option_name = $args['option_name'];
+        $value = get_option($option_name, '');
+        $placeholder = isset($args['placeholder']) ? $args['placeholder'] : '';
+        $description = isset($args['description']) ? $args['description'] : '';
+
+        printf(
+            '<input type="text" name="%1$s" id="%1$s" value="%2$s" class="regular-text" placeholder="%3$s" />',
+            esc_attr($option_name),
+            esc_attr($value),
+            esc_attr($placeholder)
+        );
+
+        if (!empty($description)) {
+            printf('<span class="description">%s</span>', esc_html($description));
+        }
+    }
+
+    /**
+     * Render an email input field
+     */
+    public function render_email_field($args) {
+        $option_name = $args['option_name'];
+        $value = get_option($option_name, '');
+        $placeholder = isset($args['placeholder']) ? $args['placeholder'] : '';
+        $description = isset($args['description']) ? $args['description'] : '';
+
+        printf(
+            '<input type="email" name="%1$s" id="%1$s" value="%2$s" class="regular-text" placeholder="%3$s" />',
+            esc_attr($option_name),
+            esc_attr($value),
+            esc_attr($placeholder)
+        );
+
+        if (!empty($description)) {
+            printf('<span class="description">%s</span>', esc_html($description));
+        }
+    }
+
+    /**
+     * Render API credential fields with monospace styling
+     */
+    public function render_api_field($args) {
+        $option_name = $args['option_name'];
+        $value = get_option($option_name, '');
+        $description = isset($args['description']) ? $args['description'] : '';
+
+        printf(
+            '<input type="text" name="%1$s" id="%1$s" value="%2$s" class="regular-text api-key-field" autocomplete="off" />',
+            esc_attr($option_name),
+            esc_attr($value)
+        );
+
+        if (!empty($description)) {
+            printf('<span class="description">%s</span>', esc_html($description));
+        }
+    }
+
+    /**
+     * Render color picker fields
+     */
+    public function render_color_field($args) {
+        $option_name = $args['option_name'];
+        $default = isset($args['default']) ? $args['default'] : '#0073aa';
+        $value = get_option($option_name, $default);
+        $description = isset($args['description']) ? $args['description'] : '';
+
+        printf(
+            '<input type="color" name="%1$s" id="%1$s" value="%2$s" />',
+            esc_attr($option_name),
+            esc_attr($value)
+        );
+
+        if (!empty($description)) {
+            printf('<span class="description">%s</span>', esc_html($description));
+        }
+    }
+
+    /**
+     * Render logo upload field with preview
+     */
+    public function render_logo_field($args) {
+        $option_name = $args['option_name'];
+        $value = get_option($option_name, '');
+        $description = isset($args['description']) ? $args['description'] : '';
+        $preview_id = $option_name . '_preview';
+
+        echo '<div class="gms-logo-field">';
+        printf(
+            '<input type="text" name="%1$s" id="%1$s" value="%2$s" class="regular-text" placeholder="%3$s" />',
+            esc_attr($option_name),
+            esc_attr($value),
+            esc_attr__('https://example.com/logo.png', 'guest-management-system')
+        );
+        echo '<br />';
+        printf(
+            '<button type="button" class="button gms-upload-logo" data-target="%1$s" data-preview="%2$s">%3$s</button> ',
+            esc_attr($option_name),
+            esc_attr($preview_id),
+            esc_html__('Upload Logo', 'guest-management-system')
+        );
+        printf(
+            '<button type="button" class="button-secondary gms-remove-logo" data-target="%1$s" data-preview="%2$s">%3$s</button>',
+            esc_attr($option_name),
+            esc_attr($preview_id),
+            esc_html__('Remove', 'guest-management-system')
+        );
+
+        if (!empty($description)) {
+            printf('<span class="description">%s</span>', esc_html($description));
+        }
+
+        $preview_style = empty($value) ? 'style="display:none;"' : '';
+        printf(
+            '<div id="%1$s" class="gms-logo-preview" %3$s>%2$s</div>',
+            esc_attr($preview_id),
+            $value ? '<img src="' . esc_url($value) . '" alt="" style="max-width:200px;height:auto;margin-top:10px;" />' : '',
+            $preview_style
+        );
+        echo '</div>';
+    }
+
+    /**
+     * Render textarea fields used for templates
+     */
+    public function render_textarea_field($args) {
+        $option_name = $args['option_name'];
+        $value = get_option($option_name, '');
+        $description = isset($args['description']) ? $args['description'] : '';
+        $rows = isset($args['rows']) ? intval($args['rows']) : 6;
+
+        printf(
+            '<textarea name="%1$s" id="%1$s" rows="%3$d" class="large-text code">%2$s</textarea>',
+            esc_attr($option_name),
+            esc_textarea($value),
+            $rows
+        );
+
+        if (!empty($description)) {
+            printf('<span class="description">%s</span>', esc_html($description));
+        }
+    }
+
+    /**
+     * Render contextual help for template tokens
+     */
+    public function render_template_tokens_help() {
+        $tokens = array(
+            '{guest_name}' => __('Guest name', 'guest-management-system'),
+            '{property_name}' => __('Property name', 'guest-management-system'),
+            '{booking_reference}' => __('Reservation confirmation or reference number', 'guest-management-system'),
+            '{checkin_date}' => __('Formatted check-in date', 'guest-management-system'),
+            '{checkout_date}' => __('Formatted check-out date', 'guest-management-system'),
+            '{checkin_time}' => __('Formatted check-in time', 'guest-management-system'),
+            '{checkout_time}' => __('Formatted check-out time', 'guest-management-system'),
+            '{portal_link}' => __('Secure guest portal link', 'guest-management-system'),
+            '{company_name}' => __('Configured company name', 'guest-management-system')
+        );
+
+        echo '<p>' . esc_html__('Use the tokens below to personalize email, SMS, and agreement templates. Tokens will be replaced with reservation data when messages are sent.', 'guest-management-system') . '</p>';
+
+        echo '<div class="notice notice-info inline"><p><strong>' . esc_html__('Available Tokens:', 'guest-management-system') . '</strong></p><ul>';
+        foreach ($tokens as $token => $description) {
+            printf('<li><code>%1$s</code> — %2$s</li>', esc_html($token), esc_html($description));
+        }
+        echo '</ul></div>';
     }
     
     public function add_admin_menu() {
@@ -266,11 +728,62 @@ class GMS_Admin {
     }
 
     public function render_settings_page() {
+        if (!current_user_can('manage_options')) {
+            return;
+        }
+
+        $tabs = $this->get_settings_tabs();
+        $current_tab = isset($_GET['tab']) ? sanitize_key($_GET['tab']) : 'general';
+        if (!array_key_exists($current_tab, $tabs)) {
+            $current_tab = 'general';
+        }
+
+        if (isset($_GET['settings-updated'])) {
+            add_settings_error('gms_settings_messages', 'gms_settings_updated', __('Settings saved.', 'guest-management-system'), 'updated');
+        }
+
         ?>
-        <div class="wrap">
-            <h1 class="wp-heading-inline"><?php esc_html_e('Settings', 'guest-management-system'); ?></h1>
-            <hr class="wp-header-end">
-            <p><?php esc_html_e('Configure integrations, automation rules, and other plugin options.', 'guest-management-system'); ?></p>
+        <div class="wrap gms-settings">
+            <h1><?php esc_html_e('Guest Management Settings', 'guest-management-system'); ?></h1>
+            <?php settings_errors('gms_settings_messages'); ?>
+
+            <h2 class="nav-tab-wrapper">
+                <?php foreach ($tabs as $tab => $label) :
+                    $tab_url = add_query_arg(array('tab' => $tab));
+                    $active_class = $tab === $current_tab ? ' nav-tab-active' : '';
+                    ?>
+                    <a href="<?php echo esc_url($tab_url); ?>" class="nav-tab<?php echo esc_attr($active_class); ?>"><?php echo esc_html($label); ?></a>
+                <?php endforeach; ?>
+            </h2>
+
+            <form action="options.php" method="post">
+                <?php
+                switch ($current_tab) {
+                    case 'integrations':
+                        settings_fields('gms_settings_integrations');
+                        do_settings_sections('gms_settings_integrations');
+                        break;
+
+                    case 'branding':
+                        settings_fields('gms_settings_branding');
+                        do_settings_sections('gms_settings_branding');
+                        break;
+
+                    case 'templates':
+                        settings_fields('gms_settings_templates');
+                        do_settings_sections('gms_settings_templates');
+                        break;
+
+                    case 'general':
+                    default:
+                        settings_fields('gms_settings_general');
+                        do_settings_sections('gms_settings_general');
+                        break;
+                }
+
+                submit_button();
+                ?>
+            </form>
         </div>
         <?php
     }
