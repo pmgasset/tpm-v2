@@ -35,32 +35,47 @@ class GMS_Stripe_Integration {
         
         $endpoint = $this->api_url . '/identity/verification_sessions';
         
-        // BUG FIX: Use a robust array for the body instead of a manual string.
-        // This prevents errors with special characters in reservation data.
+        $metadata = array(
+            'reservation_id' => isset($reservation['id']) ? (string) $reservation['id'] : '',
+            'guest_id' => isset($reservation['guest_id']) ? (string) $reservation['guest_id'] : '',
+            'booking_reference' => isset($reservation['booking_reference']) ? (string) $reservation['booking_reference'] : '',
+        );
+
+        $filtered_metadata = array();
+        foreach ($metadata as $key => $value) {
+            if ($value !== '') {
+                $filtered_metadata[$key] = $value;
+            }
+        }
+
+        // Stripe Identity expects an x-www-form-urlencoded payload. Casting the booleans to the
+        // literal string "true" preserves the expected semantics without triggering type coercion.
+        $document_options = array(
+            'allowed_types' => array('driving_license', 'passport', 'id_card'),
+            'require_id_number' => 'true',
+            'require_live_capture' => 'true',
+            'require_matching_selfie' => 'true',
+        );
+
         $body_params = array(
             'type' => 'document',
-            'metadata' => array(
-                'reservation_id' => $reservation['id'],
-                'guest_id' => $reservation['guest_id'],
-                'booking_reference' => $reservation['booking_reference']
-            ),
             'options' => array(
-                'document' => array(
-                    'allowed_types' => ['driving_license', 'passport', 'id_card'],
-                    'require_id_number' => true,
-                    'require_live_capture' => true,
-                    'require_matching_selfie' => true
-                )
-            )
+                'document' => $document_options,
+            ),
         );
-        
+
+        if (!empty($filtered_metadata)) {
+            $body_params['metadata'] = $filtered_metadata;
+        }
+
+        $encoded_body = http_build_query($body_params, '', '&', PHP_QUERY_RFC3986);
+
         $response = wp_remote_post($endpoint, array(
             'headers' => array(
                 'Authorization' => 'Bearer ' . $this->secret_key,
                 'Content-Type' => 'application/x-www-form-urlencoded',
             ),
-            'body' => http_build_query($body_params, '', '&'),
-            'data_format' => 'body',
+            'body' => $encoded_body,
             'timeout' => 30
         ));
         
