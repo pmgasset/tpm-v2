@@ -96,12 +96,16 @@ function gms_update_reservation_status($reservation_id, $status) {
  */
 function gms_get_guest_user($reservation_id) {
     $reservation = GMS_Database::getReservationById($reservation_id);
-    
+
     if (!$reservation) {
         return false;
     }
-    
-    return get_user_by('id', $reservation['guest_id']);
+
+    if (empty($reservation['guest_id'])) {
+        return false;
+    }
+
+    return GMS_Database::get_guest_by_id($reservation['guest_id']);
 }
 
 /**

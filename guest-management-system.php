@@ -53,7 +53,9 @@ class GuestManagementSystem {
         new GMS_SMS_Handler();
         new GMS_Stripe_Integration();
         new GMS_Agreement_Handler(); // Initialize the new agreement handler
-        
+
+        GMS_Database::maybeScheduleGuestBackfill();
+
         // Add custom user role for guests
         $this->addGuestRole();
         

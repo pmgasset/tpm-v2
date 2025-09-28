@@ -10,6 +10,8 @@ if (!defined('ABSPATH')) {
 }
 
 class GMS_Database {
+
+    const GUEST_PLACEHOLDER_DOMAIN = 'guest.invalid';
     
     public static function createTables() {
         global $wpdb;
@@ -119,6 +121,145 @@ class GMS_Database {
         dbDelta($sql_communications);
     }
 
+    public static function upsert_guest($guest_data) {
+        global $wpdb;
+
+        $defaults = array(
+            'first_name' => '',
+            'last_name' => '',
+            'name' => '',
+            'email' => '',
+            'phone' => '',
+        );
+
+        $guest_data = wp_parse_args($guest_data, $defaults);
+
+        $full_name = trim((string) $guest_data['name']);
+        $first_name = trim((string) $guest_data['first_name']);
+        $last_name = trim((string) $guest_data['last_name']);
+
+        if ($first_name === '' && $last_name === '' && $full_name !== '') {
+            $name_parts = preg_split('/\s+/', $full_name);
+            if (!empty($name_parts)) {
+                $first_name = array_shift($name_parts);
+                $last_name = implode(' ', $name_parts);
+            }
+        }
+
+        $first_name = sanitize_text_field($first_name);
+        $last_name = sanitize_text_field($last_name);
+
+        if ($full_name === '' && ($first_name !== '' || $last_name !== '')) {
+            $full_name = trim($first_name . ' ' . $last_name);
+        }
+
+        $email = sanitize_email($guest_data['email']);
+        $phone_raw = isset($guest_data['phone']) ? $guest_data['phone'] : '';
+        $phone = function_exists('gms_sanitize_phone')
+            ? gms_sanitize_phone($phone_raw)
+            : sanitize_text_field($phone_raw);
+
+        $identity_seed = trim(strtolower($full_name . '|' . $phone));
+        if ($identity_seed === '') {
+            $identity_seed = sanitize_text_field($email);
+        }
+
+        $placeholder_email = '';
+        if ($email === '') {
+            $placeholder_email = 'guest-' . md5($identity_seed ?: wp_generate_password(12, false, false)) . '@' . self::GUEST_PLACEHOLDER_DOMAIN;
+        }
+
+        $table_guests = $wpdb->prefix . 'gms_guests';
+
+        $existing_row = null;
+
+        if ($email !== '') {
+            $existing_row = $wpdb->get_row(
+                $wpdb->prepare("SELECT id, email FROM {$table_guests} WHERE email = %s", $email),
+                ARRAY_A
+            );
+        }
+
+        if (!$existing_row && $phone !== '') {
+            $existing_row = $wpdb->get_row(
+                $wpdb->prepare("SELECT id, email FROM {$table_guests} WHERE phone = %s", $phone),
+                ARRAY_A
+            );
+        }
+
+        if (!$existing_row && ($first_name !== '' || $last_name !== '')) {
+            $existing_row = $wpdb->get_row(
+                $wpdb->prepare(
+                    "SELECT id, email FROM {$table_guests} WHERE first_name = %s AND last_name = %s",
+                    $first_name,
+                    $last_name
+                ),
+                ARRAY_A
+            );
+        }
+
+        if (!$existing_row && $placeholder_email !== '') {
+            $existing_row = $wpdb->get_row(
+                $wpdb->prepare("SELECT id, email FROM {$table_guests} WHERE email = %s", $placeholder_email),
+                ARRAY_A
+            );
+        }
+
+        if ($existing_row) {
+            $update_data = array();
+
+            if ($first_name !== '') {
+                $update_data['first_name'] = $first_name;
+            }
+
+            if ($last_name !== '') {
+                $update_data['last_name'] = $last_name;
+            }
+
+            if ($phone !== '') {
+                $update_data['phone'] = $phone;
+            }
+
+            if ($email !== '') {
+                $update_data['email'] = $email;
+            } elseif ($placeholder_email !== '' && empty($existing_row['email'])) {
+                $update_data['email'] = $placeholder_email;
+            }
+
+            if (!empty($update_data)) {
+                $formats = array_fill(0, count($update_data), '%s');
+                $wpdb->update(
+                    $table_guests,
+                    $update_data,
+                    array('id' => intval($existing_row['id'])),
+                    $formats,
+                    array('%d')
+                );
+            }
+
+            return (int) $existing_row['id'];
+        }
+
+        $insert_data = array(
+            'first_name' => $first_name,
+            'last_name' => $last_name,
+            'email' => $email !== '' ? $email : $placeholder_email,
+            'phone' => $phone,
+            'created_at' => current_time('mysql'),
+        );
+
+        $formats = array('%s', '%s', '%s', '%s', '%s');
+
+        $result = $wpdb->insert($table_guests, $insert_data, $formats);
+
+        if ($result === false) {
+            error_log('GMS: Failed to upsert guest record: ' . $wpdb->last_error);
+            return 0;
+        }
+
+        return (int) $wpdb->insert_id;
+    }
+
     public static function getReservationByToken($token) {
         global $wpdb;
         $table_name = $wpdb->prefix . 'gms_reservations';
@@ -207,7 +348,7 @@ class GMS_Database {
         $table_name = $wpdb->prefix . 'gms_reservations';
 
         $allowed = array(
-            'guest_name', 'guest_email', 'guest_phone', 'property_id', 'property_name',
+            'guest_id', 'guest_name', 'guest_email', 'guest_phone', 'property_id', 'property_name',
             'booking_reference', 'checkin_date', 'checkout_date', 'status',
             'agreement_status', 'verification_status', 'portal_token', 'platform', 'webhook_data'
         );
@@ -219,6 +360,9 @@ class GMS_Database {
             }
 
             switch ($field) {
+                case 'guest_id':
+                    $update_data['guest_id'] = intval($data[$field]);
+                    break;
                 case 'guest_email':
                     $update_data['guest_email'] = sanitize_email($data[$field]);
                     break;
@@ -611,8 +755,40 @@ class GMS_Database {
                 $row['name'] = trim(trim($row['first_name'] ?? '') . ' ' . trim($row['last_name'] ?? ''));
             }
 
+            if (!empty($row['email']) && str_ends_with($row['email'], '@' . self::GUEST_PLACEHOLDER_DOMAIN)) {
+                $row['email'] = '';
+            }
+
             return $row;
         }, $results);
+    }
+
+    public static function get_guest_by_id($guest_id) {
+        global $wpdb;
+
+        $table_guests = $wpdb->prefix . 'gms_guests';
+
+        $row = $wpdb->get_row(
+            $wpdb->prepare(
+                "SELECT g.*, TRIM(CONCAT(g.first_name, ' ', g.last_name)) AS name FROM {$table_guests} g WHERE id = %d",
+                intval($guest_id)
+            ),
+            ARRAY_A
+        );
+
+        if (!$row) {
+            return null;
+        }
+
+        if (empty($row['name'])) {
+            $row['name'] = trim(trim($row['first_name'] ?? '') . ' ' . trim($row['last_name'] ?? ''));
+        }
+
+        if (!empty($row['email']) && str_ends_with($row['email'], '@' . self::GUEST_PLACEHOLDER_DOMAIN)) {
+            $row['email'] = '';
+        }
+
+        return $row;
     }
 
     public static function get_guest_count($search = '') {
@@ -643,6 +819,100 @@ class GMS_Database {
             $table_name = $wpdb->prefix . 'gms_guests';
         }
         return (int) $wpdb->get_var("SELECT COUNT(id) FROM {$table_name}");
+    }
+
+    public static function maybeScheduleGuestBackfill() {
+        if (get_option('gms_guest_backfill_complete')) {
+            return;
+        }
+
+        if (!function_exists('wp_next_scheduled') || !function_exists('wp_schedule_single_event')) {
+            return;
+        }
+
+        if (!self::hasPendingGuestBackfill()) {
+            update_option('gms_guest_backfill_complete', 1, false);
+            return;
+        }
+
+        if (!wp_next_scheduled('gms_guest_backfill_event')) {
+            $delay = defined('MINUTE_IN_SECONDS') ? MINUTE_IN_SECONDS : 60;
+            wp_schedule_single_event(time() + $delay, 'gms_guest_backfill_event', array(50));
+        }
+    }
+
+    public static function runGuestBackfill($batch_size = 50) {
+        $batch_size = max(1, (int) $batch_size);
+
+        if (!self::hasPendingGuestBackfill()) {
+            update_option('gms_guest_backfill_complete', 1, false);
+            return;
+        }
+
+        $processed = self::processGuestBackfillBatch($batch_size);
+
+        if ($processed === 0) {
+            update_option('gms_guest_backfill_complete', 1, false);
+            return;
+        }
+
+        if (self::hasPendingGuestBackfill() && function_exists('wp_schedule_single_event')) {
+            $delay = defined('MINUTE_IN_SECONDS') ? MINUTE_IN_SECONDS : 60;
+            wp_schedule_single_event(time() + $delay, 'gms_guest_backfill_event', array($batch_size));
+        } else {
+            update_option('gms_guest_backfill_complete', 1, false);
+        }
+    }
+
+    private static function processGuestBackfillBatch($batch_size = 50) {
+        global $wpdb;
+
+        $table_reservations = $wpdb->prefix . 'gms_reservations';
+
+        $rows = $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT id, guest_name, guest_email, guest_phone FROM {$table_reservations}
+                 WHERE (guest_id IS NULL OR guest_id = 0)
+                   AND (guest_name <> '' OR guest_email <> '' OR guest_phone <> '')
+                 ORDER BY id ASC
+                 LIMIT %d",
+                max(1, (int) $batch_size)
+            ),
+            ARRAY_A
+        );
+
+        if (empty($rows)) {
+            return 0;
+        }
+
+        $processed = 0;
+
+        foreach ($rows as $row) {
+            $guest_id = self::upsert_guest(array(
+                'name' => $row['guest_name'],
+                'email' => $row['guest_email'],
+                'phone' => $row['guest_phone'],
+            ));
+
+            if ($guest_id) {
+                self::updateReservation($row['id'], array('guest_id' => $guest_id));
+                $processed++;
+            }
+        }
+
+        return $processed;
+    }
+
+    private static function hasPendingGuestBackfill() {
+        global $wpdb;
+
+        $table_reservations = $wpdb->prefix . 'gms_reservations';
+
+        $count = (int) $wpdb->get_var(
+            "SELECT COUNT(id) FROM {$table_reservations} WHERE (guest_id IS NULL OR guest_id = 0) AND (guest_name <> '' OR guest_email <> '' OR guest_phone <> '')"
+        );
+
+        return $count > 0;
     }
 
     private static function sanitizeDateTime($value) {
@@ -747,4 +1017,9 @@ class GMS_Database {
 
         return $row;
     }
+}
+
+if (function_exists('add_action')) {
+    add_action('admin_init', array('GMS_Database', 'maybeScheduleGuestBackfill'));
+    add_action('gms_guest_backfill_event', array('GMS_Database', 'runGuestBackfill'));
 }
