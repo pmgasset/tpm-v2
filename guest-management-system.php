@@ -2,12 +2,13 @@
 /**
  * File: guest-management-system.php
  * Location: /wp-content/plugins/guest-management-system/guest-management-system.php
- * * Plugin Name: Guest Management System
- * Plugin URI: https://yoursite.com
+ *
+ * Plugin Name: Guest Management System
+ * Plugin URI:  https://yoursite.com
  * Description: Complete guest management system for short-term rentals with webhook integration, identity verification, and agreement signing.
- * Version: 1.0.0
- * Author: Your Company
- * License: GPL v2 or later
+ * Version:     1.1.0
+ * Author:      Your Company
+ * License:     GPL v2 or later
  * Requires at least: 6.0
  * Tested up to: 6.4
  * Requires PHP: 8.0
@@ -21,7 +22,7 @@ if (!defined('ABSPATH')) {
 // Define plugin constants
 define('GMS_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('GMS_PLUGIN_PATH', plugin_dir_path(__FILE__));
-define('GMS_VERSION', '1.0.0');
+define('GMS_VERSION', '1.1.0');
 
 class GuestManagementSystem {
     
@@ -35,7 +36,6 @@ class GuestManagementSystem {
     }
     
     private function __construct() {
-        // Load includes immediately so they're available for activation
         $this->loadIncludes();
         
         add_action('init', array($this, 'init'));
@@ -44,9 +44,7 @@ class GuestManagementSystem {
     }
     
     public function init() {
-        // Initialize plugin components
-        
-        // Initialize components
+        // Initialize all plugin components
         new GMS_Database();
         new GMS_Admin();
         new GMS_Webhook_Handler();
@@ -54,16 +52,16 @@ class GuestManagementSystem {
         new GMS_Email_Handler();
         new GMS_SMS_Handler();
         new GMS_Stripe_Integration();
-        new GMS_Agreement_Handler();
+        new GMS_Agreement_Handler(); // Initialize the new agreement handler
         
-        // Add custom user role
+        // Add custom user role for guests
         $this->addGuestRole();
         
-        // Enqueue scripts and styles
+        // Enqueue scripts and styles for the front-end and admin areas
         add_action('wp_enqueue_scripts', array($this, 'enqueueScripts'));
         add_action('admin_enqueue_scripts', array($this, 'enqueueAdminScripts'));
         
-        // Add rewrite rules for guest portal
+        // Add custom rewrite rules for the guest portal
         add_action('init', array($this, 'addRewriteRules'));
         add_filter('query_vars', array($this, 'addQueryVars'));
         add_action('template_redirect', array($this, 'handleGuestPortal'));
@@ -78,7 +76,7 @@ class GuestManagementSystem {
             'class-email-handler.php',
             'class-sms-handler.php',
             'class-stripe-integration.php',
-            'class-agreement-handler.php',
+            'class-agreement-handler.php', // Load the new agreement handler class
             'functions.php'
         );
         
@@ -87,25 +85,28 @@ class GuestManagementSystem {
             if (file_exists($filepath)) {
                 require_once $filepath;
             } else {
-                error_log('GMS Error: Missing file - ' . $filepath);
+                error_log('GMS Error: Missing required file - ' . $filepath);
             }
         }
     }
     
     public function activate() {
-        // Verify that the Database class is loaded
+        // Improved: Use an admin notice for a more graceful activation failure
         if (!class_exists('GMS_Database')) {
-            wp_die('GMS Error: GMS_Database class not found. Please ensure all plugin files are uploaded correctly.');
+            add_action('admin_notices', function() {
+                echo '<div class="error"><p>Guest Management System Error: GMS_Database class not found. The plugin could not be activated. Please ensure all plugin files are uploaded correctly.</p></div>';
+            });
+            return;
         }
         
-        // Create database tables
+        // Create database tables on activation
         GMS_Database::createTables();
         
-        // Add rewrite rules
+        // Add rewrite rules and flush them to avoid 404 errors
         $this->addRewriteRules();
         flush_rewrite_rules();
         
-        // Add default options
+        // Set up default options on first activation
         $default_options = array(
             'gms_stripe_pk' => '',
             'gms_stripe_sk' => '',
@@ -134,7 +135,6 @@ class GuestManagementSystem {
         if (!get_role('guest')) {
             add_role('guest', 'Guest', array(
                 'read' => true,
-                'guest_portal_access' => true
             ));
         }
     }
@@ -165,56 +165,31 @@ class GuestManagementSystem {
     
     public function enqueueScripts() {
         if (get_query_var('guest_portal')) {
-            // Enqueue Stripe.js
-            wp_enqueue_script('stripe-js', 'https://js.stripe.com/v3/', array(), null, true);
+            wp_enqueue_script('stripe-js', 'https://js.stripe.com/v3/', [], null, true);
+            wp_enqueue_script('gms-guest-portal', GMS_PLUGIN_URL . 'assets/js/guest-portal.js', ['jquery', 'stripe-js'], GMS_VERSION, true);
+            wp_enqueue_style('gms-guest-portal', GMS_PLUGIN_URL . 'assets/css/guest-portal.css', [], GMS_VERSION);
             
-            // Enqueue guest portal scripts
-            wp_enqueue_script('gms-guest-portal', GMS_PLUGIN_URL . 'assets/js/guest-portal.js', array('stripe-js'), GMS_VERSION, true);
-            wp_enqueue_style('gms-guest-portal', GMS_PLUGIN_URL . 'assets/css/guest-portal.css', array(), GMS_VERSION);
-            
-            // Get reservation data
             $token = get_query_var('guest_token');
             $reservation = GMS_Database::getReservationByToken($token);
             
-            // Localize script for AJAX and global variables
+            // Pass data from PHP to JavaScript securely
             wp_localize_script('gms-guest-portal', 'gmsConfig', array(
                 'ajaxUrl' => admin_url('admin-ajax.php'),
                 'nonce' => wp_create_nonce('gms_guest_nonce'),
                 'stripeKey' => get_option('gms_stripe_pk'),
                 'reservationId' => $reservation ? $reservation['id'] : 0
             ));
-            
-            // Add inline script to set global variables
-            wp_add_inline_script('gms-guest-portal', '
-                window.gmsAjaxUrl = "' . admin_url('admin-ajax.php') . '";
-                window.gmsNonce = "' . wp_create_nonce('gms_guest_nonce') . '";
-                window.gmsStripeKey = "' . esc_js(get_option('gms_stripe_pk')) . '";
-                window.gmsReservationId = ' . ($reservation ? $reservation['id'] : 0) . ';
-            ', 'before');
         }
     }
     
     public function enqueueAdminScripts($hook) {
-        if (strpos($hook, 'guest-management') !== false) {
-            wp_enqueue_script('gms-admin', GMS_PLUGIN_URL . 'assets/js/admin.js', array('jquery'), GMS_VERSION, true);
-            wp_enqueue_style('gms-admin', GMS_PLUGIN_URL . 'assets/css/admin.css', array(), GMS_VERSION);
-            
-            // Localize admin script
-            wp_localize_script('gms-admin', 'gmsAdmin', array(
-                'ajaxUrl' => admin_url('admin-ajax.php'),
-                'nonce' => wp_create_nonce('gms_admin_nonce'),
-                'webhookUrl' => home_url('/webhook')
-            ));
-            
-            // Add inline script for global variables
-            wp_add_inline_script('gms-admin', '
-                var gms_admin_nonce = "' . wp_create_nonce('gms_admin_nonce') . '";
-                var gms_webhook_url = "' . home_url('/webhook') . '";
-            ', 'before');
-            
-            // Enqueue media uploader for logo upload
-            wp_enqueue_media();
+        // Only load admin scripts on our plugin's pages
+        if (strpos($hook, 'guest-management') === false) {
+            return;
         }
+        wp_enqueue_script('gms-admin', GMS_PLUGIN_URL . 'assets/js/admin.js', ['jquery'], GMS_VERSION, true);
+        wp_enqueue_style('gms-admin', GMS_PLUGIN_URL . 'assets/css/admin.css', [], GMS_VERSION);
+        wp_enqueue_media(); // For handling media uploads in settings (e.g., logo)
     }
     
     private function getDefaultAgreementTemplate() {
@@ -222,27 +197,11 @@ class GuestManagementSystem {
     }
     
     private function getDefaultEmailTemplate() {
-        return 'Hi {guest_name},
-
-Welcome to {property_name}! 
-
-To complete your check-in process, please visit your guest portal: {portal_link}
-
-You will need to:
-1. Sign the guest agreement
-2. Complete identity verification
-
-Check-in: {checkin_date} at {checkin_time}
-Check-out: {checkout_date} at {checkout_time}
-
-We look forward to hosting you!
-
-Best regards,
-{company_name}';
+        return "Hi {guest_name},\n\nWelcome to {property_name}!\n\nTo complete your check-in process, please visit your guest portal: {portal_link}\n\nYou will need to:\n1. Sign the guest agreement\n2. Complete identity verification\n\nCheck-in: {checkin_date}\n\nWe look forward to hosting you!";
     }
     
     private function getDefaultSMSTemplate() {
-        return 'Hi {guest_name}! Complete your check-in at {portal_link} - Identity verification and agreement required. Check-in: {checkin_date} {checkin_time}';
+        return 'Hi {guest_name}! Complete your check-in for {property_name} at {portal_link}. Identity verification and agreement signing are required.';
     }
 }
 
