@@ -217,6 +217,7 @@ class GuestManagementSystem {
                     'statusLabel' => __('Status', 'guest-management-system'),
                     'ajaxUnavailable' => __('Unable to communicate with the server.', 'guest-management-system'),
 
+
                 ],
             ]
         );

@@ -404,7 +404,6 @@ class GMS_Admin {
             'stats' => $stats,
         ));
     }
-
     public function ajax_get_reservation() {
         check_ajax_referer('gms_admin_nonce', 'nonce');
         $this->ensure_ajax_permissions();
@@ -1227,6 +1226,12 @@ class GMS_Admin {
             <?php if (isset($_GET['gms_reservation_created'])) : ?>
                 <div class="notice notice-success is-dismissible">
                     <p><?php esc_html_e('Reservation created successfully.', 'guest-management-system'); ?></p>
+                </div>
+            <?php endif; ?>
+
+            <?php if (isset($_GET['gms_reservation_updated'])) : ?>
+                <div class="notice notice-success is-dismissible">
+                    <p><?php esc_html_e('Reservation updated successfully.', 'guest-management-system'); ?></p>
                 </div>
             <?php endif; ?>
 

@@ -129,7 +129,6 @@
         }, 2000);
     }
 
-
     function getColumnCount($row) {
         var count = $row.children('th, td').length;
 
@@ -305,6 +304,7 @@
             }
         });
     }
+
 
     $(document).ready(function() {
 
