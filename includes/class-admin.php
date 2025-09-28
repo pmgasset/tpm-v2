@@ -1544,19 +1544,36 @@ class GMS_Admin {
                     $normalized_phone = sanitize_text_field($normalized_phone);
                 }
 
-                $guest_id = GMS_Database::upsert_guest(array(
-                    'name' => $normalized_name,
-                    'email' => $normalized_email,
-                    'phone' => $normalized_phone,
+                $form_values['guest_name'] = $normalized_name;
+                $form_values['guest_email'] = $normalized_email;
+                $form_values['guest_phone'] = $normalized_phone;
+
+                $guest_upsert_result = GMS_Database::upsert_guest(array(
+                    'name' => $form_values['guest_name'],
+                    'email' => $form_values['guest_email'],
+                    'phone' => $form_values['guest_phone'],
                 ));
 
-                if (!$guest_id) {
+                $guest_id = 0;
+
+                if (is_array($guest_upsert_result)) {
+                    $guest_id = isset($guest_upsert_result['id']) ? (int) $guest_upsert_result['id'] : 0;
+                    if (isset($guest_upsert_result['name'])) {
+                        $form_values['guest_name'] = (string) $guest_upsert_result['name'];
+                    }
+                    if (isset($guest_upsert_result['email'])) {
+                        $form_values['guest_email'] = (string) $guest_upsert_result['email'];
+                    }
+                    if (isset($guest_upsert_result['phone'])) {
+                        $form_values['guest_phone'] = (string) $guest_upsert_result['phone'];
+                    }
+                } else {
+                    $guest_id = (int) $guest_upsert_result;
+                }
+
+                if ($guest_id <= 0) {
                     $errors[] = __('Unable to save guest details. Please try again.', 'guest-management-system');
                 } else {
-                    $form_values['guest_name'] = $normalized_name;
-                    $form_values['guest_email'] = $normalized_email;
-                    $form_values['guest_phone'] = $normalized_phone;
-
                     $update_data = array(
                         'guest_id' => $guest_id,
                         'guest_name' => $form_values['guest_name'],
