@@ -616,6 +616,10 @@ class GMS_Stripe_Integration {
         if ($url) {
             update_user_meta($user_id, 'gms_verification_selfie_url', esc_url_raw($url));
             update_user_meta($user_id, 'profile_photo_url', esc_url_raw($url));
+            update_user_meta($user_id, 'simple_local_avatar', array(
+                'full' => esc_url_raw($url),
+                'media_id' => $attachment_id,
+            ));
         }
 
         update_user_meta($user_id, 'profile_photo', $attachment_id);
@@ -726,18 +730,53 @@ class GMS_Stripe_Integration {
 
     private function locateOrCreateUser($reservation) {
         $guest_id = isset($reservation['guest_id']) ? intval($reservation['guest_id']) : 0;
+        $guest_record_id = isset($reservation['guest_record_id']) ? intval($reservation['guest_record_id']) : 0;
         $email = isset($reservation['guest_email']) ? sanitize_email($reservation['guest_email']) : '';
+        $guest_name = isset($reservation['guest_name']) ? trim((string) $reservation['guest_name']) : '';
 
         if ($guest_id > 0) {
             $user = get_user_by('id', $guest_id);
             if ($user) {
+                if (!in_array('guest', (array) $user->roles, true)) {
+                    $user->add_role('guest');
+                }
+                if ($guest_record_id > 0) {
+                    GMS_Database::ensure_guest_user($guest_record_id, array(
+                        'email' => $email,
+                        'full_name' => $guest_name,
+                    ));
+                }
                 return (int) $user->ID;
+            }
+        }
+
+        if ($guest_record_id > 0) {
+            $guest_profile = GMS_Database::get_guest_by_id($guest_record_id);
+            if ($guest_profile && !empty($guest_profile['wp_user_id'])) {
+                $user = get_user_by('id', intval($guest_profile['wp_user_id']));
+                if ($user) {
+                    if (!in_array('guest', (array) $user->roles, true)) {
+                        $user->add_role('guest');
+                    }
+                    return (int) $user->ID;
+                }
             }
         }
 
         if ($email !== '' && is_email($email)) {
             $user = get_user_by('email', $email);
             if ($user) {
+                if (!in_array('guest', (array) $user->roles, true)) {
+                    $user->add_role('guest');
+                }
+                if ($guest_record_id > 0) {
+                    GMS_Database::ensure_guest_user($guest_record_id, array(
+                        'email' => $email,
+                        'first_name' => $user->first_name,
+                        'last_name' => $user->last_name,
+                        'full_name' => $guest_name,
+                    ));
+                }
                 return (int) $user->ID;
             }
         }
@@ -746,7 +785,6 @@ class GMS_Stripe_Integration {
             return 0;
         }
 
-        $guest_name = isset($reservation['guest_name']) ? trim((string) $reservation['guest_name']) : '';
         list($first_name, $last_name) = $this->splitGuestName($guest_name);
 
         $username_base = sanitize_user(current(explode('@', $email)), true);
@@ -776,6 +814,20 @@ class GMS_Stripe_Integration {
         if (is_wp_error($user_id)) {
             error_log('GMS Stripe Error: Unable to create user for verification - ' . $user_id->get_error_message());
             return 0;
+        }
+
+        $user = get_user_by('id', $user_id);
+        if ($user && !in_array('guest', (array) $user->roles, true)) {
+            $user->add_role('guest');
+        }
+
+        if ($guest_record_id > 0) {
+            GMS_Database::ensure_guest_user($guest_record_id, array(
+                'first_name' => $first_name,
+                'last_name' => $last_name,
+                'email' => $email,
+                'full_name' => $guest_name,
+            ), true);
         }
 
         return (int) $user_id;
