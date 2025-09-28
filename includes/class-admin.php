@@ -58,10 +58,25 @@ class GMS_Reservations_List_Table extends WP_List_Table {
 
         $label = $reference !== '' ? $reference : __('Edit Reservation', 'guest-management-system');
 
+        $edit_url = add_query_arg(
+            array(
+                'page' => 'guest-management-reservations',
+                'action' => 'edit',
+                'reservation_id' => $reservation_id,
+            ),
+            admin_url('admin.php')
+        );
+
+        $aria_label = sprintf(
+            /* translators: %s: reservation identifier */
+            __('Edit reservation %s', 'guest-management-system'),
+            $label
+        );
+
         return sprintf(
-            '<button type="button" class="button-link gms-reservation-toggle" data-reservation-id="%1$d" data-reference="%2$s" aria-expanded="false">%3$s</button>',
-            $reservation_id,
-            esc_attr($reference),
+            '<a class="gms-reservation-edit-link" href="%1$s" aria-label="%2$s">%3$s</a>',
+            esc_url($edit_url),
+            esc_attr($aria_label),
             esc_html($label)
         );
     }
@@ -197,8 +212,6 @@ class GMS_Admin {
         add_action('wp_ajax_gms_bulk_action', array($this, 'ajax_bulk_action'));
         add_action('wp_ajax_gms_autosave_template', array($this, 'ajax_autosave_template'));
         add_action('wp_ajax_gms_refresh_stats', array($this, 'ajax_refresh_stats'));
-        add_action('wp_ajax_gms_get_reservation', array($this, 'ajax_get_reservation'));
-        add_action('wp_ajax_gms_update_reservation', array($this, 'ajax_update_reservation'));
     }
 
     public function ajax_test_sms() {
@@ -390,89 +403,6 @@ class GMS_Admin {
         wp_send_json_success(array(
             'stats' => $stats,
         ));
-    }
-
-    public function ajax_get_reservation() {
-        check_ajax_referer('gms_admin_nonce', 'nonce');
-        $this->ensure_ajax_permissions();
-
-        $reservation_id = isset($_REQUEST['reservation_id']) ? absint(wp_unslash($_REQUEST['reservation_id'])) : 0;
-
-        if (!$reservation_id) {
-            wp_send_json_error(__('Invalid reservation ID supplied.', 'guest-management-system'));
-        }
-
-        $reservation = GMS_Database::getReservationById($reservation_id);
-
-        if (!$reservation) {
-            wp_send_json_error(__('Reservation not found.', 'guest-management-system'));
-        }
-
-        $response = $this->prepare_reservation_response($reservation);
-
-        wp_send_json_success($response);
-    }
-
-    public function ajax_update_reservation() {
-        check_ajax_referer('gms_admin_nonce', 'nonce');
-        $this->ensure_ajax_permissions();
-
-        $reservation_id = isset($_POST['reservation_id']) ? absint(wp_unslash($_POST['reservation_id'])) : 0;
-
-        if (!$reservation_id) {
-            wp_send_json_error(__('Invalid reservation ID supplied.', 'guest-management-system'));
-        }
-
-        $payload = isset($_POST['reservation']) ? wp_unslash($_POST['reservation']) : array();
-
-        if (!is_array($payload)) {
-            $payload = array();
-        }
-
-        $allowed = array(
-            'guest_name',
-            'guest_email',
-            'guest_phone',
-            'property_name',
-            'booking_reference',
-            'checkin_date',
-            'checkout_date',
-            'status',
-        );
-
-        $update_data = array();
-
-        foreach ($allowed as $field) {
-            if (!array_key_exists($field, $payload)) {
-                continue;
-            }
-
-            $value = $payload[$field];
-
-            if (is_array($value)) {
-                continue;
-            }
-
-            $update_data[$field] = $value;
-        }
-
-        if (!empty($update_data)) {
-            $updated = GMS_Database::updateReservation($reservation_id, $update_data);
-
-            if (!$updated) {
-                wp_send_json_error(__('Unable to save the reservation. Please try again.', 'guest-management-system'));
-            }
-        }
-
-        $reservation = GMS_Database::getReservationById($reservation_id);
-
-        if (!$reservation) {
-            wp_send_json_error(__('Unable to load the updated reservation.', 'guest-management-system'));
-        }
-
-        $response = $this->prepare_reservation_response($reservation);
-
-        wp_send_json_success($response);
     }
 
     /**
@@ -772,35 +702,6 @@ class GMS_Admin {
         if (!current_user_can('manage_options')) {
             wp_send_json_error(__('You do not have permission to perform this action.', 'guest-management-system'));
         }
-    }
-
-    private function prepare_reservation_response($reservation) {
-        if (empty($reservation) || !is_array($reservation)) {
-            return array();
-        }
-
-        $table = new GMS_Reservations_List_Table();
-        $columns = $table->get_columns();
-        $display = array();
-
-        foreach ($columns as $column_key => $label) {
-            if ($column_key === 'cb') {
-                continue;
-            }
-
-            $method = 'column_' . $column_key;
-
-            if (method_exists($table, $method)) {
-                $display[$column_key] = $table->$method($reservation);
-            } else {
-                $display[$column_key] = $table->column_default($reservation, $column_key);
-            }
-        }
-
-        return array(
-            'reservation' => $reservation,
-            'display' => $display,
-        );
     }
 
     private function send_reservation_notifications($reservation) {
@@ -1202,6 +1103,12 @@ class GMS_Admin {
             return;
         }
 
+        if ($action === 'edit') {
+            $reservation_id = isset($_GET['reservation_id']) ? absint(wp_unslash($_GET['reservation_id'])) : 0;
+            $this->render_reservation_edit_page($reservation_id);
+            return;
+        }
+
         $reservations_table = new GMS_Reservations_List_Table();
         $reservations_table->prepare_items();
 
@@ -1225,6 +1132,12 @@ class GMS_Admin {
                 </div>
             <?php endif; ?>
 
+            <?php if (isset($_GET['gms_reservation_updated'])) : ?>
+                <div class="notice notice-success is-dismissible">
+                    <p><?php esc_html_e('Reservation updated successfully.', 'guest-management-system'); ?></p>
+                </div>
+            <?php endif; ?>
+
             <form method="post">
                 <?php $reservations_table->display(); ?>
             </form>
@@ -1236,6 +1149,8 @@ class GMS_Admin {
         if (!current_user_can('manage_options')) {
             return;
         }
+
+        $list_url = add_query_arg(array('page' => 'guest-management-reservations'), admin_url('admin.php'));
 
         $form_values = array(
             'guest_name' => '',
@@ -1250,6 +1165,8 @@ class GMS_Admin {
         );
 
         $errors = array();
+
+        $success_notice = '';
 
         if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             check_admin_referer('gms_create_reservation');
@@ -1324,21 +1241,41 @@ class GMS_Admin {
                         admin_url('admin.php')
                     );
 
-                    wp_safe_redirect($redirect_url);
-                    exit;
-                }
+                    $redirected = false;
 
-                $errors[] = __('Unable to create reservation. Please try again.', 'guest-management-system');
+                    if (!headers_sent()) {
+                        $redirected = wp_safe_redirect($redirect_url);
+                    }
+
+                    if ($redirected) {
+                        exit;
+                    }
+
+                    $success_notice = sprintf(
+                        /* translators: 1: opening anchor tag, 2: closing anchor tag */
+                        __('Reservation created successfully. %1$sReturn to Reservations%2$s.', 'guest-management-system'),
+                        '<a href="' . esc_url($list_url) . '">',
+                        '</a>'
+                    );
+                } else {
+                    $errors[] = __('Unable to create reservation. Please try again.', 'guest-management-system');
+                }
             }
         }
 
-        $cancel_url = add_query_arg(array('page' => 'guest-management-reservations'), admin_url('admin.php'));
+        $cancel_url = $list_url;
 
         ?>
         <div class="wrap">
             <h1 class="wp-heading-inline"><?php esc_html_e('Add New Reservation', 'guest-management-system'); ?></h1>
             <a href="<?php echo esc_url($cancel_url); ?>" class="page-title-action"><?php esc_html_e('Back to Reservations', 'guest-management-system'); ?></a>
             <hr class="wp-header-end">
+
+            <?php if ($success_notice) : ?>
+                <div class="notice notice-success is-dismissible">
+                    <p><?php echo wp_kses_post($success_notice); ?></p>
+                </div>
+            <?php endif; ?>
 
             <?php if (!empty($errors)) : ?>
                 <div class="notice notice-error">
@@ -1408,6 +1345,243 @@ class GMS_Admin {
 
                 <?php submit_button(__('Create Reservation', 'guest-management-system')); ?>
             </form>
+        </div>
+        <?php
+    }
+
+    protected function render_reservation_edit_page($reservation_id) {
+        if (!current_user_can('manage_options')) {
+            return;
+        }
+
+        $reservation_id = absint($reservation_id);
+
+        if (!$reservation_id) {
+            $this->render_missing_reservation_notice();
+            return;
+        }
+
+        $reservation = GMS_Database::getReservationById($reservation_id);
+
+        if (!$reservation) {
+            $this->render_missing_reservation_notice();
+            return;
+        }
+
+        $list_url = add_query_arg(array('page' => 'guest-management-reservations'), admin_url('admin.php'));
+
+        $form_values = array(
+            'guest_name' => isset($reservation['guest_name']) ? $reservation['guest_name'] : '',
+            'guest_email' => isset($reservation['guest_email']) ? $reservation['guest_email'] : '',
+            'guest_phone' => isset($reservation['guest_phone']) ? $reservation['guest_phone'] : '',
+            'property_name' => isset($reservation['property_name']) ? $reservation['property_name'] : '',
+            'property_id' => isset($reservation['property_id']) ? $reservation['property_id'] : '',
+            'booking_reference' => isset($reservation['booking_reference']) ? $reservation['booking_reference'] : '',
+            'checkin_date' => $this->format_datetime_for_input(isset($reservation['checkin_date']) ? $reservation['checkin_date'] : ''),
+            'checkout_date' => $this->format_datetime_for_input(isset($reservation['checkout_date']) ? $reservation['checkout_date'] : ''),
+            'status' => isset($reservation['status']) ? $reservation['status'] : 'pending',
+        );
+
+        $errors = array();
+
+        $success_notice = '';
+
+        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+            check_admin_referer('gms_edit_reservation_' . $reservation_id);
+
+            $posted_id = isset($_POST['reservation_id']) ? absint(wp_unslash($_POST['reservation_id'])) : 0;
+
+            if ($posted_id !== $reservation_id) {
+                $errors[] = __('Invalid reservation request. Please try again.', 'guest-management-system');
+            }
+
+            $fields = array_keys($form_values);
+
+            foreach ($fields as $field) {
+                if (!isset($_POST[$field])) {
+                    $form_values[$field] = '';
+                    continue;
+                }
+
+                $value = wp_unslash($_POST[$field]);
+
+                switch ($field) {
+                    case 'guest_email':
+                        $form_values[$field] = sanitize_email($value);
+                        break;
+                    case 'checkin_date':
+                    case 'checkout_date':
+                        $form_values[$field] = $this->format_datetime_for_input($value);
+                        break;
+                    default:
+                        $form_values[$field] = sanitize_text_field($value);
+                        break;
+                }
+            }
+
+            if (empty($form_values['guest_name'])) {
+                $errors[] = __('Guest name is required.', 'guest-management-system');
+            }
+
+            if ($form_values['guest_email'] !== '' && !is_email($form_values['guest_email'])) {
+                $errors[] = __('Please enter a valid email address.', 'guest-management-system');
+            }
+
+            $allowed_statuses = array('pending', 'confirmed', 'cancelled');
+            if (!in_array($form_values['status'], $allowed_statuses, true)) {
+                $form_values['status'] = 'pending';
+            }
+
+            if (empty($errors)) {
+                $update_data = array(
+                    'guest_name' => $form_values['guest_name'],
+                    'guest_email' => $form_values['guest_email'],
+                    'guest_phone' => $form_values['guest_phone'],
+                    'property_name' => $form_values['property_name'],
+                    'property_id' => $form_values['property_id'],
+                    'booking_reference' => $form_values['booking_reference'],
+                    'checkin_date' => $this->format_datetime_for_database($form_values['checkin_date']),
+                    'checkout_date' => $this->format_datetime_for_database($form_values['checkout_date']),
+                    'status' => $form_values['status'],
+                );
+
+                $updated = GMS_Database::updateReservation($reservation_id, $update_data);
+
+                if ($updated) {
+                    $redirect_url = add_query_arg(
+                        array(
+                            'page' => 'guest-management-reservations',
+                            'gms_reservation_updated' => 1,
+                        ),
+                        admin_url('admin.php')
+                    );
+
+                    $redirected = false;
+
+                    if (!headers_sent()) {
+                        $redirected = wp_safe_redirect($redirect_url);
+                    }
+
+                    if ($redirected) {
+                        exit;
+                    }
+
+                    $success_notice = sprintf(
+                        /* translators: 1: opening anchor tag, 2: closing anchor tag */
+                        __('Reservation updated successfully. %1$sReturn to Reservations%2$s.', 'guest-management-system'),
+                        '<a href="' . esc_url($list_url) . '">',
+                        '</a>'
+                    );
+                } else {
+                    $errors[] = __('Unable to update reservation. Please try again.', 'guest-management-system');
+                }
+            }
+        }
+
+        $cancel_url = $list_url;
+
+        ?>
+        <div class="wrap">
+            <h1 class="wp-heading-inline"><?php esc_html_e('Edit Reservation', 'guest-management-system'); ?></h1>
+            <a href="<?php echo esc_url($cancel_url); ?>" class="page-title-action"><?php esc_html_e('Back to Reservations', 'guest-management-system'); ?></a>
+            <hr class="wp-header-end">
+
+            <?php if (isset($_GET['gms_reservation_updated'])) : ?>
+                <div class="notice notice-success is-dismissible">
+                    <p><?php esc_html_e('Reservation updated successfully.', 'guest-management-system'); ?></p>
+                </div>
+            <?php endif; ?>
+
+            <?php if ($success_notice) : ?>
+                <div class="notice notice-success is-dismissible">
+                    <p><?php echo wp_kses_post($success_notice); ?></p>
+                </div>
+            <?php endif; ?>
+
+            <?php if (!empty($errors)) : ?>
+                <div class="notice notice-error">
+                    <ul>
+                        <?php foreach ($errors as $error) : ?>
+                            <li><?php echo esc_html($error); ?></li>
+                        <?php endforeach; ?>
+                    </ul>
+                </div>
+            <?php endif; ?>
+
+            <form method="post">
+                <?php wp_nonce_field('gms_edit_reservation_' . $reservation_id); ?>
+                <input type="hidden" name="reservation_id" value="<?php echo esc_attr($reservation_id); ?>">
+                <table class="form-table" role="presentation">
+                    <tbody>
+                        <tr>
+                            <th scope="row"><label for="gms_guest_name_edit"><?php esc_html_e('Guest Name', 'guest-management-system'); ?></label></th>
+                            <td><input name="guest_name" type="text" id="gms_guest_name_edit" value="<?php echo esc_attr($form_values['guest_name']); ?>" class="regular-text" required></td>
+                        </tr>
+                        <tr>
+                            <th scope="row"><label for="gms_guest_email_edit"><?php esc_html_e('Guest Email', 'guest-management-system'); ?></label></th>
+                            <td><input name="guest_email" type="email" id="gms_guest_email_edit" value="<?php echo esc_attr($form_values['guest_email']); ?>" class="regular-text"></td>
+                        </tr>
+                        <tr>
+                            <th scope="row"><label for="gms_guest_phone_edit"><?php esc_html_e('Guest Phone', 'guest-management-system'); ?></label></th>
+                            <td><input name="guest_phone" type="text" id="gms_guest_phone_edit" value="<?php echo esc_attr($form_values['guest_phone']); ?>" class="regular-text"></td>
+                        </tr>
+                        <tr>
+                            <th scope="row"><label for="gms_property_name_edit"><?php esc_html_e('Property Name', 'guest-management-system'); ?></label></th>
+                            <td><input name="property_name" type="text" id="gms_property_name_edit" value="<?php echo esc_attr($form_values['property_name']); ?>" class="regular-text"></td>
+                        </tr>
+                        <tr>
+                            <th scope="row"><label for="gms_property_id_edit"><?php esc_html_e('Property ID', 'guest-management-system'); ?></label></th>
+                            <td><input name="property_id" type="text" id="gms_property_id_edit" value="<?php echo esc_attr($form_values['property_id']); ?>" class="regular-text"></td>
+                        </tr>
+                        <tr>
+                            <th scope="row"><label for="gms_booking_reference_edit"><?php esc_html_e('Booking Reference', 'guest-management-system'); ?></label></th>
+                            <td><input name="booking_reference" type="text" id="gms_booking_reference_edit" value="<?php echo esc_attr($form_values['booking_reference']); ?>" class="regular-text"></td>
+                        </tr>
+                        <tr>
+                            <th scope="row"><label for="gms_checkin_date_edit"><?php esc_html_e('Check-in Date', 'guest-management-system'); ?></label></th>
+                            <td><input name="checkin_date" type="datetime-local" id="gms_checkin_date_edit" value="<?php echo esc_attr($form_values['checkin_date']); ?>" class="regular-text"></td>
+                        </tr>
+                        <tr>
+                            <th scope="row"><label for="gms_checkout_date_edit"><?php esc_html_e('Check-out Date', 'guest-management-system'); ?></label></th>
+                            <td><input name="checkout_date" type="datetime-local" id="gms_checkout_date_edit" value="<?php echo esc_attr($form_values['checkout_date']); ?>" class="regular-text"></td>
+                        </tr>
+                        <tr>
+                            <th scope="row"><label for="gms_status_edit"><?php esc_html_e('Status', 'guest-management-system'); ?></label></th>
+                            <td>
+                                <select name="status" id="gms_status_edit">
+                                    <?php
+                                    $statuses = array(
+                                        'pending' => __('Pending', 'guest-management-system'),
+                                        'confirmed' => __('Confirmed', 'guest-management-system'),
+                                        'cancelled' => __('Cancelled', 'guest-management-system'),
+                                    );
+                                    foreach ($statuses as $status_key => $status_label) :
+                                        ?>
+                                        <option value="<?php echo esc_attr($status_key); ?>"<?php selected($form_values['status'], $status_key); ?>><?php echo esc_html($status_label); ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <?php submit_button(__('Update Reservation', 'guest-management-system')); ?>
+            </form>
+        </div>
+        <?php
+    }
+
+    protected function render_missing_reservation_notice() {
+        $cancel_url = add_query_arg(array('page' => 'guest-management-reservations'), admin_url('admin.php'));
+        ?>
+        <div class="wrap">
+            <h1 class="wp-heading-inline"><?php esc_html_e('Edit Reservation', 'guest-management-system'); ?></h1>
+            <a href="<?php echo esc_url($cancel_url); ?>" class="page-title-action"><?php esc_html_e('Back to Reservations', 'guest-management-system'); ?></a>
+            <hr class="wp-header-end">
+
+            <div class="notice notice-error">
+                <p><?php esc_html_e('The requested reservation could not be found.', 'guest-management-system'); ?></p>
+            </div>
         </div>
         <?php
     }
