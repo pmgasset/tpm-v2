@@ -10,6 +10,7 @@ class GMS_Stripe_Integration {
     
     private $api_url = 'https://api.stripe.com/v1';
     private $secret_key;
+    private $files_api_url = 'https://files.stripe.com/v1';
     
     public function __construct() {
         $this->secret_key = get_option('gms_stripe_sk');
@@ -108,6 +109,12 @@ class GMS_Stripe_Integration {
         }
 
         $endpoint = $this->api_url . '/identity/verification_sessions/' . rawurlencode($session_id);
+        $endpoint = add_query_arg(
+            array(
+                'expand[]' => 'last_verification_report',
+            ),
+            $endpoint
+        );
 
         $response = wp_remote_get($endpoint, array(
             'headers' => array(
@@ -135,7 +142,16 @@ class GMS_Stripe_Integration {
             return false;
         }
 
-        return $result;
+        $session = $result;
+
+        $reservation_id = $this->syncVerificationSession($session, false);
+
+        // Ensure AJAX responses include any enriched report data for the client.
+        if ($reservation_id > 0) {
+            $session['reservation_id'] = $reservation_id;
+        }
+
+        return $session;
     }
 
     public function handleStripeWebhook($request) {
@@ -159,16 +175,20 @@ class GMS_Stripe_Integration {
         // Handle different event types
         switch ($event['type']) {
             case 'identity.verification_session.verified':
-                $this->handleVerificationVerified($event['data']['object']);
+                $session = $event['data']['object'];
+                $this->handleVerificationVerified($session);
                 break;
             case 'identity.verification_session.processing':
-                $this->handleVerificationProcessing($event['data']['object']);
+                $session = $event['data']['object'];
+                $this->handleVerificationProcessing($session);
                 break;
             case 'identity.verification_session.requires_input':
-                $this->handleVerificationRequiresInput($event['data']['object']);
+                $session = $event['data']['object'];
+                $this->handleVerificationRequiresInput($session);
                 break;
             case 'identity.verification_session.canceled':
-                $this->handleVerificationCanceled($event['data']['object']);
+                $session = $event['data']['object'];
+                $this->handleVerificationCanceled($session);
                 break;
         }
 
@@ -225,7 +245,8 @@ class GMS_Stripe_Integration {
     }
 
     private function handleVerificationVerified($session) {
-        $reservation_id = $this->syncVerificationSession($session);
+        $session_data = $session;
+        $reservation_id = $this->syncVerificationSession($session_data);
 
         if (empty($reservation_id)) {
             return;
@@ -263,11 +284,13 @@ class GMS_Stripe_Integration {
     }
 
     private function handleVerificationProcessing($session) {
-        $this->syncVerificationSession($session);
+        $session_data = $session;
+        $this->syncVerificationSession($session_data);
     }
 
     private function handleVerificationRequiresInput($session) {
-        $reservation_id = $this->syncVerificationSession($session);
+        $session_data = $session;
+        $reservation_id = $this->syncVerificationSession($session_data);
 
         if (empty($reservation_id)) {
             return;
@@ -280,7 +303,8 @@ class GMS_Stripe_Integration {
     }
 
     private function handleVerificationCanceled($session) {
-        $reservation_id = $this->syncVerificationSession($session);
+        $session_data = $session;
+        $reservation_id = $this->syncVerificationSession($session_data);
 
         if (empty($reservation_id)) {
             return;
@@ -289,10 +313,19 @@ class GMS_Stripe_Integration {
         error_log('GMS Stripe Notice: Verification canceled for reservation ' . $reservation_id . '.');
     }
 
-    private function syncVerificationSession($session) {
+    private function syncVerificationSession(&$session, $allow_refresh = true) {
         if (!is_array($session) || empty($session['id'])) {
             return 0;
         }
+
+        if ($allow_refresh) {
+            $refreshed = $this->retrieveVerificationSessionById($session['id']);
+            if (is_array($refreshed)) {
+                $session = $refreshed;
+            }
+        }
+
+        $session = $this->handleSessionSideEffects($session);
 
         $update = array(
             'status' => $session['status'] ?? 'pending',
@@ -305,11 +338,477 @@ class GMS_Stripe_Integration {
 
         GMS_Database::updateVerification($session['id'], $update);
 
-        if (!empty($session['metadata']['reservation_id'])) {
+        $reservation_id = $this->getReservationIdFromSession($session);
+
+        return $reservation_id;
+    }
+
+    private function retrieveVerificationSessionById($session_id) {
+        if (empty($session_id) || empty($this->secret_key)) {
+            return null;
+        }
+
+        $endpoint = $this->api_url . '/identity/verification_sessions/' . rawurlencode($session_id);
+        $endpoint = add_query_arg(
+            array(
+                'expand[]' => 'last_verification_report',
+            ),
+            $endpoint
+        );
+
+        $response = wp_remote_get($endpoint, array(
+            'headers' => array(
+                'Authorization' => 'Bearer ' . $this->secret_key,
+            ),
+            'timeout' => 30,
+        ));
+
+        if (is_wp_error($response)) {
+            error_log('GMS Stripe Error: ' . $response->get_error_message());
+            return null;
+        }
+
+        $body = wp_remote_retrieve_body($response);
+        $result = json_decode($body, true);
+
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            error_log('GMS Stripe Error: Unable to decode verification session refresh response.');
+            return null;
+        }
+
+        if (isset($result['error'])) {
+            $message = isset($result['error']['message']) ? $result['error']['message'] : 'Unknown Stripe API error.';
+            error_log('GMS Stripe API Error: ' . $message);
+            return null;
+        }
+
+        return $result;
+    }
+
+    private function handleSessionSideEffects($session) {
+        if (!is_array($session)) {
+            return $session;
+        }
+
+        $session = $this->maybeAttachVerificationReport($session);
+        $this->persistVerificationDetails($session);
+
+        return $session;
+    }
+
+    private function maybeAttachVerificationReport($session) {
+        if (!is_array($session)) {
+            return $session;
+        }
+
+        $report = $session['last_verification_report'] ?? null;
+
+        if (is_array($report) && ($report['object'] ?? '') === 'identity.verification_report') {
+            return $session;
+        }
+
+        $report_id = '';
+
+        if (is_string($report)) {
+            $report_id = $report;
+        } elseif (is_array($report) && !empty($report['id'])) {
+            $report_id = $report['id'];
+        }
+
+        if ($report_id === '') {
+            return $session;
+        }
+
+        $full_report = $this->retrieveVerificationReport($report_id);
+
+        if (is_array($full_report) && !empty($full_report['id'])) {
+            $session['last_verification_report'] = $full_report;
+        }
+
+        return $session;
+    }
+
+    private function retrieveVerificationReport($report_id) {
+        if (empty($report_id) || empty($this->secret_key)) {
+            return null;
+        }
+
+        $endpoint = $this->api_url . '/identity/verification_reports/' . rawurlencode($report_id);
+        $endpoint = add_query_arg(
+            array(
+                'expand[]' => array(
+                    'document.front',
+                    'document.back',
+                    'selfie.selfie',
+                ),
+            ),
+            $endpoint
+        );
+
+        $response = wp_remote_get($endpoint, array(
+            'headers' => array(
+                'Authorization' => 'Bearer ' . $this->secret_key,
+            ),
+            'timeout' => 30,
+        ));
+
+        if (is_wp_error($response)) {
+            error_log('GMS Stripe Error: ' . $response->get_error_message());
+            return null;
+        }
+
+        $body = wp_remote_retrieve_body($response);
+        $result = json_decode($body, true);
+
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            error_log('GMS Stripe Error: Unable to decode verification report response.');
+            return null;
+        }
+
+        if (isset($result['error'])) {
+            $message = isset($result['error']['message']) ? $result['error']['message'] : 'Unknown Stripe API error.';
+            error_log('GMS Stripe API Error: ' . $message);
+            return null;
+        }
+
+        return $result;
+    }
+
+    private function persistVerificationDetails($session) {
+        if (!is_array($session)) {
+            return;
+        }
+
+        $report = $session['last_verification_report'] ?? null;
+
+        if (!is_array($report) || empty($report['id'])) {
+            return;
+        }
+
+        $reservation_id = $this->getReservationIdFromSession($session);
+
+        if ($reservation_id <= 0) {
+            return;
+        }
+
+        $reservation = GMS_Database::getReservationById($reservation_id);
+
+        if (empty($reservation) || !is_array($reservation)) {
+            return;
+        }
+
+        $user_id = $this->locateOrCreateUser($reservation);
+
+        if ($user_id <= 0) {
+            return;
+        }
+
+        $document = isset($report['document']) && is_array($report['document']) ? $report['document'] : array();
+        $selfie = isset($report['selfie']) && is_array($report['selfie']) ? $report['selfie'] : array();
+
+        $document_type = isset($document['type']) ? sanitize_text_field($document['type']) : '';
+        $document_country = isset($document['issued_country']) ? sanitize_text_field($document['issued_country']) : '';
+        $document_last4 = isset($document['number_last4']) ? sanitize_text_field((string) $document['number_last4']) : '';
+        $document_status = isset($document['status']) ? sanitize_text_field($document['status']) : '';
+        $selfie_status = isset($selfie['status']) ? sanitize_text_field($selfie['status']) : '';
+
+        $meta_updates = array(
+            'gms_verification_report_id' => isset($report['id']) ? sanitize_text_field($report['id']) : '',
+            'gms_verification_session_id' => isset($session['id']) ? sanitize_text_field($session['id']) : '',
+            'gms_verification_status' => isset($session['status']) ? sanitize_text_field($session['status']) : '',
+            'gms_verification_document_type' => $document_type,
+            'gms_verification_document_issuing_country' => $document_country,
+            'gms_verification_document_last4' => $document_last4,
+            'gms_verification_document_status' => $document_status,
+            'gms_verification_selfie_status' => $selfie_status,
+            'gms_verification_last_synced' => current_time('mysql'),
+        );
+
+        foreach ($meta_updates as $meta_key => $meta_value) {
+            if ($meta_value === '') {
+                continue;
+            }
+
+            update_user_meta($user_id, $meta_key, $meta_value);
+        }
+
+        update_user_meta($user_id, 'gms_verification_report', $report);
+
+        $document_front = $this->extractStripeFileId($document['front'] ?? null);
+        $document_back = $this->extractStripeFileId($document['back'] ?? null);
+        $selfie_file_id = $this->extractStripeFileId($selfie['selfie'] ?? null);
+
+        if ($document_front !== '') {
+            update_user_meta($user_id, 'gms_verification_document_front_file_id', sanitize_text_field($document_front));
+        }
+
+        if ($document_back !== '') {
+            update_user_meta($user_id, 'gms_verification_document_back_file_id', sanitize_text_field($document_back));
+        }
+
+        if ($selfie_file_id !== '') {
+            $this->maybeDownloadAndAssignSelfie($user_id, $selfie_file_id);
+        }
+    }
+
+    private function extractStripeFileId($value) {
+        if (is_string($value)) {
+            return $value;
+        }
+
+        if (is_array($value) && !empty($value['id'])) {
+            return $value['id'];
+        }
+
+        return '';
+    }
+
+    private function maybeDownloadAndAssignSelfie($user_id, $file_id) {
+        if (empty($file_id)) {
+            return;
+        }
+
+        $existing_file_id = get_user_meta($user_id, 'gms_verification_selfie_file_id', true);
+        $existing_attachment_id = (int) get_user_meta($user_id, 'gms_verification_selfie_attachment_id', true);
+
+        if (
+            $existing_file_id === $file_id &&
+            $existing_attachment_id > 0 &&
+            wp_get_attachment_url($existing_attachment_id)
+        ) {
+            return;
+        }
+
+        $file = $this->retrieveStripeFile($file_id);
+
+        if (!is_array($file) || empty($file['id'])) {
+            return;
+        }
+
+        $contents = $this->downloadStripeFile($file);
+
+        if (!$contents) {
+            return;
+        }
+
+        $attachment_id = $this->saveSelfieAttachment($file, $contents);
+
+        if (!$attachment_id || is_wp_error($attachment_id)) {
+            return;
+        }
+
+        $url = wp_get_attachment_url($attachment_id);
+
+        update_user_meta($user_id, 'gms_verification_selfie_file_id', sanitize_text_field($file_id));
+        update_user_meta($user_id, 'gms_verification_selfie_attachment_id', $attachment_id);
+
+        if ($url) {
+            update_user_meta($user_id, 'gms_verification_selfie_url', esc_url_raw($url));
+            update_user_meta($user_id, 'profile_photo_url', esc_url_raw($url));
+        }
+
+        update_user_meta($user_id, 'profile_photo', $attachment_id);
+        update_user_meta($user_id, 'profile_photo_id', $attachment_id);
+    }
+
+    private function retrieveStripeFile($file_id) {
+        if (empty($file_id) || empty($this->secret_key)) {
+            return null;
+        }
+
+        $endpoint = $this->files_api_url . '/files/' . rawurlencode($file_id);
+
+        $response = wp_remote_get($endpoint, array(
+            'headers' => array(
+                'Authorization' => 'Bearer ' . $this->secret_key,
+            ),
+            'timeout' => 30,
+        ));
+
+        if (is_wp_error($response)) {
+            error_log('GMS Stripe Error: ' . $response->get_error_message());
+            return null;
+        }
+
+        $body = wp_remote_retrieve_body($response);
+        $result = json_decode($body, true);
+
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            error_log('GMS Stripe Error: Unable to decode Stripe file metadata response.');
+            return null;
+        }
+
+        if (isset($result['error'])) {
+            $message = isset($result['error']['message']) ? $result['error']['message'] : 'Unknown Stripe API error.';
+            error_log('GMS Stripe API Error: ' . $message);
+            return null;
+        }
+
+        return $result;
+    }
+
+    private function downloadStripeFile($file) {
+        if (!is_array($file) || empty($file['url'])) {
+            return null;
+        }
+
+        $response = wp_remote_get($file['url'], array(
+            'headers' => array(
+                'Authorization' => 'Bearer ' . $this->secret_key,
+            ),
+            'timeout' => 60,
+        ));
+
+        if (is_wp_error($response)) {
+            error_log('GMS Stripe Error: ' . $response->get_error_message());
+            return null;
+        }
+
+        $code = wp_remote_retrieve_response_code($response);
+
+        if ($code < 200 || $code >= 300) {
+            error_log('GMS Stripe Error: Unexpected response while downloading Stripe file.');
+            return null;
+        }
+
+        return wp_remote_retrieve_body($response);
+    }
+
+    private function saveSelfieAttachment($file, $contents) {
+        if (!is_array($file) || !$contents) {
+            return null;
+        }
+
+        if (!function_exists('media_handle_sideload')) {
+            require_once ABSPATH . 'wp-admin/includes/media.php';
+            require_once ABSPATH . 'wp-admin/includes/file.php';
+            require_once ABSPATH . 'wp-admin/includes/image.php';
+        }
+
+        $filename = !empty($file['filename']) ? sanitize_file_name($file['filename']) : ('stripe-selfie-' . $file['id'] . '.jpg');
+
+        $tmp = wp_tempnam($filename);
+
+        if (!$tmp) {
+            return null;
+        }
+
+        file_put_contents($tmp, $contents);
+
+        $file_array = array(
+            'name' => $filename,
+            'tmp_name' => $tmp,
+        );
+
+        $attachment_id = media_handle_sideload($file_array, 0);
+
+        if (is_wp_error($attachment_id)) {
+            @unlink($tmp);
+            error_log('GMS Stripe Error: Unable to sideload selfie file - ' . $attachment_id->get_error_message());
+            return $attachment_id;
+        }
+
+        @unlink($tmp);
+
+        return $attachment_id;
+    }
+
+    private function locateOrCreateUser($reservation) {
+        $guest_id = isset($reservation['guest_id']) ? intval($reservation['guest_id']) : 0;
+        $email = isset($reservation['guest_email']) ? sanitize_email($reservation['guest_email']) : '';
+
+        if ($guest_id > 0) {
+            $user = get_user_by('id', $guest_id);
+            if ($user) {
+                return (int) $user->ID;
+            }
+        }
+
+        if ($email !== '' && is_email($email)) {
+            $user = get_user_by('email', $email);
+            if ($user) {
+                return (int) $user->ID;
+            }
+        }
+
+        if ($email === '' || !is_email($email)) {
+            return 0;
+        }
+
+        $guest_name = isset($reservation['guest_name']) ? trim((string) $reservation['guest_name']) : '';
+        list($first_name, $last_name) = $this->splitGuestName($guest_name);
+
+        $username_base = sanitize_user(current(explode('@', $email)), true);
+        if ($username_base === '') {
+            $username_base = 'guest_' . absint($reservation['id'] ?? 0);
+        }
+
+        $username = $username_base;
+        $attempt = 1;
+
+        while (username_exists($username)) {
+            $username = $username_base . '_' . $attempt;
+            $attempt++;
+        }
+
+        $user_data = array(
+            'user_login' => $username,
+            'user_pass' => wp_generate_password(32, true, true),
+            'user_email' => $email,
+            'display_name' => $guest_name !== '' ? $guest_name : $username,
+            'first_name' => $first_name,
+            'last_name' => $last_name,
+        );
+
+        $user_id = wp_insert_user($user_data);
+
+        if (is_wp_error($user_id)) {
+            error_log('GMS Stripe Error: Unable to create user for verification - ' . $user_id->get_error_message());
+            return 0;
+        }
+
+        return (int) $user_id;
+    }
+
+    private function splitGuestName($name) {
+        $name = trim((string) $name);
+
+        if ($name === '') {
+            return array('', '');
+        }
+
+        $parts = preg_split('/\s+/', $name);
+
+        if (empty($parts)) {
+            return array('', '');
+        }
+
+        $first = array_shift($parts);
+        $last = implode(' ', $parts);
+
+        return array(sanitize_text_field($first), sanitize_text_field($last));
+    }
+
+    private function getReservationIdFromSession($session) {
+        if (is_array($session) && !empty($session['metadata']['reservation_id'])) {
             return intval($session['metadata']['reservation_id']);
         }
 
-        return 0;
+        if (!is_array($session) || empty($session['id'])) {
+            return 0;
+        }
+
+        global $wpdb;
+
+        $table = $wpdb->prefix . 'gms_identity_verification';
+        $reservation_id = $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT reservation_id FROM {$table} WHERE stripe_verification_session_id = %s",
+                sanitize_text_field($session['id'])
+            )
+        );
+
+        return intval($reservation_id);
     }
 
     public function testConnection() {
