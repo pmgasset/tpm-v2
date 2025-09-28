@@ -5,7 +5,7 @@
  * * Plugin Name: Guest Management System
  * Plugin URI: https://yoursite.com
  * Description: Complete guest management system for short-term rentals with webhook integration, identity verification, and agreement signing.
- * Version: 1.1.1
+ * Version: 1.1.2
  * Author: Your Company
  * License: GPL v2 or later
  * Requires at least: 6.0
@@ -21,7 +21,7 @@ if (!defined('ABSPATH')) {
 // Define plugin constants
 define('GMS_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('GMS_PLUGIN_PATH', plugin_dir_path(__FILE__));
-define('GMS_VERSION', '1.1.1');
+define('GMS_VERSION', '1.1.2');
 
 class GuestManagementSystem {
     
@@ -35,15 +35,15 @@ class GuestManagementSystem {
     }
     
     private function __construct() {
+        // FIX: Load includes immediately in the constructor to ensure all classes are available early.
+        $this->loadIncludes();
+
         add_action('init', array($this, 'init'));
         register_activation_hook(__FILE__, array($this, 'activate'));
         register_deactivation_hook(__FILE__, array($this, 'deactivate'));
     }
     
     public function init() {
-        // Load all plugin class files
-        $this->loadIncludes();
-
         // Initialize plugin components
         new GMS_Database();
         new GMS_Admin();
@@ -53,7 +53,7 @@ class GuestManagementSystem {
         new GMS_SMS_Handler();
         new GMS_Stripe_Integration();
         new GMS_Agreement_Handler();
-        new GMS_AJAX_Handler(); // Initialize our new AJAX handler
+        new GMS_AJAX_Handler();
         
         // Add custom user role
         $this->addGuestRole();
