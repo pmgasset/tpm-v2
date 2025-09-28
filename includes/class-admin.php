@@ -60,6 +60,85 @@ class GMS_Reservations_List_Table extends WP_List_Table {
 }
 
 
+class GMS_Guests_List_Table extends WP_List_Table {
+    public function __construct() {
+        parent::__construct([
+            'singular' => 'Guest',
+            'plural' => 'Guests',
+            'ajax' => false,
+        ]);
+    }
+
+    public function get_columns() {
+        return [
+            'cb' => '<input type="checkbox" />',
+            'name' => __('Name', 'guest-management-system'),
+            'email' => __('Email', 'guest-management-system'),
+            'phone' => __('Phone', 'guest-management-system'),
+            'created_at' => __('Created', 'guest-management-system'),
+            'status' => __('Status', 'guest-management-system'),
+        ];
+    }
+
+    public function column_default($item, $column_name) {
+        switch ($column_name) {
+            case 'name':
+                return '<strong>' . esc_html($item[$column_name]) . '</strong>';
+            case 'email':
+                return $item[$column_name] !== '' ? esc_html($item[$column_name]) : '&mdash;';
+            case 'phone':
+                return $item[$column_name] !== '' ? esc_html($item[$column_name]) : '&mdash;';
+            case 'created_at':
+                if (empty($item[$column_name]) || $item[$column_name] === '0000-00-00 00:00:00') {
+                    return '&mdash;';
+                }
+
+                $timestamp = strtotime($item[$column_name]);
+                if (!$timestamp) {
+                    return '&mdash;';
+                }
+
+                $format = trim(get_option('date_format', 'M j, Y') . ' ' . get_option('time_format', 'g:i a'));
+                return esc_html(date_i18n($format, $timestamp));
+            case 'status':
+                $has_name = !empty($item['name']);
+                $has_contact = !empty($item['email']) || !empty($item['phone']);
+                $status = ($has_name && $has_contact) ? __('Complete', 'guest-management-system') : __('Incomplete', 'guest-management-system');
+                return esc_html($status);
+            default:
+                return '';
+        }
+    }
+
+    public function column_cb($item) {
+        return sprintf('<input type="checkbox" name="guest[]" value="%s" />', $item['id']);
+    }
+
+    public function no_items() {
+        esc_html_e('No guests found.', 'guest-management-system');
+    }
+
+    public function prepare_items() {
+        $columns = $this->get_columns();
+        $hidden = [];
+        $sortable = [];
+        $this->_column_headers = [$columns, $hidden, $sortable];
+
+        $per_page = 20;
+        $current_page = $this->get_pagenum();
+        $search = isset($_REQUEST['s']) ? sanitize_text_field(wp_unslash($_REQUEST['s'])) : '';
+
+        $total_items = GMS_Database::get_guest_count($search);
+        $this->set_pagination_args([
+            'total_items' => $total_items,
+            'per_page' => $per_page,
+        ]);
+
+        $this->items = GMS_Database::get_guests($per_page, $current_page, $search);
+    }
+}
+
+
 class GMS_Admin {
     public function __construct() {
         add_action('admin_menu', array($this, 'add_admin_menu'));
@@ -969,11 +1048,20 @@ class GMS_Admin {
     }
 
     public function render_guests_page() {
+        $guests_table = new GMS_Guests_List_Table();
+        $guests_table->prepare_items();
+
         ?>
         <div class="wrap">
             <h1 class="wp-heading-inline"><?php esc_html_e('Guests', 'guest-management-system'); ?></h1>
             <hr class="wp-header-end">
             <p><?php esc_html_e('Manage guest records, contact information, and stay history from this section.', 'guest-management-system'); ?></p>
+
+            <form method="get">
+                <input type="hidden" name="page" value="guest-management-guests" />
+                <?php $guests_table->search_box(__('Search Guests', 'guest-management-system'), 'gms-guests'); ?>
+                <?php $guests_table->display(); ?>
+            </form>
         </div>
         <?php
     }

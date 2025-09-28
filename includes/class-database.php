@@ -564,10 +564,11 @@ class GMS_Database {
         $offset = ($current_page - 1) * $per_page;
         
         $query = $wpdb->prepare(
-            "SELECT r.*, CONCAT(g.first_name, ' ', g.last_name) AS guest_name 
+            "SELECT r.*, r.guest_name AS reservation_guest_name,
+                COALESCE(NULLIF(TRIM(CONCAT(g.first_name, ' ', g.last_name)), ''), r.guest_name) AS guest_name
             FROM {$table_reservations} r
             LEFT JOIN {$table_guests} g ON r.guest_id = g.id
-            ORDER BY r.checkin_date DESC 
+            ORDER BY r.checkin_date DESC
             LIMIT %d OFFSET %d",
             $per_page,
             $offset
@@ -577,7 +578,61 @@ class GMS_Database {
 
         return array_map(array(__CLASS__, 'formatReservationRow'), $results);
     }
-    
+
+    public static function get_guests($per_page = 20, $current_page = 1, $search = '') {
+        global $wpdb;
+
+        $table_guests = $wpdb->prefix . 'gms_guests';
+        $offset = max(0, ($current_page - 1) * $per_page);
+
+        $sql = "SELECT g.*, TRIM(CONCAT(g.first_name, ' ', g.last_name)) AS name
+            FROM {$table_guests} g";
+        $params = array();
+
+        if ($search !== '') {
+            $like = '%' . $wpdb->esc_like($search) . '%';
+            $sql .= " WHERE (g.first_name LIKE %s OR g.last_name LIKE %s OR g.email LIKE %s OR g.phone LIKE %s)";
+            $params = array($like, $like, $like, $like);
+        }
+
+        $sql .= " ORDER BY g.created_at DESC LIMIT %d OFFSET %d";
+        $params[] = (int) $per_page;
+        $params[] = (int) $offset;
+
+        $query = $wpdb->prepare($sql, $params);
+        $results = $wpdb->get_results($query, ARRAY_A);
+
+        return array_map(static function ($row) {
+            if (isset($row['name'])) {
+                $row['name'] = trim($row['name']);
+            }
+
+            if (empty($row['name'])) {
+                $row['name'] = trim(trim($row['first_name'] ?? '') . ' ' . trim($row['last_name'] ?? ''));
+            }
+
+            return $row;
+        }, $results);
+    }
+
+    public static function get_guest_count($search = '') {
+        global $wpdb;
+
+        $table_guests = $wpdb->prefix . 'gms_guests';
+        $sql = "SELECT COUNT(g.id) FROM {$table_guests} g";
+        $params = array();
+
+        if ($search !== '') {
+            $like = '%' . $wpdb->esc_like($search) . '%';
+            $sql .= " WHERE (g.first_name LIKE %s OR g.last_name LIKE %s OR g.email LIKE %s OR g.phone LIKE %s)";
+            $params = array($like, $like, $like, $like);
+        }
+
+        $query = $params ? $wpdb->prepare($sql, $params) : $sql;
+
+        return (int) $wpdb->get_var($query);
+    }
+
     /**
      * NEW: Gets the total count of records for pagination.
      */
@@ -640,8 +695,12 @@ class GMS_Database {
             }
         }
 
-        if (!isset($row['guest_name']) || $row['guest_name'] === '') {
-            $row['guest_name'] = trim(($row['guest_first_name'] ?? '') . ' ' . ($row['guest_last_name'] ?? ''));
+        if (isset($row['guest_name'])) {
+            $row['guest_name'] = trim($row['guest_name']);
+        }
+
+        if (empty($row['guest_name']) && isset($row['reservation_guest_name'])) {
+            $row['guest_name'] = trim($row['reservation_guest_name']);
         }
 
         return $row;
