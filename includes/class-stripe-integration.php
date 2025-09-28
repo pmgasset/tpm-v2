@@ -61,6 +61,11 @@ class GMS_Stripe_Integration {
                 'Authorization' => 'Bearer ' . $this->secret_key,
             ),
             'body' => $body_params,
+
+                'Content-Type' => 'application/json',
+            ),
+            'body' => wp_json_encode($body_params),
+
             'timeout' => 30
         ));
         
