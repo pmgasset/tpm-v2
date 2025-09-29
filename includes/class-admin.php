@@ -691,9 +691,21 @@ class GMS_Admin {
                 'sanitize_callback' => array($this, 'sanitize_template'),
                 'rows' => 8
             ),
+            'gms_approved_email_template' => array(
+                'label' => __('Reservation Approved Email Template', 'guest-management-system'),
+                'description' => __('Sent when a reservation transitions to Approved status. Supports HTML.', 'guest-management-system'),
+                'sanitize_callback' => array($this, 'sanitize_template'),
+                'rows' => 8
+            ),
             'gms_sms_template' => array(
                 'label' => __('Welcome SMS Template', 'guest-management-system'),
                 'description' => __('Used for initial SMS notifications to guests.', 'guest-management-system'),
+                'sanitize_callback' => array($this, 'sanitize_plain_textarea'),
+                'rows' => 4
+            ),
+            'gms_approved_sms_template' => array(
+                'label' => __('Reservation Approved SMS Template', 'guest-management-system'),
+                'description' => __('Sent after approval so guests can complete portal tasks.', 'guest-management-system'),
                 'sanitize_callback' => array($this, 'sanitize_plain_textarea'),
                 'rows' => 4
             ),
@@ -811,6 +823,9 @@ class GMS_Admin {
             return $results;
         }
 
+        $status = isset($reservation['status']) ? sanitize_key($reservation['status']) : '';
+        $approved_statuses = array('approved', 'awaiting_signature', 'awaiting_id_verification');
+
         if (!empty($reservation['guest_email']) && is_email($reservation['guest_email'])) {
             static $email_handler = null;
 
@@ -818,7 +833,11 @@ class GMS_Admin {
                 $email_handler = new GMS_Email_Handler();
             }
 
-            $results['email_sent'] = $email_handler->sendWelcomeEmail($reservation);
+            if (in_array($status, $approved_statuses, true)) {
+                $results['email_sent'] = $email_handler->sendReservationApprovedEmail($reservation);
+            } else {
+                $results['email_sent'] = $email_handler->sendWelcomeEmail($reservation);
+            }
         }
 
         if (!empty($reservation['guest_phone'])) {
@@ -828,7 +847,11 @@ class GMS_Admin {
                 $sms_handler = new GMS_SMS_Handler();
             }
 
-            $results['sms_sent'] = $sms_handler->sendWelcomeSMS($reservation);
+            if (in_array($status, $approved_statuses, true)) {
+                $results['sms_sent'] = $sms_handler->sendReservationApprovedSMS($reservation);
+            } else {
+                $results['sms_sent'] = $sms_handler->sendWelcomeSMS($reservation);
+            }
         }
 
         return $results;
@@ -1265,6 +1288,17 @@ class GMS_Admin {
 
         $success_notice = '';
 
+        $status_options = function_exists('gms_get_reservation_status_options')
+            ? gms_get_reservation_status_options()
+            : array(
+                'pending' => __('Pending Approval', 'guest-management-system'),
+                'approved' => __('Approved', 'guest-management-system'),
+                'awaiting_signature' => __('Awaiting Signature', 'guest-management-system'),
+                'awaiting_id_verification' => __('Awaiting ID Verification', 'guest-management-system'),
+                'confirmed' => __('Confirmed', 'guest-management-system'),
+                'cancelled' => __('Cancelled', 'guest-management-system'),
+            );
+
         if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             check_admin_referer('gms_create_reservation');
 
@@ -1286,7 +1320,7 @@ class GMS_Admin {
                 }
             }
 
-            $allowed_statuses = array('pending', 'confirmed', 'cancelled');
+            $allowed_statuses = array_keys($status_options);
             if (!in_array($form_values['status'], $allowed_statuses, true)) {
                 $form_values['status'] = 'pending';
             }
@@ -1435,12 +1469,7 @@ class GMS_Admin {
                             <td>
                                 <select name="status" id="gms_status">
                                     <?php
-                                    $statuses = array(
-                                        'pending' => __('Pending', 'guest-management-system'),
-                                        'confirmed' => __('Confirmed', 'guest-management-system'),
-                                        'cancelled' => __('Cancelled', 'guest-management-system'),
-                                    );
-                                    foreach ($statuses as $status_key => $status_label) :
+                                    foreach ($status_options as $status_key => $status_label) :
                                         ?>
                                         <option value="<?php echo esc_attr($status_key); ?>"<?php selected($form_values['status'], $status_key); ?>><?php echo esc_html($status_label); ?></option>
                                     <?php endforeach; ?>
@@ -1497,6 +1526,17 @@ class GMS_Admin {
         $success_notice = '';
 
 
+        $status_options = function_exists('gms_get_reservation_status_options')
+            ? gms_get_reservation_status_options()
+            : array(
+                'pending' => __('Pending Approval', 'guest-management-system'),
+                'approved' => __('Approved', 'guest-management-system'),
+                'awaiting_signature' => __('Awaiting Signature', 'guest-management-system'),
+                'awaiting_id_verification' => __('Awaiting ID Verification', 'guest-management-system'),
+                'confirmed' => __('Confirmed', 'guest-management-system'),
+                'cancelled' => __('Cancelled', 'guest-management-system'),
+            );
+
         if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             check_admin_referer('gms_edit_reservation_' . $reservation_id);
 
@@ -1538,7 +1578,7 @@ class GMS_Admin {
                 $errors[] = __('Please enter a valid email address.', 'guest-management-system');
             }
 
-            $allowed_statuses = array('pending', 'confirmed', 'cancelled');
+            $allowed_statuses = array_keys($status_options);
             if (!in_array($form_values['status'], $allowed_statuses, true)) {
                 $form_values['status'] = 'pending';
             }
@@ -1701,12 +1741,7 @@ class GMS_Admin {
                             <td>
                                 <select name="status" id="gms_status_edit">
                                     <?php
-                                    $statuses = array(
-                                        'pending' => __('Pending', 'guest-management-system'),
-                                        'confirmed' => __('Confirmed', 'guest-management-system'),
-                                        'cancelled' => __('Cancelled', 'guest-management-system'),
-                                    );
-                                    foreach ($statuses as $status_key => $status_label) :
+                                    foreach ($status_options as $status_key => $status_label) :
                                         ?>
                                         <option value="<?php echo esc_attr($status_key); ?>"<?php selected($form_values['status'], $status_key); ?>><?php echo esc_html($status_label); ?></option>
                                     <?php endforeach; ?>
