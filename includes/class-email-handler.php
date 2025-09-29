@@ -26,7 +26,7 @@ class GMS_Email_Handler {
     public function sendWelcomeEmail($reservation) {
         $template = get_option('gms_email_template');
         $subject = 'Complete Your Check-in for ' . $reservation['property_name'];
-        
+
         $portal_url = home_url('/guest-portal/' . $reservation['portal_token']);
         
         $replacements = array(
@@ -63,6 +63,55 @@ class GMS_Email_Handler {
             'response_data' => array('result' => $result)
         ));
         
+        return $result;
+    }
+
+    public function sendReservationApprovedEmail($reservation) {
+        $template = get_option('gms_approved_email_template');
+
+        if (empty($template)) {
+            $template = "Hi {guest_name},\n\nYour reservation at {property_name} has been approved. Visit your guest portal to complete any remaining steps: {portal_link}\n\nCheck-in: {checkin_date} at {checkin_time}\nCheck-out: {checkout_date} at {checkout_time}\nBooking Reference: {booking_reference}\n\nWe look forward to hosting you!\n{company_name}";
+        }
+
+        $subject = sprintf(
+            /* translators: %s: property name */
+            __('Reservation Approved for %s', 'guest-management-system'),
+            $reservation['property_name']
+        );
+
+        $portal_url = home_url('/guest-portal/' . $reservation['portal_token']);
+
+        $replacements = array(
+            '{guest_name}' => $reservation['guest_name'],
+            '{property_name}' => $reservation['property_name'],
+            '{booking_reference}' => $reservation['booking_reference'],
+            '{checkin_date}' => date('l, F j, Y', strtotime($reservation['checkin_date'])),
+            '{checkout_date}' => date('l, F j, Y', strtotime($reservation['checkout_date'])),
+            '{checkin_time}' => date('g:i A', strtotime($reservation['checkin_date'])),
+            '{checkout_time}' => date('g:i A', strtotime($reservation['checkout_date'])),
+            '{portal_link}' => $portal_url,
+            '{company_name}' => get_option('gms_company_name', get_option('blogname')),
+        );
+
+        $message = str_replace(array_keys($replacements), array_values($replacements), $template);
+
+        $html_message = $this->wrapInEmailTemplate($message, $reservation);
+
+        $headers = array('Content-Type: text/html; charset=UTF-8');
+
+        $result = wp_mail($reservation['guest_email'], $subject, $html_message, $headers);
+
+        GMS_Database::logCommunication(array(
+            'reservation_id' => $reservation['id'],
+            'guest_id' => $reservation['guest_id'],
+            'type' => 'email',
+            'recipient' => $reservation['guest_email'],
+            'subject' => $subject,
+            'message' => $message,
+            'status' => $result ? 'sent' : 'failed',
+            'response_data' => array('result' => $result)
+        ));
+
         return $result;
     }
     

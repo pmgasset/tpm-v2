@@ -119,7 +119,9 @@ class GuestManagementSystem {
             'gms_email_from_name' => get_option('blogname'),
             'gms_agreement_template' => $this->getDefaultAgreementTemplate(),
             'gms_email_template' => $this->getDefaultEmailTemplate(),
-            'gms_sms_template' => $this->getDefaultSMSTemplate()
+            'gms_sms_template' => $this->getDefaultSMSTemplate(),
+            'gms_approved_email_template' => $this->getDefaultApprovedEmailTemplate(),
+            'gms_approved_sms_template' => $this->getDefaultApprovedSMSTemplate()
         );
         
         foreach ($default_options as $key => $value) {
@@ -233,6 +235,14 @@ class GuestManagementSystem {
     
     private function getDefaultSMSTemplate() {
         return 'Hi {guest_name}! Complete your check-in for {property_name} at {portal_link}. Identity verification and agreement signing are required.';
+    }
+
+    private function getDefaultApprovedEmailTemplate() {
+        return "Hi {guest_name},\n\nGreat news—your reservation for {property_name} has been approved!\n\nYou can now access your guest portal to complete the remaining steps for your stay:\n• Review and sign your guest agreement\n• Upload your identification for verification\n\nGuest Portal: {portal_link}\nCheck-in: {checkin_date} at {checkin_time}\nCheck-out: {checkout_date} at {checkout_time}\nBooking Reference: {booking_reference}\n\nIf you have any questions, reply to this email and our team will be happy to help.\n\nWe look forward to welcoming you,\n{company_name}";
+    }
+
+    private function getDefaultApprovedSMSTemplate() {
+        return 'Your stay at {property_name} is approved! Finish your check-in tasks here: {portal_link} - {company_name}';
     }
 }
 

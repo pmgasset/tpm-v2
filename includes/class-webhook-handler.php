@@ -246,18 +246,16 @@ class GMS_Webhook_Handler {
                 'guest_id' => intval($guest_profile['wp_user_id'] ?? 0),
                 'guest_record_id' => intval($guest_profile['guest_record_id']),
                 'platform' => 'booking.com',
-                'webhook_data' => $data
+                'webhook_data' => $data,
+                'status' => 'pending'
             ));
-            
+
             $reservation_id = GMS_Database::createReservation($reservation_data);
-            
+
             if (!$reservation_id) {
                 throw new Exception('Failed to create reservation');
             }
-            
-            // Send notifications
-            $this->sendGuestNotifications($reservation_id);
-            
+
             return array(
                 'success' => true,
                 'message' => 'Booking processed successfully',
@@ -292,17 +290,16 @@ class GMS_Webhook_Handler {
                 'guest_id' => intval($guest_profile['wp_user_id'] ?? 0),
                 'guest_record_id' => intval($guest_profile['guest_record_id']),
                 'platform' => 'airbnb',
-                'webhook_data' => $data
+                'webhook_data' => $data,
+                'status' => 'pending'
             ));
-            
+
             $reservation_id = GMS_Database::createReservation($reservation_data);
-            
+
             if (!$reservation_id) {
                 throw new Exception('Failed to create reservation');
             }
-            
-            $this->sendGuestNotifications($reservation_id);
-            
+
             return array(
                 'success' => true,
                 'message' => 'Airbnb booking processed successfully',
@@ -337,17 +334,16 @@ class GMS_Webhook_Handler {
                 'guest_id' => intval($guest_profile['wp_user_id'] ?? 0),
                 'guest_record_id' => intval($guest_profile['guest_record_id']),
                 'platform' => 'vrbo',
-                'webhook_data' => $data
+                'webhook_data' => $data,
+                'status' => 'pending'
             ));
-            
+
             $reservation_id = GMS_Database::createReservation($reservation_data);
-            
+
             if (!$reservation_id) {
                 throw new Exception('Failed to create reservation');
             }
-            
-            $this->sendGuestNotifications($reservation_id);
-            
+
             return array(
                 'success' => true,
                 'message' => 'VRBO booking processed successfully',
@@ -382,17 +378,16 @@ class GMS_Webhook_Handler {
                 'guest_id' => intval($guest_profile['wp_user_id'] ?? 0),
                 'guest_record_id' => intval($guest_profile['guest_record_id']),
                 'platform' => $platform,
-                'webhook_data' => $data
+                'webhook_data' => $data,
+                'status' => 'pending'
             ));
-            
+
             $reservation_id = GMS_Database::createReservation($reservation_data);
-            
+
             if (!$reservation_id) {
                 throw new Exception('Failed to create reservation');
             }
-            
-            $this->sendGuestNotifications($reservation_id);
-            
+
             return array(
                 'success' => true,
                 'message' => 'Generic booking processed successfully',
@@ -577,21 +572,13 @@ class GMS_Webhook_Handler {
     
     private function sendGuestNotifications($reservation_id) {
         $reservation = GMS_Database::getReservationById($reservation_id);
-        
+
         if (!$reservation) {
             return false;
         }
-        
-        // Send email notification
-        $email_handler = new GMS_Email_Handler();
-        $email_result = $email_handler->sendWelcomeEmail($reservation);
-        
-        // Send SMS notification if phone number is available
-        if (!empty($reservation['guest_phone'])) {
-            $sms_handler = new GMS_SMS_Handler();
-            $sms_result = $sms_handler->sendWelcomeSMS($reservation);
-        }
-        
+
+        gms_send_guest_notifications($reservation_id);
+
         return true;
     }
     

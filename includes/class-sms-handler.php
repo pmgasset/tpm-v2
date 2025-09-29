@@ -63,6 +63,59 @@ class GMS_SMS_Handler {
 
         return $result;
     }
+
+    public function sendReservationApprovedSMS($reservation) {
+        if (empty($reservation['guest_phone'])) {
+            error_log('GMS: No phone number for reservation ' . intval($reservation['id'] ?? 0));
+            return false;
+        }
+
+        $phone_validation = $this->validatePhoneNumber($reservation['guest_phone']);
+        if (!$phone_validation['is_valid']) {
+            error_log('GMS: Invalid phone number provided for reservation ' . intval($reservation['id'] ?? 0));
+            return false;
+        }
+
+        $template = get_option('gms_approved_sms_template');
+        if (empty($template)) {
+            $template = 'Reservation approved! Finish your tasks for {property_name}: {portal_link} - {company_name}';
+        }
+
+        $portal_token = isset($reservation['portal_token']) ? sanitize_text_field($reservation['portal_token']) : '';
+        $portal_url = home_url('/guest-portal/' . $portal_token);
+
+        $checkin_date_raw = isset($reservation['checkin_date']) ? $reservation['checkin_date'] : '';
+        $checkout_date_raw = isset($reservation['checkout_date']) ? $reservation['checkout_date'] : '';
+
+        $replacements = array(
+            '{guest_name}' => sanitize_text_field($reservation['guest_name'] ?? ''),
+            '{property_name}' => sanitize_text_field($reservation['property_name'] ?? ''),
+            '{booking_reference}' => sanitize_text_field($reservation['booking_reference'] ?? ''),
+            '{checkin_date}' => $checkin_date_raw ? date('M j', strtotime($checkin_date_raw)) : '',
+            '{checkout_date}' => $checkout_date_raw ? date('M j', strtotime($checkout_date_raw)) : '',
+            '{checkin_time}' => $checkin_date_raw ? date('g:i A', strtotime($checkin_date_raw)) : '',
+            '{checkout_time}' => $checkout_date_raw ? date('g:i A', strtotime($checkout_date_raw)) : '',
+            '{portal_link}' => $this->shortenUrl($portal_url),
+            '{company_name}' => get_option('gms_company_name', get_option('blogname'))
+        );
+
+        $message = str_replace(array_keys($replacements), array_values($replacements), $template);
+        $message = $this->prepareMessageForSending($message);
+
+        $result = $this->sendSMS($phone_validation['sanitized'], $message);
+
+        GMS_Database::logCommunication(array(
+            'reservation_id' => intval($reservation['id'] ?? 0),
+            'guest_id' => intval($reservation['guest_id'] ?? 0),
+            'type' => 'sms',
+            'recipient' => $phone_validation['sanitized'],
+            'message' => $message,
+            'status' => $result ? 'sent' : 'failed',
+            'response_data' => array('result' => $result)
+        ));
+
+        return $result;
+    }
     
     public function sendSMS($to, $message) {
         $api_username = get_option('gms_voipms_user');

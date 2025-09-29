@@ -25,6 +25,22 @@ function gms_get_reservation($reservation_id) {
     return GMS_Database::getReservationById($reservation_id);
 }
 
+function gms_get_reservation_status_options() {
+    return array(
+        'pending' => __('Pending Approval', 'guest-management-system'),
+        'approved' => __('Approved', 'guest-management-system'),
+        'awaiting_signature' => __('Awaiting Signature', 'guest-management-system'),
+        'awaiting_id_verification' => __('Awaiting ID Verification', 'guest-management-system'),
+        'confirmed' => __('Confirmed', 'guest-management-system'),
+        'completed' => __('Completed', 'guest-management-system'),
+        'cancelled' => __('Cancelled', 'guest-management-system'),
+    );
+}
+
+function gms_get_followup_reservation_statuses() {
+    return array('approved', 'awaiting_signature', 'awaiting_id_verification');
+}
+
 /**
  * Check if reservation is complete
  */
@@ -61,15 +77,27 @@ function gms_send_guest_notifications($reservation_id) {
         return false;
     }
     
+    $status = isset($reservation['status']) ? sanitize_key($reservation['status']) : '';
+    $approved_statuses = gms_get_followup_reservation_statuses();
+    $should_use_approved = in_array($status, $approved_statuses, true);
+
     // Send email
     $email_handler = new GMS_Email_Handler();
-    $email_result = $email_handler->sendWelcomeEmail($reservation);
-    
+    if ($should_use_approved) {
+        $email_result = $email_handler->sendReservationApprovedEmail($reservation);
+    } else {
+        $email_result = $email_handler->sendWelcomeEmail($reservation);
+    }
+
     // Send SMS if phone available
     $sms_result = false;
     if (!empty($reservation['guest_phone'])) {
         $sms_handler = new GMS_SMS_Handler();
-        $sms_result = $sms_handler->sendWelcomeSMS($reservation);
+        if ($should_use_approved) {
+            $sms_result = $sms_handler->sendReservationApprovedSMS($reservation);
+        } else {
+            $sms_result = $sms_handler->sendWelcomeSMS($reservation);
+        }
     }
     
     return array(
@@ -82,13 +110,9 @@ function gms_send_guest_notifications($reservation_id) {
  * Update reservation status with action hook
  */
 function gms_update_reservation_status($reservation_id, $status) {
-    $result = GMS_Database::updateReservationStatus($reservation_id, $status);
-    
-    if ($result) {
-        do_action('gms_reservation_status_updated', $reservation_id, $status);
-    }
-    
-    return $result;
+    $status = sanitize_key($status);
+
+    return GMS_Database::updateReservationStatus($reservation_id, $status);
 }
 
 /**
@@ -247,14 +271,20 @@ function gms_get_upcoming_checkins($days = 7) {
  */
 function gms_get_pending_checkins() {
     global $wpdb;
-    
+
     $table = $wpdb->prefix . 'gms_reservations';
-    
+
+    $statuses = array_merge(array('pending'), gms_get_followup_reservation_statuses());
+    $placeholders = implode(',', array_fill(0, count($statuses), '%s'));
+
     return $wpdb->get_results(
-        "SELECT * FROM $table 
-         WHERE status = 'pending' 
-         AND checkin_date >= NOW()
-         ORDER BY checkin_date ASC",
+        $wpdb->prepare(
+            "SELECT * FROM $table
+             WHERE status IN ($placeholders)
+             AND checkin_date >= NOW()
+             ORDER BY checkin_date ASC",
+            $statuses
+        ),
         ARRAY_A
     );
 }
@@ -299,13 +329,17 @@ function gms_get_completion_percentage($reservation_id) {
  */
 function gms_get_status_badge($status) {
     $badges = array(
-        'pending' => '<span class="gms-badge gms-badge-warning">Pending</span>',
-        'in-progress' => '<span class="gms-badge gms-badge-info">In Progress</span>',
-        'completed' => '<span class="gms-badge gms-badge-success">Completed</span>',
-        'cancelled' => '<span class="gms-badge gms-badge-danger">Cancelled</span>'
+        'pending' => '<span class="gms-badge gms-badge-warning">' . esc_html__('Pending Approval', 'guest-management-system') . '</span>',
+        'approved' => '<span class="gms-badge gms-badge-success">' . esc_html__('Approved', 'guest-management-system') . '</span>',
+        'awaiting_signature' => '<span class="gms-badge gms-badge-info">' . esc_html__('Awaiting Signature', 'guest-management-system') . '</span>',
+        'awaiting_id_verification' => '<span class="gms-badge gms-badge-warning">' . esc_html__('Awaiting ID Verification', 'guest-management-system') . '</span>',
+        'confirmed' => '<span class="gms-badge gms-badge-success">' . esc_html__('Confirmed', 'guest-management-system') . '</span>',
+        'completed' => '<span class="gms-badge gms-badge-success">' . esc_html__('Completed', 'guest-management-system') . '</span>',
+        'cancelled' => '<span class="gms-badge gms-badge-danger">' . esc_html__('Cancelled', 'guest-management-system') . '</span>',
+        'in-progress' => '<span class="gms-badge gms-badge-info">' . esc_html__('In Progress', 'guest-management-system') . '</span>',
     );
-    
-    return $badges[$status] ?? '<span class="gms-badge gms-badge-default">' . esc_html(ucfirst($status)) . '</span>';
+
+    return $badges[$status] ?? '<span class="gms-badge gms-badge-default">' . esc_html(ucfirst(str_replace('_', ' ', $status))) . '</span>';
 }
 
 /**
@@ -504,19 +538,27 @@ add_action('gms_send_reminder_notifications', 'gms_cron_send_reminders');
 function gms_cron_send_reminders() {
     // Get reservations that are pending and check-in is within 48 hours
     global $wpdb;
-    
+
     $table = $wpdb->prefix . 'gms_reservations';
     $start_date = current_time('mysql');
     $end_date = date('Y-m-d H:i:s', strtotime('+48 hours'));
-    
+
+    $statuses = gms_get_followup_reservation_statuses();
+
+    if (empty($statuses)) {
+        return;
+    }
+
+    $placeholders = implode(',', array_fill(0, count($statuses), '%s'));
+    $query_params = array_merge($statuses, array($start_date, $end_date));
+
     $reservations = $wpdb->get_results($wpdb->prepare(
-        "SELECT * FROM $table 
-         WHERE status = 'pending' 
+        "SELECT * FROM $table
+         WHERE status IN ($placeholders)
          AND checkin_date BETWEEN %s AND %s",
-        $start_date,
-        $end_date
+        $query_params
     ), ARRAY_A);
-    
+
     foreach ($reservations as $reservation) {
         $email_handler = new GMS_Email_Handler();
         $email_handler->sendReminderEmail($reservation);
@@ -542,4 +584,41 @@ register_deactivation_hook(__FILE__, 'gms_clear_cron');
 
 function gms_clear_cron() {
     wp_clear_scheduled_hook('gms_send_reminder_notifications');
+}
+
+add_action('gms_reservation_status_updated', 'gms_handle_reservation_status_transition', 10, 3);
+
+function gms_handle_reservation_status_transition($reservation_id, $new_status, $previous_status = null) {
+    $new_status = sanitize_key($new_status);
+    $previous_status = $previous_status !== null ? sanitize_key($previous_status) : null;
+
+    if ($new_status !== 'approved' || $previous_status === 'approved') {
+        return;
+    }
+
+    $reservation = GMS_Database::getReservationById($reservation_id);
+
+    if (!$reservation) {
+        return;
+    }
+
+    if (!empty($reservation['guest_email']) && is_email($reservation['guest_email'])) {
+        static $email_handler = null;
+
+        if ($email_handler === null) {
+            $email_handler = new GMS_Email_Handler();
+        }
+
+        $email_handler->sendReservationApprovedEmail($reservation);
+    }
+
+    if (!empty($reservation['guest_phone'])) {
+        static $sms_handler = null;
+
+        if ($sms_handler === null) {
+            $sms_handler = new GMS_SMS_Handler();
+        }
+
+        $sms_handler->sendReservationApprovedSMS($reservation);
+    }
 }

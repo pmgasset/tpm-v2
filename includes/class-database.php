@@ -641,6 +641,9 @@ class GMS_Database {
         );
 
         $update_data = array();
+        $previous_status = null;
+        $track_status_change = false;
+
         foreach ($allowed as $field) {
             if (!isset($data[$field])) {
                 continue;
@@ -672,10 +675,21 @@ class GMS_Database {
                     $update_data[$field] = sanitize_text_field($data[$field]);
                     break;
             }
+
+            if ($field === 'status') {
+                $track_status_change = true;
+            }
         }
 
         if (empty($update_data)) {
             return true;
+        }
+
+        if ($track_status_change) {
+            $existing = self::getReservationById($reservation_id);
+            if ($existing && isset($existing['status'])) {
+                $previous_status = sanitize_key($existing['status']);
+            }
         }
 
         $update_data['updated_at'] = current_time('mysql');
@@ -688,7 +702,19 @@ class GMS_Database {
             array('%d')
         );
 
-        return $result !== false;
+        if ($result === false) {
+            return false;
+        }
+
+        if ($track_status_change) {
+            $new_status = sanitize_key($update_data['status']);
+
+            if ($previous_status !== $new_status) {
+                do_action('gms_reservation_status_updated', $reservation_id, $new_status, $previous_status);
+            }
+        }
+
+        return true;
     }
 
     public static function updateReservationStatus($reservation_id, $status) {
