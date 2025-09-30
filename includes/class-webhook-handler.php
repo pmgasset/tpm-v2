@@ -615,28 +615,208 @@ class GMS_Webhook_Handler {
     }
     
     private function parseBookingEmail($body) {
-        // Extract booking data from email body using regex patterns
-        // This is a backup method when webhooks are not available
-        $patterns = array(
+        $normalized_body = preg_replace('/<br\s*\/?>/i', "\n", $body);
+        $normalized_body = preg_replace('/<\/p>/i', "</p>\n", $normalized_body);
+
+        $decode_flags = ENT_QUOTES;
+        if (defined('ENT_HTML5')) {
+            $decode_flags |= ENT_HTML5;
+        }
+
+        $normalized_body = html_entity_decode($normalized_body, $decode_flags, 'UTF-8');
+
+        if (function_exists('wp_strip_all_tags')) {
+            $normalized_body = wp_strip_all_tags($normalized_body, true);
+        } else {
+            $normalized_body = strip_tags($normalized_body);
+        }
+
+        $normalized_body = trim($normalized_body);
+
+        $label_variants = array(
+            'booking reference' => 'booking_reference',
+            'booking number' => 'booking_reference',
+            'booking id' => 'booking_reference',
+            'booking confirmation' => 'booking_reference',
+            'confirmation number' => 'booking_reference',
+            'confirmation code' => 'booking_reference',
+            'reservation id' => 'booking_reference',
+            'reservation number' => 'booking_reference',
+            'guest name' => 'guest_name',
+            'primary guest name' => 'guest_name',
+            'lead guest' => 'guest_name',
+            'full name' => 'guest_name',
+            'name guest' => 'guest_name',
+            'guest email' => 'guest_email',
+            'email' => 'guest_email',
+            'email address' => 'guest_email',
+            'guest phone' => 'guest_phone',
+            'phone' => 'guest_phone',
+            'phone number' => 'guest_phone',
+            'guest phone number' => 'guest_phone',
+            'telephone' => 'guest_phone',
+            'arrival' => 'checkin_date',
+            'arrival date' => 'checkin_date',
+            'arrival time' => 'checkin_date',
+            'check in' => 'checkin_date',
+            'check in date' => 'checkin_date',
+            'check in time' => 'checkin_date',
+            'checkin' => 'checkin_date',
+            'checkin date' => 'checkin_date',
+            'departure' => 'checkout_date',
+            'departure date' => 'checkout_date',
+            'departure time' => 'checkout_date',
+            'check out' => 'checkout_date',
+            'check out date' => 'checkout_date',
+            'check out time' => 'checkout_date',
+            'checkout' => 'checkout_date',
+            'checkout date' => 'checkout_date',
+            'guests' => 'guests_count',
+            'guest count' => 'guests_count',
+            'number of guests' => 'guests_count',
+            'total guests' => 'guests_count'
+        );
+
+        $sanitize_label = function ($label) {
+            $label = strtolower($label);
+            $label = preg_replace('/[^a-z0-9]+/', ' ', $label);
+            $label = trim(preg_replace('/\s+/', ' ', $label));
+            return $label;
+        };
+
+        $parse_date = function ($value) {
+            $value = trim($value);
+            if ($value === '') {
+                return null;
+            }
+
+            $value_with_time = $value;
+            if (preg_match('/\(([^()]+)\)\s*$/', $value_with_time, $time_match)) {
+                $value_base = trim(preg_replace('/\s*\([^()]*\)\s*$/', '', $value_with_time));
+                $value_with_time = trim($value_base . ' ' . $time_match[1]);
+            }
+
+            $timestamp = strtotime($value_with_time);
+            if ($timestamp === false) {
+                $timestamp = strtotime($value);
+            }
+
+            if ($timestamp === false) {
+                return null;
+            }
+
+            return date('Y-m-d H:i:s', $timestamp);
+        };
+
+        $extracted_data = array();
+        $lines = preg_split('/\r\n|\r|\n/', $normalized_body);
+
+        foreach ($lines as $line) {
+            if (!preg_match('/^\s*([^:]+):\s*(.+)$/', $line, $matches)) {
+                continue;
+            }
+
+            $label = $sanitize_label($matches[1]);
+            $value = trim($matches[2]);
+
+            if ($value === '') {
+                continue;
+            }
+
+            $field = null;
+            if (isset($label_variants[$label])) {
+                $field = $label_variants[$label];
+            } else {
+                foreach ($label_variants as $variant => $mapped_field) {
+                    if (strpos($label, $variant) === 0) {
+                        $field = $mapped_field;
+                        break;
+                    }
+                }
+            }
+
+            if (!$field) {
+                continue;
+            }
+
+            switch ($field) {
+                case 'guest_email':
+                    $email = filter_var($value, FILTER_VALIDATE_EMAIL);
+                    if ($email) {
+                        $extracted_data[$field] = $email;
+                    }
+                    break;
+                case 'guests_count':
+                    if (is_numeric($value)) {
+                        $extracted_data[$field] = intval($value);
+                    }
+                    break;
+                case 'checkin_date':
+                case 'checkout_date':
+                    $parsed_value = $parse_date($value);
+                    if ($parsed_value) {
+                        $extracted_data[$field] = $parsed_value;
+                    }
+                    break;
+                default:
+                    $extracted_data[$field] = $value;
+                    break;
+            }
+        }
+
+        $legacy_patterns = array(
             'booking_reference' => '/booking\s*(?:reference|id|number)[\s:]+([A-Z0-9-]+)/i',
             'guest_name' => '/guest\s*name[\s:]+([^<\n]+)/i',
             'guest_email' => '/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/i',
             'checkin_date' => '/check[\s-]*in[\s:]+([0-9]{1,2}\/[0-9]{1,2}\/[0-9]{2,4})/i',
             'checkout_date' => '/check[\s-]*out[\s:]+([0-9]{1,2}\/[0-9]{1,2}\/[0-9]{2,4})/i'
         );
-        
-        $extracted_data = array();
-        
-        foreach ($patterns as $field => $pattern) {
+
+        foreach ($legacy_patterns as $field => $pattern) {
+            if (!empty($extracted_data[$field])) {
+                continue;
+            }
+
             if (preg_match($pattern, $body, $matches)) {
-                $extracted_data[$field] = trim($matches[1]);
+                $value = trim($matches[1]);
+
+                if (in_array($field, array('checkin_date', 'checkout_date'), true)) {
+                    $parsed_value = $parse_date($value);
+                    if ($parsed_value) {
+                        $extracted_data[$field] = $parsed_value;
+                    }
+                } else {
+                    $extracted_data[$field] = $value;
+                }
             }
         }
-        
-        if (count($extracted_data) >= 3) { // Minimum required fields
-            $extracted_data['platform'] = 'booking.com';
-            $this->processGenericData($extracted_data, 'booking.com');
+
+        $real_fields = array(
+            'guest_name',
+            'guest_email',
+            'guest_phone',
+            'checkin_date',
+            'checkout_date',
+            'guests_count',
+            'booking_reference'
+        );
+
+        $has_real_field = false;
+        foreach ($real_fields as $real_field) {
+            if (!empty($extracted_data[$real_field])) {
+                $has_real_field = true;
+                break;
+            }
         }
+
+        if ($has_real_field) {
+            $extracted_data['platform'] = 'booking.com';
+            $this->handleParsedEmailData($extracted_data, 'booking.com');
+        }
+    }
+
+    protected function handleParsedEmailData($data, $platform) {
+        $this->processGenericData($data, $platform);
     }
     
     private function parseAirbnbEmail($body) {
