@@ -467,10 +467,10 @@ class GMS_Webhook_Handler {
     private function parseGenericData($data) {
         // Generic parser that tries to find common booking fields
         $parsed = array();
-        
+
         // Flatten nested data
         $flattened = $this->flattenArray($data);
-        
+
         // Map fields using fuzzy matching
         $field_patterns = array(
             'booking_reference' => array('booking', 'reservation', 'confirmation', 'reference', 'id'),
@@ -484,28 +484,121 @@ class GMS_Webhook_Handler {
             'total_amount' => array('total', 'amount', 'price', 'cost'),
             'currency' => array('currency', 'curr')
         );
-        
+
+        $canonical_keys = array(
+            'booking_reference' => array('booking_reference'),
+            'guest_name' => array('guest_name'),
+            'guest_email' => array('guest_email'),
+            'guest_phone' => array('guest_phone'),
+            'property_name' => array('property_name'),
+            'checkin_date' => array('checkin_date', 'check_in_date'),
+            'checkout_date' => array('checkout_date', 'check_out_date'),
+            'guests_count' => array('guests_count'),
+            'total_amount' => array('total_amount'),
+            'currency' => array('currency')
+        );
+
+        $consumed_keys = array();
+
         foreach ($field_patterns as $our_field => $patterns) {
+            $matched = false;
+            $exact_keys = $canonical_keys[$our_field] ?? array($our_field);
+
+            foreach ($exact_keys as $exact_key) {
+                foreach ($flattened as $key => $value) {
+                    if (isset($consumed_keys[$key]) || empty($value)) {
+                        continue;
+                    }
+
+                    if ($this->shouldSkipDateFieldMatch($our_field, $key)) {
+                        continue;
+                    }
+
+                    if ($this->keyMatchesCanonical($key, $exact_key)) {
+                        $parsed[$our_field] = $value;
+                        $consumed_keys[$key] = true;
+                        $matched = true;
+                        break 2;
+                    }
+                }
+            }
+
+            if ($matched) {
+                continue;
+            }
+
             foreach ($flattened as $key => $value) {
+                if (isset($consumed_keys[$key]) || empty($value)) {
+                    continue;
+                }
+
+                if ($this->shouldSkipDateFieldMatch($our_field, $key)) {
+                    continue;
+                }
+
                 $key_lower = strtolower($key);
                 foreach ($patterns as $pattern) {
-                    if (strpos($key_lower, $pattern) !== false && !empty($value)) {
+                    if (strpos($key_lower, $pattern) !== false) {
                         $parsed[$our_field] = $value;
+                        $consumed_keys[$key] = true;
                         break 2;
                     }
                 }
             }
         }
-        
+
         // Convert dates
-        if (isset($parsed['checkin_date'])) {
-            $parsed['checkin_date'] = date('Y-m-d H:i:s', strtotime($parsed['checkin_date']));
+        foreach (array('checkin_date', 'checkout_date') as $date_field) {
+            if (isset($parsed[$date_field])) {
+                $timestamp = strtotime($parsed[$date_field]);
+
+                if ($timestamp === false) {
+                    unset($parsed[$date_field]);
+                } else {
+                    $parsed[$date_field] = date('Y-m-d H:i:s', $timestamp);
+                }
+            }
         }
-        if (isset($parsed['checkout_date'])) {
-            $parsed['checkout_date'] = date('Y-m-d H:i:s', strtotime($parsed['checkout_date']));
-        }
-        
+
         return $parsed;
+    }
+
+    private function shouldSkipDateFieldMatch($target_field, $source_key) {
+        if (substr($target_field, -5) !== '_date') {
+            return false;
+        }
+
+        $source_key_lower = strtolower($source_key);
+
+        return strpos($source_key_lower, '_time') !== false;
+    }
+
+    private function keyMatchesCanonical($key, $canonical_key) {
+        if (strcasecmp($key, $canonical_key) === 0) {
+            return true;
+        }
+
+        $key_lower = strtolower($key);
+        $canonical_lower = strtolower($canonical_key);
+        $suffix_length = strlen($canonical_lower);
+
+        if ($suffix_length === 0 || strlen($key_lower) <= $suffix_length) {
+            return false;
+        }
+
+        if (substr($key_lower, -$suffix_length) !== $canonical_lower) {
+            return false;
+        }
+
+        $separator_position = strlen($key_lower) - $suffix_length - 1;
+
+        if ($separator_position < 0) {
+            return false;
+        }
+
+        $separator = $key_lower[$separator_position];
+
+        return in_array($separator, array('_', '-', '.'), true);
     }
     
     private function flattenArray($array, $prefix = '') {
