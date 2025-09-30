@@ -28,7 +28,10 @@ class GMS_SMS_Handler {
 
         $template = get_option('gms_sms_template');
         $portal_token = isset($reservation['portal_token']) ? sanitize_text_field($reservation['portal_token']) : '';
-        $portal_url = home_url('/guest-portal/' . $portal_token);
+        $portal_url = gms_build_portal_url($portal_token);
+        if ($portal_url === false) {
+            $portal_url = '';
+        }
 
         $checkin_date_raw = isset($reservation['checkin_date']) ? $reservation['checkin_date'] : '';
         $checkout_date_raw = isset($reservation['checkout_date']) ? $reservation['checkout_date'] : '';
@@ -82,7 +85,10 @@ class GMS_SMS_Handler {
         }
 
         $portal_token = isset($reservation['portal_token']) ? sanitize_text_field($reservation['portal_token']) : '';
-        $portal_url = home_url('/guest-portal/' . $portal_token);
+        $portal_url = gms_build_portal_url($portal_token);
+        if ($portal_url === false) {
+            $portal_url = '';
+        }
 
         $checkin_date_raw = isset($reservation['checkin_date']) ? $reservation['checkin_date'] : '';
         $checkout_date_raw = isset($reservation['checkout_date']) ? $reservation['checkout_date'] : '';
@@ -185,7 +191,10 @@ class GMS_SMS_Handler {
 
         $template = get_option('gms_sms_reminder_template');
         $portal_token = isset($reservation['portal_token']) ? sanitize_text_field($reservation['portal_token']) : '';
-        $portal_url = home_url('/guest-portal/' . $portal_token);
+        $portal_url = gms_build_portal_url($portal_token);
+        if ($portal_url === false) {
+            $portal_url = '';
+        }
 
         $checkin_date_raw = isset($reservation['checkin_date']) ? $reservation['checkin_date'] : '';
         $checkout_date_raw = isset($reservation['checkout_date']) ? $reservation['checkout_date'] : '';
