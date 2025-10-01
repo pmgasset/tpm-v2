@@ -77,8 +77,7 @@ function gms_build_portal_url($token) {
     $encoded_token = rawurlencode($token);
 
     if (is_object($wp_rewrite) && method_exists($wp_rewrite, 'using_permalinks') && $wp_rewrite->using_permalinks()) {
-        $front = property_exists($wp_rewrite, 'front') ? $wp_rewrite->front : '';
-        $path = $front . 'guest-portal/' . $encoded_token;
+        $path = 'guest-portal/' . $encoded_token;
 
         return home_url(user_trailingslashit($path));
     }
