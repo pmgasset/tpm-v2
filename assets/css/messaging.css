@@ -1,0 +1,306 @@
+.gms-messaging {
+    display: grid;
+    grid-template-columns: 320px 1fr;
+    gap: 24px;
+    margin-top: 24px;
+}
+
+.gms-messaging__sidebar {
+    background: #fff;
+    border: 1px solid #dcdcde;
+    border-radius: 6px;
+    display: flex;
+    flex-direction: column;
+    min-height: 520px;
+}
+
+.gms-messaging__search {
+    display: flex;
+    gap: 8px;
+    padding: 16px;
+    border-bottom: 1px solid #dcdcde;
+}
+
+.gms-messaging__search-input {
+    flex: 1 1 auto;
+    border-radius: 4px;
+}
+
+.gms-messaging__search-button {
+    flex: 0 0 auto;
+}
+
+.gms-messaging__threads {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    padding: 8px;
+}
+
+.gms-messaging__empty {
+    text-align: center;
+    color: #6c7781;
+    padding: 32px 16px;
+    font-style: italic;
+}
+
+.gms-thread {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 12px;
+    border-radius: 6px;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    margin-bottom: 6px;
+    transition: background 0.2s ease;
+}
+
+.gms-thread:hover,
+.gms-thread:focus {
+    background: #f6f7f7;
+    outline: none;
+}
+
+.gms-thread.is-active {
+    background: #2271b1;
+    color: #fff;
+}
+
+.gms-thread.is-active .gms-thread__subtitle,
+.gms-thread.is-active .gms-thread__preview,
+.gms-thread.is-active .gms-thread__timestamp {
+    color: rgba(255, 255, 255, 0.8);
+}
+
+.gms-thread__title {
+    font-weight: 600;
+    margin-bottom: 2px;
+}
+
+.gms-thread__subtitle {
+    color: #50575e;
+    margin-bottom: 4px;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+}
+
+.gms-thread__preview {
+    color: #50575e;
+    font-size: 13px;
+    margin-bottom: 6px;
+    line-height: 1.4;
+}
+
+.gms-thread__timestamp {
+    display: block;
+    font-size: 11px;
+    color: #6c7781;
+}
+
+.gms-thread__badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 20px;
+    height: 20px;
+    padding: 0 6px;
+    border-radius: 999px;
+    background: #d63638;
+    color: #fff;
+    font-size: 11px;
+    font-weight: 600;
+    margin-top: 6px;
+}
+
+.gms-messaging__pagination {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    border-top: 1px solid #dcdcde;
+}
+
+.gms-messaging__pagination-status {
+    font-size: 13px;
+    color: #50575e;
+}
+
+.gms-messaging__panel {
+    background: #fff;
+    border: 1px solid #dcdcde;
+    border-radius: 6px;
+    display: flex;
+    flex-direction: column;
+    min-height: 520px;
+}
+
+.gms-messaging__panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 20px;
+    border-bottom: 1px solid #dcdcde;
+}
+
+.gms-messaging__panel-titles {
+    flex: 1 1 auto;
+}
+
+.gms-messaging__thread-title {
+    margin: 0;
+    font-size: 20px;
+}
+
+.gms-messaging__thread-subtitle {
+    margin: 4px 0 0;
+    color: #50575e;
+    font-size: 13px;
+}
+
+.gms-messaging__thread-meta {
+    padding: 0 20px 12px;
+    border-bottom: 1px solid #dcdcde;
+}
+
+.gms-messaging__meta-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 6px;
+}
+
+.gms-messaging__meta-item {
+    display: flex;
+    gap: 8px;
+    font-size: 13px;
+}
+
+.gms-messaging__meta-label {
+    font-weight: 600;
+    color: #2c3338;
+}
+
+.gms-messaging__meta-value {
+    color: #50575e;
+}
+
+.gms-messaging__messages-wrapper {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    padding: 20px;
+    background: #f6f7f7;
+}
+
+.gms-messaging__messages {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.gms-messaging__messages-empty {
+    text-align: center;
+    color: #6c7781;
+    font-style: italic;
+}
+
+.gms-message {
+    max-width: 75%;
+    padding: 12px 16px;
+    border-radius: 12px;
+    position: relative;
+    line-height: 1.5;
+    background: #fff;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+.gms-message--outbound {
+    margin-left: auto;
+    background: #2271b1;
+    color: #fff;
+}
+
+.gms-message--outbound .gms-message__meta {
+    color: rgba(255, 255, 255, 0.8);
+}
+
+.gms-message--outbound .gms-message__body {
+    color: #fff;
+}
+
+.gms-message.is-pending {
+    opacity: 0.7;
+}
+
+.gms-message__meta {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    color: #6c7781;
+    margin-bottom: 6px;
+}
+
+.gms-message__body {
+    white-space: pre-wrap;
+    margin: 0;
+    font-size: 14px;
+}
+
+.gms-messaging__composer {
+    border-top: 1px solid #dcdcde;
+    padding: 16px 20px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.gms-messaging__composer-row {
+    display: flex;
+    align-items: center;
+}
+
+.gms-messaging__template {
+    width: 100%;
+    max-width: 280px;
+}
+
+.gms-messaging__input {
+    width: 100%;
+    min-height: 110px;
+    resize: vertical;
+    border-radius: 6px;
+}
+
+.gms-messaging__composer-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+}
+
+.gms-messaging__status {
+    font-size: 13px;
+    color: #50575e;
+}
+
+.gms-messaging__status.is-error {
+    color: #d63638;
+}
+
+@media (max-width: 960px) {
+    .gms-messaging {
+        grid-template-columns: 1fr;
+    }
+
+    .gms-messaging__sidebar {
+        order: 2;
+        min-height: auto;
+    }
+
+    .gms-messaging__panel {
+        order: 1;
+    }
+}

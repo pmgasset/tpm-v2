@@ -19,6 +19,12 @@ class GMS_AJAX_Handler {
         // Hook for saving the signed agreement
         add_action('wp_ajax_gms_save_signed_agreement', array($this, 'save_signed_agreement'));
         add_action('wp_ajax_nopriv_gms_save_signed_agreement', array($this, 'save_signed_agreement'));
+
+        // Messaging inbox endpoints
+        add_action('wp_ajax_gms_list_message_threads', array($this, 'list_message_threads'));
+        add_action('wp_ajax_gms_fetch_thread_messages', array($this, 'fetch_thread_messages'));
+        add_action('wp_ajax_gms_send_message_reply', array($this, 'send_message_reply'));
+        add_action('wp_ajax_gms_mark_thread_read', array($this, 'mark_thread_read'));
     }
 
     /**
@@ -79,5 +85,139 @@ class GMS_AJAX_Handler {
         } else {
             wp_send_json_success(array('message' => 'Agreement signed successfully!'));
         }
+    }
+
+    private function verify_messaging_permissions() {
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(array('message' => __('You do not have permission to manage messages.', 'guest-management-system')));
+        }
+
+        check_ajax_referer('gms_messaging_nonce', 'nonce');
+    }
+
+    public function list_message_threads() {
+        $this->verify_messaging_permissions();
+
+        $page = isset($_REQUEST['page']) ? max(1, intval($_REQUEST['page'])) : 1;
+        $per_page = isset($_REQUEST['per_page']) ? max(1, min(50, intval($_REQUEST['per_page']))) : 20;
+        $search = isset($_REQUEST['search']) ? sanitize_text_field(wp_unslash($_REQUEST['search'])) : '';
+
+        $threads = GMS_Database::getCommunicationThreads(array(
+            'page' => $page,
+            'per_page' => $per_page,
+            'search' => $search,
+        ));
+
+        wp_send_json_success($threads);
+    }
+
+    public function fetch_thread_messages() {
+        $this->verify_messaging_permissions();
+
+        $thread_key = isset($_REQUEST['thread_key']) ? sanitize_text_field(wp_unslash($_REQUEST['thread_key'])) : '';
+        if ($thread_key === '') {
+            wp_send_json_error(array('message' => __('Invalid conversation selected.', 'guest-management-system')));
+        }
+
+        $page = isset($_REQUEST['page']) ? max(1, intval($_REQUEST['page'])) : 1;
+        $per_page = isset($_REQUEST['per_page']) ? max(1, min(100, intval($_REQUEST['per_page']))) : 50;
+        $order = isset($_REQUEST['order']) ? sanitize_text_field(wp_unslash($_REQUEST['order'])) : 'ASC';
+
+        $messages = GMS_Database::getThreadMessages($thread_key, array(
+            'page' => $page,
+            'per_page' => $per_page,
+            'order' => $order,
+        ));
+
+        $context = GMS_Database::getCommunicationThreadContext($thread_key);
+
+        wp_send_json_success(array(
+            'messages' => $messages,
+            'thread' => $context,
+        ));
+    }
+
+    public function send_message_reply() {
+        $this->verify_messaging_permissions();
+
+        $thread_key = isset($_POST['thread_key']) ? sanitize_text_field(wp_unslash($_POST['thread_key'])) : '';
+        $channel = isset($_POST['channel']) ? sanitize_key(wp_unslash($_POST['channel'])) : 'sms';
+        $message = isset($_POST['message']) ? wp_unslash($_POST['message']) : '';
+
+        if ($thread_key === '' || $message === '') {
+            wp_send_json_error(array('message' => __('Message content is required.', 'guest-management-system')));
+        }
+
+        $context = GMS_Database::getCommunicationThreadContext($thread_key);
+        if (!$context) {
+            wp_send_json_error(array('message' => __('Unable to resolve the selected conversation.', 'guest-management-system')));
+        }
+
+        if ($channel !== 'sms') {
+            wp_send_json_error(array('message' => __('Only SMS replies are supported at this time.', 'guest-management-system')));
+        }
+
+        $outbound_number = isset($context['service_number']) ? sanitize_text_field($context['service_number']) : '';
+        if ($outbound_number === '') {
+            $outbound_number = sanitize_text_field(get_option('gms_voipms_did', ''));
+        }
+
+        $guest_number = isset($context['guest_number']) ? sanitize_text_field($context['guest_number']) : '';
+        if ($guest_number === '') {
+            $guest_number = isset($context['guest_phone']) ? sanitize_text_field($context['guest_phone']) : '';
+        }
+
+        if ($guest_number === '') {
+            wp_send_json_error(array('message' => __('Guest phone number is missing for this conversation.', 'guest-management-system')));
+        }
+
+        $clean_message = trim(wp_strip_all_tags($message));
+        if ($clean_message === '') {
+            wp_send_json_error(array('message' => __('Message content is required.', 'guest-management-system')));
+        }
+
+        $sms_handler = new GMS_SMS_Handler();
+        $sent = $sms_handler->sendSMS($guest_number, $clean_message);
+
+        if (!$sent) {
+            wp_send_json_error(array('message' => __('Unable to send SMS reply. Please check your messaging configuration.', 'guest-management-system')));
+        }
+
+        $log_id = GMS_Database::logCommunication(array(
+            'reservation_id' => intval($context['reservation_id'] ?? 0),
+            'guest_id' => intval($context['guest_id'] ?? 0),
+            'type' => $channel,
+            'recipient' => $guest_number,
+            'message' => $clean_message,
+            'status' => 'sent',
+            'channel' => $channel,
+            'direction' => 'outbound',
+            'from_number' => $outbound_number,
+            'to_number' => $guest_number,
+            'thread_key' => $thread_key,
+        ));
+
+        $message_row = $log_id ? GMS_Database::getCommunicationById($log_id) : null;
+
+        wp_send_json_success(array(
+            'message' => $message_row,
+        ));
+    }
+
+    public function mark_thread_read() {
+        $this->verify_messaging_permissions();
+
+        $thread_key = isset($_POST['thread_key']) ? sanitize_text_field(wp_unslash($_POST['thread_key'])) : '';
+        if ($thread_key === '') {
+            wp_send_json_error(array('message' => __('Invalid conversation selected.', 'guest-management-system')));
+        }
+
+        $updated = GMS_Database::markThreadAsRead($thread_key);
+        $context = GMS_Database::getCommunicationThreadContext($thread_key);
+
+        wp_send_json_success(array(
+            'updated' => $updated,
+            'thread' => $context,
+        ));
     }
 }
