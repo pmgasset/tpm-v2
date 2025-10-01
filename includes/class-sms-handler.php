@@ -6,12 +6,462 @@
  * Uses VoIP.ms API for SMS delivery
  */
 
-class GMS_SMS_Handler {
-    
+class GMS_SMS_Handler implements GMS_Messaging_Channel_Interface {
+
     private $api_url = 'https://voip.ms/api/v1/rest.php';
-    
+    private const OPTION_LAST_SYNC = 'gms_voipms_last_sms_sync';
+    private const CRON_HOOK = 'gms_sync_provider_messages';
+    private const CRON_INTERVAL = 'gms_five_minutes';
+
+    private static $bootstrapped = false;
+
     public function __construct() {
-        // Constructor
+        if (self::$bootstrapped) {
+            return;
+        }
+
+        self::$bootstrapped = true;
+
+        add_filter('cron_schedules', array($this, 'registerCronSchedules'));
+        add_action(self::CRON_HOOK, array($this, 'syncProviderInbox'));
+        add_action('init', array($this, 'maybeScheduleInboxSync'));
+
+        if (defined('WP_CLI') && WP_CLI) {
+            \WP_CLI::add_command('gms sync-messages', array($this, 'cliSyncProviderInbox'));
+        }
+    }
+
+    public function registerCronSchedules($schedules) {
+        if (!isset($schedules[self::CRON_INTERVAL])) {
+            $schedules[self::CRON_INTERVAL] = array(
+                'interval' => 300,
+                'display' => __('Every Five Minutes (GMS Messaging)', 'guest-management-system')
+            );
+        }
+
+        return $schedules;
+    }
+
+    public function maybeScheduleInboxSync() {
+        if (!$this->isVoipmsConfigured()) {
+            wp_clear_scheduled_hook(self::CRON_HOOK);
+            return;
+        }
+
+        if (!wp_next_scheduled(self::CRON_HOOK)) {
+            wp_schedule_event(time() + MINUTE_IN_SECONDS, self::CRON_INTERVAL, self::CRON_HOOK);
+        }
+    }
+
+    private function isVoipmsConfigured() {
+        $api_username = get_option('gms_voipms_user');
+        $api_password = get_option('gms_voipms_pass');
+        $did = $this->getConfiguredDid();
+
+        return !empty($api_username) && !empty($api_password) && !empty($did);
+    }
+
+    private function getConfiguredDid() {
+        return sanitize_text_field(get_option('gms_voipms_did', ''));
+    }
+
+    public function syncProviderInbox($args = array()) {
+        if (!$this->isVoipmsConfigured()) {
+            return array(
+                'success' => false,
+                'message' => 'VoIP.ms credentials are not configured.',
+                'processed' => 0,
+                'duplicates' => 0,
+                'errors' => 0,
+                'total' => 0,
+            );
+        }
+
+        $fetch = $this->fetchVoipmsInbox($args);
+
+        if (!$fetch['success']) {
+            return $fetch;
+        }
+
+        $processed = 0;
+        $duplicates = 0;
+        $errors = 0;
+        $details = array();
+
+        foreach ($fetch['messages'] as $message) {
+            $normalized = $this->normalizeVoipmsMessage($message);
+
+            if (trim($normalized['body']) === '') {
+                $details[] = array('stored' => false, 'reason' => 'empty_body', 'payload' => $message);
+                $errors++;
+                continue;
+            }
+
+            $result = $this->persistNormalizedMessage($normalized);
+
+            if (!empty($result['stored'])) {
+                $processed++;
+            } elseif (($result['reason'] ?? '') === 'duplicate') {
+                $duplicates++;
+            } else {
+                $errors++;
+            }
+
+            $details[] = $result;
+        }
+
+        if ($processed > 0) {
+            update_option(self::OPTION_LAST_SYNC, current_time('mysql', true));
+        }
+
+        $success = ($processed > 0) || ($duplicates > 0 && $errors === 0);
+
+        return array(
+            'success' => $success,
+            'processed' => $processed,
+            'duplicates' => $duplicates,
+            'errors' => $errors,
+            'total' => count($fetch['messages']),
+            'details' => $details,
+        );
+    }
+
+    public function ingestWebhookPayload(array $payload, $request = null) {
+        $messages = $this->extractMessagesFromPayload($payload);
+
+        $processed = 0;
+        $duplicates = 0;
+        $errors = 0;
+        $details = array();
+
+        foreach ($messages as $message) {
+            $normalized = $this->normalizeVoipmsMessage($message);
+
+            if (trim($normalized['body']) === '') {
+                $details[] = array('stored' => false, 'reason' => 'empty_body');
+                $errors++;
+                continue;
+            }
+
+            $result = $this->persistNormalizedMessage($normalized);
+
+            if (!empty($result['stored'])) {
+                $processed++;
+            } elseif (($result['reason'] ?? '') === 'duplicate') {
+                $duplicates++;
+            } else {
+                $errors++;
+            }
+
+            $details[] = $result;
+        }
+
+        if ($processed > 0) {
+            update_option(self::OPTION_LAST_SYNC, current_time('mysql', true));
+        }
+
+        $success = ($processed > 0) || ($duplicates > 0 && $errors === 0);
+
+        return array(
+            'success' => $success,
+            'processed' => $processed,
+            'duplicates' => $duplicates,
+            'errors' => $errors,
+            'total' => count($messages),
+            'details' => $details,
+        );
+    }
+
+    public function cliSyncProviderInbox($args, $assoc_args) {
+        $result = $this->syncProviderInbox($assoc_args);
+
+        if ($result['success']) {
+            \WP_CLI::success(sprintf(
+                'Processed %d message(s) (%d duplicates, %d errors).',
+                $result['processed'],
+                $result['duplicates'],
+                $result['errors']
+            ));
+        } else {
+            $message = $result['message'] ?? 'No messages processed.';
+            \WP_CLI::warning($message);
+
+            if (!empty($result['errors'])) {
+                \WP_CLI::warning(sprintf('%d error(s) occurred during processing.', $result['errors']));
+            }
+        }
+    }
+
+    private function fetchVoipmsInbox($args = array()) {
+        $api_username = get_option('gms_voipms_user');
+        $api_password = get_option('gms_voipms_pass');
+        $did = $this->getConfiguredDid();
+
+        if (empty($api_username) || empty($api_password) || empty($did)) {
+            return array(
+                'success' => false,
+                'message' => 'VoIP.ms credentials are not configured.',
+            );
+        }
+
+        $defaults = array(
+            'limit' => 100,
+            'type' => 1,
+        );
+
+        $args = wp_parse_args($args, $defaults);
+
+        $limit = max(1, min(intval($args['limit']), 1000));
+
+        $params = array(
+            'api_username' => $api_username,
+            'api_password' => $api_password,
+            'method' => 'getSMS',
+            'did' => $did,
+            'limit' => $limit,
+            'type' => intval($args['type']),
+        );
+
+        if (!empty($args['contact'])) {
+            $params['contact'] = preg_replace('/[^0-9+]/', '', (string) $args['contact']);
+        }
+
+        if (!empty($args['from'])) {
+            $params['from'] = sanitize_text_field($args['from']);
+        } else {
+            $last_sync = get_option(self::OPTION_LAST_SYNC, '');
+            if (!empty($last_sync)) {
+                $params['from'] = gmdate('Y-m-d H:i:s', max(0, strtotime($last_sync) - 300));
+            }
+        }
+
+        if (!empty($args['to'])) {
+            $params['to'] = sanitize_text_field($args['to']);
+        }
+
+        $params = apply_filters('gms_voipms_getsms_params', $params, $args);
+
+        $url = $this->api_url . '?' . http_build_query($params);
+
+        $response = wp_remote_get($url, array(
+            'timeout' => 20,
+            'sslverify' => true,
+        ));
+
+        if (is_wp_error($response)) {
+            return array(
+                'success' => false,
+                'message' => $response->get_error_message(),
+            );
+        }
+
+        $body = wp_remote_retrieve_body($response);
+        $data = json_decode($body, true);
+
+        if (!is_array($data)) {
+            return array(
+                'success' => false,
+                'message' => 'Unable to parse VoIP.ms response.',
+                'raw' => $body,
+            );
+        }
+
+        if (!isset($data['status']) || $data['status'] !== 'success') {
+            $message = isset($data['message']) ? sanitize_text_field($data['message']) : 'Unknown error.';
+
+            return array(
+                'success' => false,
+                'message' => $message,
+                'data' => $data,
+            );
+        }
+
+        $messages = array();
+
+        if (isset($data['sms']) && is_array($data['sms'])) {
+            $messages = $data['sms'];
+        }
+
+        return array(
+            'success' => true,
+            'messages' => $messages,
+            'data' => $data,
+        );
+    }
+
+    private function normalizeVoipmsMessage(array $message) {
+        $from = $message['from'] ?? $message['src'] ?? $message['contact'] ?? '';
+        $to = $message['to'] ?? $message['dst'] ?? $message['did'] ?? $this->getConfiguredDid();
+        $body = $message['message'] ?? $message['body'] ?? $message['text'] ?? '';
+
+        $external_id = (string) ($message['id'] ?? $message['sms_id'] ?? $message['message_id'] ?? '');
+
+        if ($external_id === '') {
+            $hash_source = array(
+                $from,
+                $to,
+                $message['date'] ?? $message['timestamp'] ?? '',
+                $body,
+            );
+
+            $external_id = md5(wp_json_encode($hash_source));
+        }
+
+        $direction = $this->determineMessageDirection($message, $from, $to);
+
+        return array(
+            'external_id' => sanitize_text_field($external_id),
+            'provider_reference' => sanitize_text_field($message['provider_reference'] ?? $external_id),
+            'from' => sanitize_text_field($from),
+            'to' => sanitize_text_field($to),
+            'from_e164' => GMS_Database::normalizePhoneNumber($from),
+            'to_e164' => GMS_Database::normalizePhoneNumber($to),
+            'body' => (string) $body,
+            'timestamp' => $this->sanitizeTimestamp($message['date'] ?? $message['timestamp'] ?? $message['created'] ?? ''),
+            'direction' => $direction,
+            'raw' => $message,
+        );
+    }
+
+    private function determineMessageDirection(array $message, $from, $to) {
+        $type = $message['direction'] ?? $message['type'] ?? '';
+
+        if (is_numeric($type)) {
+            $type = intval($type) === 1 ? 'inbound' : 'outbound';
+        } else {
+            $type = strtolower((string) $type);
+        }
+
+        $type_map = array(
+            'inbound' => 'inbound',
+            'incoming' => 'inbound',
+            'in' => 'inbound',
+            'received' => 'inbound',
+            'outbound' => 'outbound',
+            'outgoing' => 'outbound',
+            'out' => 'outbound',
+            'sent' => 'outbound',
+        );
+
+        if (isset($type_map[$type])) {
+            return $type_map[$type];
+        }
+
+        $did = GMS_Database::normalizePhoneNumber($this->getConfiguredDid());
+        $from_normalized = GMS_Database::normalizePhoneNumber($from);
+
+        if ($did !== '' && $from_normalized === $did) {
+            return 'outbound';
+        }
+
+        return 'inbound';
+    }
+
+    private function sanitizeTimestamp($value) {
+        if ($value instanceof DateTimeInterface) {
+            return $value->format('Y-m-d H:i:s');
+        }
+
+        if (is_numeric($value) && $value > 0) {
+            return date('Y-m-d H:i:s', intval($value));
+        }
+
+        if (!empty($value)) {
+            $timestamp = strtotime((string) $value);
+            if ($timestamp !== false) {
+                return date('Y-m-d H:i:s', $timestamp);
+            }
+        }
+
+        return current_time('mysql');
+    }
+
+    private function persistNormalizedMessage(array $normalized) {
+        $channel = 'sms';
+
+        if (!empty($normalized['external_id'])) {
+            $existing_id = GMS_Database::communicationExists($normalized['external_id'], $channel);
+            if ($existing_id) {
+                return array(
+                    'stored' => false,
+                    'reason' => 'duplicate',
+                    'id' => $existing_id,
+                );
+            }
+        }
+
+        $context = GMS_Database::resolveMessageContext($channel, $normalized['from'], $normalized['to'], $normalized['direction']);
+
+        $response_context = array(
+            'matched' => $context['matched'],
+            'guest_number' => $context['guest_number_e164'],
+            'service_number' => $context['service_number_e164'],
+        );
+
+        if (!$context['matched']) {
+            $response_context['status'] = 'unmatched';
+        }
+
+        $log_data = array(
+            'reservation_id' => $context['reservation_id'],
+            'guest_id' => $context['guest_id'],
+            'type' => 'sms',
+            'recipient' => $normalized['direction'] === 'outbound' ? $normalized['to'] : $normalized['from'],
+            'message' => $normalized['body'],
+            'status' => $normalized['direction'] === 'outbound' ? 'sent' : 'received',
+            'response_data' => array(
+                'provider' => 'voip.ms',
+                'payload' => $normalized['raw'],
+                'context' => $response_context,
+            ),
+            'provider_reference' => $normalized['provider_reference'],
+            'channel' => $channel,
+            'direction' => $normalized['direction'],
+            'from_number' => $normalized['from'],
+            'to_number' => $normalized['to'],
+            'external_id' => $normalized['external_id'],
+            'sent_at' => $normalized['timestamp'],
+        );
+
+        if (!empty($context['thread_key'])) {
+            $log_data['thread_key'] = $context['thread_key'];
+        }
+
+        $insert_id = GMS_Database::logCommunication($log_data);
+
+        if ($insert_id <= 0) {
+            return array(
+                'stored' => false,
+                'reason' => 'database_error',
+            );
+        }
+
+        return array(
+            'stored' => true,
+            'id' => $insert_id,
+            'context' => $context,
+        );
+    }
+
+    private function extractMessagesFromPayload(array $payload) {
+        if (isset($payload['messages']) && is_array($payload['messages'])) {
+            return array_values(array_filter($payload['messages'], 'is_array'));
+        }
+
+        if (!empty($payload) && isset($payload[0]) && is_array($payload)) {
+            $all = array();
+            foreach ($payload as $item) {
+                if (is_array($item)) {
+                    $all[] = $item;
+                }
+            }
+
+            if (!empty($all)) {
+                return $all;
+            }
+        }
+
+        return array($payload);
     }
     
     public function sendWelcomeSMS($reservation) {

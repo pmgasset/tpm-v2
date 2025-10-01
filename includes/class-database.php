@@ -1219,7 +1219,13 @@ class GMS_Database {
             '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s'
         );
 
-        $wpdb->insert($table_name, $insert_data, $formats);
+        $result = $wpdb->insert($table_name, $insert_data, $formats);
+
+        if ($result === false) {
+            return 0;
+        }
+
+        return intval($wpdb->insert_id);
     }
 
     public static function getCommunicationsForReservation($reservation_id, $args = array()) {
@@ -1273,6 +1279,235 @@ class GMS_Database {
         $rows = $wpdb->get_results($wpdb->prepare($sql, $params), ARRAY_A);
 
         return array_map(array(__CLASS__, 'formatCommunicationRow'), $rows);
+    }
+
+    public static function communicationExists($external_id, $channel) {
+        global $wpdb;
+
+        $external_id = sanitize_text_field($external_id);
+        $channel = sanitize_key($channel);
+
+        if ($external_id === '' || $channel === '') {
+            return 0;
+        }
+
+        $table_name = $wpdb->prefix . 'gms_communications';
+
+        $id = $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT id FROM {$table_name} WHERE external_id = %s AND channel = %s LIMIT 1",
+                $external_id,
+                $channel
+            )
+        );
+
+        return $id ? intval($id) : 0;
+    }
+
+    public static function findReservationByPhone($phone) {
+        global $wpdb;
+
+        $normalized = self::normalizePhoneNumber($phone);
+        $digits = self::normalizePhoneDigits($phone);
+
+        if ($normalized === '' && $digits === '') {
+            return null;
+        }
+
+        $table_reservations = $wpdb->prefix . 'gms_reservations';
+
+        $conditions = array();
+        $params = array();
+
+        if ($normalized !== '') {
+            $conditions[] = 'guest_phone = %s';
+            $params[] = $normalized;
+
+            $conditions[] = 'guest_phone = %s';
+            $params[] = ltrim($normalized, '+');
+        }
+
+        if ($digits !== '') {
+            $conditions[] = "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(guest_phone, '+', ''), '-', ''), ' ', ''), '(', ''), ')', ''), '.', '') LIKE %s";
+            $params[] = '%' . $digits . '%';
+        }
+
+        if (empty($conditions)) {
+            return null;
+        }
+
+        $where = implode(' OR ', array_map(static function ($condition) {
+            return '(' . $condition . ')';
+        }, $conditions));
+
+        $sql = "SELECT * FROM {$table_reservations} WHERE {$where} ORDER BY updated_at DESC, checkin_date DESC LIMIT 1";
+
+        $row = $wpdb->get_row($wpdb->prepare($sql, $params), ARRAY_A);
+
+        return $row ? self::formatReservationRow($row) : null;
+    }
+
+    public static function findGuestByPhone($phone) {
+        global $wpdb;
+
+        $normalized = self::normalizePhoneNumber($phone);
+        $digits = self::normalizePhoneDigits($phone);
+
+        if ($normalized === '' && $digits === '') {
+            return null;
+        }
+
+        $table_guests = $wpdb->prefix . 'gms_guests';
+
+        $conditions = array();
+        $params = array();
+
+        if ($normalized !== '') {
+            $conditions[] = 'phone = %s';
+            $params[] = $normalized;
+
+            $conditions[] = 'phone = %s';
+            $params[] = ltrim($normalized, '+');
+        }
+
+        if ($digits !== '') {
+            $conditions[] = "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(phone, '+', ''), '-', ''), ' ', ''), '(', ''), ')', ''), '.', '') LIKE %s";
+            $params[] = '%' . $digits . '%';
+        }
+
+        if (empty($conditions)) {
+            return null;
+        }
+
+        $where = implode(' OR ', array_map(static function ($condition) {
+            return '(' . $condition . ')';
+        }, $conditions));
+
+        $sql = "SELECT * FROM {$table_guests} WHERE {$where} ORDER BY updated_at DESC, created_at DESC LIMIT 1";
+
+        $row = $wpdb->get_row($wpdb->prepare($sql, $params), ARRAY_A);
+
+        if (!$row) {
+            return null;
+        }
+
+        if (isset($row['name'])) {
+            $row['name'] = trim($row['name']);
+        } else {
+            $row['name'] = trim(trim($row['first_name'] ?? '') . ' ' . trim($row['last_name'] ?? ''));
+        }
+
+        if (!empty($row['email']) && str_ends_with($row['email'], '@' . self::GUEST_PLACEHOLDER_DOMAIN)) {
+            $row['email'] = '';
+        }
+
+        return $row;
+    }
+
+    public static function findRecentCommunicationContext($guest_number_e164, $service_number_e164, $channel = 'sms') {
+        global $wpdb;
+
+        $guest_number_e164 = self::normalizePhoneNumber($guest_number_e164);
+        $service_number_e164 = self::normalizePhoneNumber($service_number_e164);
+        $channel = sanitize_key($channel);
+
+        if ($guest_number_e164 === '' || $service_number_e164 === '' || $channel === '') {
+            return null;
+        }
+
+        $table = $wpdb->prefix . 'gms_communications';
+
+        $row = $wpdb->get_row(
+            $wpdb->prepare(
+                "SELECT reservation_id, guest_id, thread_key FROM {$table} WHERE channel = %s AND ((from_number_e164 = %s AND to_number_e164 = %s) OR (from_number_e164 = %s AND to_number_e164 = %s)) ORDER BY sent_at DESC, id DESC LIMIT 1",
+                $channel,
+                $guest_number_e164,
+                $service_number_e164,
+                $service_number_e164,
+                $guest_number_e164
+            ),
+            ARRAY_A
+        );
+
+        return $row ?: null;
+    }
+
+    public static function resolveMessageContext($channel, $from_number, $to_number, $direction = 'inbound') {
+        $channel = sanitize_key($channel);
+        $direction = $direction === 'outbound' ? 'outbound' : 'inbound';
+
+        $from_e164 = in_array($channel, array('sms', 'whatsapp'), true) ? self::normalizePhoneNumber($from_number) : '';
+        $to_e164 = in_array($channel, array('sms', 'whatsapp'), true) ? self::normalizePhoneNumber($to_number) : '';
+
+        $guest_number = $direction === 'inbound' ? $from_e164 : $to_e164;
+        $service_number = $direction === 'inbound' ? $to_e164 : $from_e164;
+
+        $reservation = null;
+        $guest = null;
+
+        if ($guest_number !== '') {
+            $reservation = self::findReservationByPhone($guest_number);
+
+            if ($reservation) {
+                if (!empty($reservation['guest_record_id'])) {
+                    $guest = self::get_guest_by_id($reservation['guest_record_id']);
+                } elseif (!empty($reservation['guest_id'])) {
+                    $guest = self::get_guest_by_id($reservation['guest_id']);
+                }
+            }
+
+            if (!$guest) {
+                $guest = self::findGuestByPhone($guest_number);
+            }
+        }
+
+        if ((!$reservation || !$guest) && $guest_number !== '' && $service_number !== '') {
+            $context = self::findRecentCommunicationContext($guest_number, $service_number, $channel);
+
+            if ($context) {
+                if (!$reservation && !empty($context['reservation_id'])) {
+                    $reservation = self::getReservationById($context['reservation_id']);
+                }
+
+                if (!$guest && !empty($context['guest_id'])) {
+                    $guest = self::get_guest_by_id($context['guest_id']);
+                }
+            }
+        }
+
+        $reservation_id = $reservation['id'] ?? 0;
+        $guest_id = 0;
+
+        if (!empty($reservation['guest_record_id'])) {
+            $guest_id = intval($reservation['guest_record_id']);
+        } elseif (!empty($reservation['guest_id'])) {
+            $guest_id = intval($reservation['guest_id']);
+        } elseif (!empty($guest['id'])) {
+            $guest_id = intval($guest['id']);
+        }
+
+        $thread_key = self::generateThreadKey($channel, $reservation_id, $guest_id, $service_number, $guest_number);
+
+        return array(
+            'reservation_id' => $reservation_id,
+            'guest_id' => $guest_id,
+            'reservation' => $reservation,
+            'guest' => $guest,
+            'guest_number_e164' => $guest_number,
+            'service_number_e164' => $service_number,
+            'thread_key' => $thread_key,
+            'matched' => ($reservation_id > 0 || $guest_id > 0)
+        );
+    }
+
+    private static function normalizePhoneDigits($number) {
+        $number = preg_replace('/[^0-9]/', '', (string) $number);
+
+        if ($number === '') {
+            return '';
+        }
+
+        return substr($number, -15);
     }
 
     public static function getCommunicationsForGuest($guest_id, $args = array()) {
@@ -1391,7 +1626,7 @@ class GMS_Database {
         return date('Y-m-d H:i:s', $timestamp);
     }
 
-    private static function normalizePhoneNumber($number) {
+    public static function normalizePhoneNumber($number) {
         $number = trim((string) $number);
 
         if ($number === '') {
@@ -1427,7 +1662,7 @@ class GMS_Database {
         return '+' . $digits;
     }
 
-    private static function generateThreadKey($channel, $reservation_id, $guest_id, $from_number_e164, $to_number_e164) {
+    public static function generateThreadKey($channel, $reservation_id, $guest_id, $from_number_e164, $to_number_e164) {
         $parts = array();
 
         $channel = sanitize_key($channel);

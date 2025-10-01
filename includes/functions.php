@@ -621,6 +621,7 @@ register_deactivation_hook(__FILE__, 'gms_clear_cron');
 
 function gms_clear_cron() {
     wp_clear_scheduled_hook('gms_send_reminder_notifications');
+    wp_clear_scheduled_hook('gms_sync_provider_messages');
 }
 
 add_action('gms_reservation_status_updated', 'gms_handle_reservation_status_transition', 10, 3);
