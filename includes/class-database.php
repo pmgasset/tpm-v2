@@ -2525,47 +2525,306 @@ class GMS_Database {
     }
 
     /**
-     * NEW: Fetches reservations with guest names for the admin list table.
+     * Fetch reservations with support for sorting, searching, and filtering.
      */
-    public static function get_reservations($per_page = 20, $current_page = 1) {
+    public static function get_reservations($args = array(), $current_page = 1) {
+        if (!is_array($args)) {
+            $args = array(
+                'per_page' => $args,
+                'page' => $current_page,
+            );
+        }
+
+        $defaults = array(
+            'per_page' => 20,
+            'page' => 1,
+            'search' => '',
+            'status' => '',
+            'checkin_filter' => '',
+            'orderby' => 'checkin_date',
+            'order' => 'DESC',
+        );
+
+        $args = wp_parse_args($args, $defaults);
+
         global $wpdb;
+
+        $per_page = max(1, (int) $args['per_page']);
+        $page = max(1, (int) $args['page']);
+        $offset = ($page - 1) * $per_page;
+
         $table_reservations = $wpdb->prefix . 'gms_reservations';
         $table_guests = $wpdb->prefix . 'gms_guests';
-        $offset = ($current_page - 1) * $per_page;
-        
-        $query = $wpdb->prepare(
-            "SELECT r.*, r.guest_name AS reservation_guest_name,
+
+        $where = array();
+        $params = array();
+
+        $status_filter = $args['status'];
+        if ($status_filter && $status_filter !== 'all') {
+            $status_values = array();
+
+            if (is_array($status_filter)) {
+                $status_values = array_filter(array_map('sanitize_key', $status_filter));
+            } elseif ($status_filter === 'pending_checkins') {
+                $followup_statuses = function_exists('gms_get_followup_reservation_statuses')
+                    ? (array) gms_get_followup_reservation_statuses()
+                    : array('approved', 'awaiting_signature', 'awaiting_id_verification');
+                $status_values = array_merge(array('pending'), $followup_statuses);
+            } else {
+                $status_values[] = sanitize_key($status_filter);
+            }
+
+            $status_values = array_filter(array_unique($status_values));
+
+            if (!empty($status_values)) {
+                $placeholders = implode(',', array_fill(0, count($status_values), '%s'));
+                $where[] = "r.status IN ($placeholders)";
+                $params = array_merge($params, $status_values);
+            }
+        }
+
+        $checkin_filter = $args['checkin_filter'];
+        if ($checkin_filter && $checkin_filter !== 'all') {
+            if ($checkin_filter === 'upcoming') {
+                $start = current_time('mysql');
+                $end = date('Y-m-d H:i:s', strtotime('+7 days', current_time('timestamp')));
+                $where[] = 'r.checkin_date BETWEEN %s AND %s';
+                $params[] = $start;
+                $params[] = $end;
+            } elseif ($checkin_filter === 'pending_checkins') {
+                $start = current_time('mysql');
+                $where[] = 'r.checkin_date >= %s';
+                $params[] = $start;
+            }
+        }
+
+        $search_term = trim((string) $args['search']);
+        if ($search_term !== '') {
+            $like = '%' . $wpdb->esc_like($search_term) . '%';
+            $where[] = '(r.guest_name LIKE %s OR r.property_name LIKE %s OR r.booking_reference LIKE %s OR r.guest_email LIKE %s)';
+            $params[] = $like;
+            $params[] = $like;
+            $params[] = $like;
+            $params[] = $like;
+        }
+
+        $where_sql = '';
+        if (!empty($where)) {
+            $where_sql = 'WHERE ' . implode(' AND ', $where);
+        }
+
+        $orderby_map = array(
+            'guest_name' => 'guest_name',
+            'property_name' => 'r.property_name',
+            'checkin_date' => 'r.checkin_date',
+            'status' => 'r.status',
+            'booking_reference' => 'r.booking_reference',
+            'created_at' => 'r.created_at',
+        );
+
+        $orderby_key = strtolower((string) $args['orderby']);
+        $orderby_sql = isset($orderby_map[$orderby_key]) ? $orderby_map[$orderby_key] : $orderby_map['checkin_date'];
+
+        $order = strtoupper((string) $args['order']) === 'ASC' ? 'ASC' : 'DESC';
+
+        $sql = "SELECT r.*, r.guest_name AS reservation_guest_name,
                 COALESCE(NULLIF(TRIM(CONCAT(g.first_name, ' ', g.last_name)), ''), r.guest_name) AS guest_name
             FROM {$table_reservations} r
             LEFT JOIN {$table_guests} g ON r.guest_record_id = g.id
-            ORDER BY r.checkin_date DESC
-            LIMIT %d OFFSET %d",
-            $per_page,
-            $offset
-        );
-        
+            {$where_sql}
+            ORDER BY {$orderby_sql} {$order}
+            LIMIT %d OFFSET %d";
+
+        $params[] = $per_page;
+        $params[] = $offset;
+
+        $query = $wpdb->prepare($sql, $params);
         $results = $wpdb->get_results($query, ARRAY_A);
 
-        return array_map(array(__CLASS__, 'formatReservationRow'), $results);
+        $results = array_map(array(__CLASS__, 'formatReservationRow'), $results);
+
+        return array_values(array_filter($results));
     }
 
-    public static function get_guests($per_page = 20, $current_page = 1, $search = '') {
+    public static function count_reservations($args = array()) {
+        $defaults = array(
+            'search' => '',
+            'status' => '',
+            'checkin_filter' => '',
+        );
+
+        $args = wp_parse_args($args, $defaults);
+
+        global $wpdb;
+
+        $table_reservations = $wpdb->prefix . 'gms_reservations';
+        $table_guests = $wpdb->prefix . 'gms_guests';
+
+        $where = array();
+        $params = array();
+
+        $status_filter = $args['status'];
+        if ($status_filter && $status_filter !== 'all') {
+            $status_values = array();
+
+            if (is_array($status_filter)) {
+                $status_values = array_filter(array_map('sanitize_key', $status_filter));
+            } elseif ($status_filter === 'pending_checkins') {
+                $followup_statuses = function_exists('gms_get_followup_reservation_statuses')
+                    ? (array) gms_get_followup_reservation_statuses()
+                    : array('approved', 'awaiting_signature', 'awaiting_id_verification');
+                $status_values = array_merge(array('pending'), $followup_statuses);
+            } else {
+                $status_values[] = sanitize_key($status_filter);
+            }
+
+            $status_values = array_filter(array_unique($status_values));
+
+            if (!empty($status_values)) {
+                $placeholders = implode(',', array_fill(0, count($status_values), '%s'));
+                $where[] = "r.status IN ($placeholders)";
+                $params = array_merge($params, $status_values);
+            }
+        }
+
+        $checkin_filter = $args['checkin_filter'];
+        if ($checkin_filter && $checkin_filter !== 'all') {
+            if ($checkin_filter === 'upcoming') {
+                $start = current_time('mysql');
+                $end = date('Y-m-d H:i:s', strtotime('+7 days', current_time('timestamp')));
+                $where[] = 'r.checkin_date BETWEEN %s AND %s';
+                $params[] = $start;
+                $params[] = $end;
+            } elseif ($checkin_filter === 'pending_checkins') {
+                $start = current_time('mysql');
+                $where[] = 'r.checkin_date >= %s';
+                $params[] = $start;
+            }
+        }
+
+        $search_term = trim((string) $args['search']);
+        if ($search_term !== '') {
+            $like = '%' . $wpdb->esc_like($search_term) . '%';
+            $where[] = '(r.guest_name LIKE %s OR r.property_name LIKE %s OR r.booking_reference LIKE %s OR r.guest_email LIKE %s)';
+            $params[] = $like;
+            $params[] = $like;
+            $params[] = $like;
+            $params[] = $like;
+        }
+
+        $where_sql = '';
+        if (!empty($where)) {
+            $where_sql = 'WHERE ' . implode(' AND ', $where);
+        }
+
+        $sql = "SELECT COUNT(r.id)
+            FROM {$table_reservations} r
+            LEFT JOIN {$table_guests} g ON r.guest_record_id = g.id
+            {$where_sql}";
+
+        $query = $wpdb->prepare($sql, $params);
+
+        return (int) $wpdb->get_var($query);
+    }
+
+    public static function delete_reservations($reservation_ids) {
+        global $wpdb;
+
+        $reservation_ids = array_filter(array_map('absint', (array) $reservation_ids));
+
+        if (empty($reservation_ids)) {
+            return 0;
+        }
+
+        $table_reservations = $wpdb->prefix . 'gms_reservations';
+        $placeholders = implode(',', array_fill(0, count($reservation_ids), '%d'));
+
+        $query = $wpdb->prepare(
+            "DELETE FROM {$table_reservations} WHERE id IN ($placeholders)",
+            $reservation_ids
+        );
+
+        $result = $wpdb->query($query);
+
+        return (int) $result;
+    }
+
+    public static function get_guests($args = array(), $current_page = 1, $search = '') {
+        if (!is_array($args)) {
+            $args = array(
+                'per_page' => $args,
+                'page' => $current_page,
+                'search' => $search,
+            );
+        }
+
+        $defaults = array(
+            'per_page' => 20,
+            'page' => 1,
+            'search' => '',
+            'status' => '',
+            'orderby' => 'created_at',
+            'order' => 'DESC',
+        );
+
+        $args = wp_parse_args($args, $defaults);
+
         global $wpdb;
 
         $table_guests = $wpdb->prefix . 'gms_guests';
-        $offset = max(0, ($current_page - 1) * $per_page);
+
+        $per_page = max(1, (int) $args['per_page']);
+        $page = max(1, (int) $args['page']);
+        $offset = max(0, ($page - 1) * $per_page);
 
         $sql = "SELECT g.*, TRIM(CONCAT(g.first_name, ' ', g.last_name)) AS name
             FROM {$table_guests} g";
         $params = array();
+        $where = array();
 
-        if ($search !== '') {
-            $like = '%' . $wpdb->esc_like($search) . '%';
-            $sql .= " WHERE (g.first_name LIKE %s OR g.last_name LIKE %s OR g.email LIKE %s OR g.phone LIKE %s)";
-            $params = array($like, $like, $like, $like);
+        $search_term = trim((string) $args['search']);
+        if ($search_term !== '') {
+            $like = '%' . $wpdb->esc_like($search_term) . '%';
+            $where[] = "(g.first_name LIKE %s OR g.last_name LIKE %s OR g.email LIKE %s OR g.phone LIKE %s)";
+            $params[] = $like;
+            $params[] = $like;
+            $params[] = $like;
+            $params[] = $like;
         }
 
-        $sql .= " ORDER BY g.created_at DESC LIMIT %d OFFSET %d";
+        $status_filter = $args['status'];
+        if ($status_filter && $status_filter !== 'all') {
+            $placeholder = '%' . self::GUEST_PLACEHOLDER_DOMAIN;
+            $has_name_sql = "TRIM(CONCAT(g.first_name, ' ', g.last_name)) <> ''";
+            $valid_email_sql = '(g.email <> "" AND g.email NOT LIKE %s)';
+            $has_contact_sql = "(($valid_email_sql) OR g.phone <> '')";
+
+            if ($status_filter === 'complete') {
+                $where[] = "($has_name_sql AND $has_contact_sql)";
+                $params[] = $placeholder;
+            } elseif ($status_filter === 'incomplete') {
+                $where[] = "NOT ($has_name_sql AND $has_contact_sql)";
+                $params[] = $placeholder;
+            }
+        }
+
+        if (!empty($where)) {
+            $sql .= ' WHERE ' . implode(' AND ', $where);
+        }
+
+        $orderby_map = array(
+            'name' => 'name',
+            'email' => 'g.email',
+            'phone' => 'g.phone',
+            'created_at' => 'g.created_at',
+        );
+
+        $orderby_key = strtolower((string) $args['orderby']);
+        $orderby_sql = isset($orderby_map[$orderby_key]) ? $orderby_map[$orderby_key] : $orderby_map['created_at'];
+
+        $order = strtoupper((string) $args['order']) === 'ASC' ? 'ASC' : 'DESC';
+
+        $sql .= " ORDER BY {$orderby_sql} {$order} LIMIT %d OFFSET %d";
         $params[] = (int) $per_page;
         $params[] = (int) $offset;
 
@@ -2617,22 +2876,144 @@ class GMS_Database {
         return $row;
     }
 
-    public static function get_guest_count($search = '') {
+    public static function get_guest_count($args = array()) {
+        if (!is_array($args)) {
+            $args = array('search' => $args);
+        }
+
+        $defaults = array(
+            'search' => '',
+            'status' => '',
+        );
+
+        $args = wp_parse_args($args, $defaults);
+
         global $wpdb;
 
         $table_guests = $wpdb->prefix . 'gms_guests';
         $sql = "SELECT COUNT(g.id) FROM {$table_guests} g";
         $params = array();
+        $where = array();
 
-        if ($search !== '') {
-            $like = '%' . $wpdb->esc_like($search) . '%';
-            $sql .= " WHERE (g.first_name LIKE %s OR g.last_name LIKE %s OR g.email LIKE %s OR g.phone LIKE %s)";
-            $params = array($like, $like, $like, $like);
+        $search_term = trim((string) $args['search']);
+        if ($search_term !== '') {
+            $like = '%' . $wpdb->esc_like($search_term) . '%';
+            $where[] = "(g.first_name LIKE %s OR g.last_name LIKE %s OR g.email LIKE %s OR g.phone LIKE %s)";
+            $params[] = $like;
+            $params[] = $like;
+            $params[] = $like;
+            $params[] = $like;
+        }
+
+        $status_filter = $args['status'];
+        if ($status_filter && $status_filter !== 'all') {
+            $placeholder = '%' . self::GUEST_PLACEHOLDER_DOMAIN;
+            $has_name_sql = "TRIM(CONCAT(g.first_name, ' ', g.last_name)) <> ''";
+            $valid_email_sql = '(g.email <> "" AND g.email NOT LIKE %s)';
+            $has_contact_sql = "(($valid_email_sql) OR g.phone <> '')";
+
+            if ($status_filter === 'complete') {
+                $where[] = "($has_name_sql AND $has_contact_sql)";
+                $params[] = $placeholder;
+            } elseif ($status_filter === 'incomplete') {
+                $where[] = "NOT ($has_name_sql AND $has_contact_sql)";
+                $params[] = $placeholder;
+            }
+        }
+
+        if (!empty($where)) {
+            $sql .= ' WHERE ' . implode(' AND ', $where);
         }
 
         $query = $params ? $wpdb->prepare($sql, $params) : $sql;
 
         return (int) $wpdb->get_var($query);
+    }
+
+    public static function delete_guests($guest_ids) {
+        global $wpdb;
+
+        $guest_ids = array_filter(array_map('absint', (array) $guest_ids));
+
+        if (empty($guest_ids)) {
+            return 0;
+        }
+
+        $table_guests = $wpdb->prefix . 'gms_guests';
+        $table_reservations = $wpdb->prefix . 'gms_reservations';
+        $placeholders = implode(',', array_fill(0, count($guest_ids), '%d'));
+
+        $delete_query = $wpdb->prepare(
+            "DELETE FROM {$table_guests} WHERE id IN ($placeholders)",
+            $guest_ids
+        );
+
+        $deleted = $wpdb->query($delete_query);
+
+        if ($deleted > 0) {
+            $wpdb->query(
+                $wpdb->prepare(
+                    "UPDATE {$table_reservations} SET guest_record_id = 0 WHERE guest_record_id IN ($placeholders)",
+                    $guest_ids
+                )
+            );
+        }
+
+        return (int) $deleted;
+    }
+
+    public static function update_guest($guest_id, $data) {
+        global $wpdb;
+
+        $guest_id = absint($guest_id);
+
+        if ($guest_id <= 0) {
+            return false;
+        }
+
+        $table_guests = $wpdb->prefix . 'gms_guests';
+
+        $allowed = array('first_name', 'last_name', 'email', 'phone');
+        $update = array();
+        $formats = array();
+
+        foreach ($allowed as $field) {
+            if (!array_key_exists($field, $data)) {
+                continue;
+            }
+
+            $value = $data[$field];
+
+            if ($field === 'email') {
+                $sanitized = sanitize_email($value);
+            } else {
+                $sanitized = sanitize_text_field($value);
+            }
+
+            $update[$field] = $sanitized;
+            $formats[] = '%s';
+        }
+
+        if (empty($update)) {
+            return false;
+        }
+
+        $update['updated_at'] = current_time('mysql');
+        $formats[] = '%s';
+
+        $result = $wpdb->update(
+            $table_guests,
+            $update,
+            array('id' => $guest_id),
+            $formats,
+            array('%d')
+        );
+
+        if ($result === false) {
+            return false;
+        }
+
+        return true;
     }
 
     /**
