@@ -54,6 +54,7 @@ class GuestManagementSystem {
         new GMS_SMS_Handler();
         new GMS_Stripe_Integration();
         new GMS_Agreement_Handler(); // Initialize the new agreement handler
+        new GMS_AJAX_Handler();
 
         GMS_Database::maybeScheduleGuestBackfill();
 
@@ -81,6 +82,7 @@ class GuestManagementSystem {
             'class-email-handler.php',
             'class-sms-handler.php',
             'class-stripe-integration.php',
+            'class-ajax-handler.php',
             'class-agreement-handler.php', // Load the new agreement handler class
             'functions.php'
         );
