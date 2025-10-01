@@ -45,6 +45,11 @@ class GMS_Guest_Portal {
         $company_name = get_option('gms_company_name', get_option('blogname'));
         $company_logo = get_option('gms_company_logo');
         $primary_color = get_option('gms_portal_primary_color', '#0073aa');
+
+        $door_code = '';
+        if (!empty($reservation['door_code'])) {
+            $door_code = GMS_Database::sanitizeDoorCode($reservation['door_code']);
+        }
         $secondary_color = get_option('gms_portal_secondary_color', '#005a87');
         
         $agreement_template = get_option('gms_agreement_template', '');
@@ -66,7 +71,7 @@ class GMS_Guest_Portal {
              $company_name],
             $agreement_template
         );
-        
+
         ?>
         <!DOCTYPE html>
         <html lang="en">
@@ -431,6 +436,12 @@ class GMS_Guest_Portal {
                             <div class="detail-label">Booking Reference</div>
                             <div class="detail-value"><?php echo esc_html($reservation['booking_reference']); ?></div>
                         </div>
+                        <?php if ($door_code !== '') : ?>
+                        <div class="detail-item">
+                            <div class="detail-label">Door Code</div>
+                            <div class="detail-value"><?php echo esc_html($door_code); ?></div>
+                        </div>
+                        <?php endif; ?>
                     </div>
                     
                     <div class="progress-bar">
@@ -851,7 +862,12 @@ class GMS_Guest_Portal {
         $company_name = get_option('gms_company_name', get_option('blogname'));
         $company_logo = get_option('gms_company_logo');
         $primary_color = get_option('gms_portal_primary_color', '#0073aa');
-        
+
+        $door_code = '';
+        if (!empty($reservation['door_code'])) {
+            $door_code = GMS_Database::sanitizeDoorCode($reservation['door_code']);
+        }
+
         ?>
         <!DOCTYPE html>
         <html lang="en">
@@ -998,6 +1014,13 @@ class GMS_Guest_Portal {
                         <div><?php echo esc_html(date('M j, Y g:i A', strtotime($verification['verified_at']))); ?></div>
                     </div>
                     
+                    <?php if ($door_code !== ''): ?>
+                    <div class="detail-card">
+                        <div class="detail-title">Door Code</div>
+                        <div><?php echo esc_html($door_code); ?></div>
+                    </div>
+                    <?php endif; ?>
+
                     <div class="detail-card">
                         <div class="detail-title">Booking Reference</div>
                         <div><?php echo esc_html($reservation['booking_reference']); ?></div>

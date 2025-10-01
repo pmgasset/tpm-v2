@@ -29,6 +29,7 @@ class GMS_Database {
             property_id varchar(100) NOT NULL DEFAULT '',
             property_name varchar(255) NOT NULL DEFAULT '',
             booking_reference varchar(191) NOT NULL DEFAULT '',
+            door_code varchar(20) NOT NULL DEFAULT '',
             checkin_date datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
             checkout_date datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
             status varchar(50) NOT NULL DEFAULT 'pending',
@@ -565,6 +566,7 @@ class GMS_Database {
             'property_id' => '',
             'property_name' => '',
             'booking_reference' => '',
+            'door_code' => '',
             'checkin_date' => '',
             'checkout_date' => '',
             'status' => 'pending',
@@ -598,6 +600,7 @@ class GMS_Database {
             'property_id' => sanitize_text_field($data['property_id']),
             'property_name' => sanitize_text_field($data['property_name']),
             'booking_reference' => sanitize_text_field($data['booking_reference']),
+            'door_code' => self::sanitizeDoorCode($data['door_code']),
             'checkin_date' => self::sanitizeDateTime($data['checkin_date']),
             'checkout_date' => self::sanitizeDateTime($data['checkout_date']),
             'status' => sanitize_text_field($data['status']),
@@ -610,7 +613,7 @@ class GMS_Database {
             'updated_at' => current_time('mysql'),
         );
 
-        $formats = array('%d', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s');
+        $formats = array('%d', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s');
 
         $result = $wpdb->insert($table_name, $insert_data, $formats);
 
@@ -636,7 +639,7 @@ class GMS_Database {
 
         $allowed = array(
             'guest_id', 'guest_record_id', 'guest_name', 'guest_email', 'guest_phone', 'property_id', 'property_name',
-            'booking_reference', 'checkin_date', 'checkout_date', 'status',
+            'booking_reference', 'door_code', 'checkin_date', 'checkout_date', 'status',
             'agreement_status', 'verification_status', 'portal_token', 'platform', 'webhook_data'
         );
 
@@ -663,6 +666,9 @@ class GMS_Database {
                     $update_data['guest_phone'] = function_exists('gms_sanitize_phone')
                         ? gms_sanitize_phone($data[$field])
                         : sanitize_text_field($data[$field]);
+                    break;
+                case 'door_code':
+                    $update_data['door_code'] = self::sanitizeDoorCode($data[$field]);
                     break;
                 case 'checkin_date':
                 case 'checkout_date':
@@ -1259,6 +1265,16 @@ class GMS_Database {
         return date('Y-m-d H:i:s', $timestamp);
     }
 
+    public static function sanitizeDoorCode($value) {
+        $value = preg_replace('/[^0-9]/', '', (string) $value);
+
+        if ($value === '') {
+            return '';
+        }
+
+        return substr($value, 0, 10);
+    }
+
     private static function sanitizeSignatureData($value) {
         if (empty($value)) {
             return '';
@@ -1310,6 +1326,10 @@ class GMS_Database {
 
         if (empty($row['guest_name']) && isset($row['reservation_guest_name'])) {
             $row['guest_name'] = trim($row['reservation_guest_name']);
+        }
+
+        if (isset($row['door_code'])) {
+            $row['door_code'] = trim($row['door_code']);
         }
 
         return $row;

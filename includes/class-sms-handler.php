@@ -123,6 +123,58 @@ class GMS_SMS_Handler {
         return $result;
     }
     
+    public function sendDoorCodeSMS($reservation, $door_code = '') {
+        $sanitized_code = GMS_Database::sanitizeDoorCode($door_code !== '' ? $door_code : ($reservation['door_code'] ?? ''));
+
+        if ($sanitized_code === '') {
+            return false;
+        }
+
+        $guest_phone = $reservation['guest_phone'] ?? '';
+        if (empty($guest_phone)) {
+            error_log('GMS: No phone number for reservation ' . intval($reservation['id'] ?? 0) . ' when sending door code SMS.');
+            return false;
+        }
+
+        $phone_validation = $this->validatePhoneNumber($guest_phone);
+        if (!$phone_validation['is_valid']) {
+            error_log('GMS: Invalid phone number provided for reservation ' . intval($reservation['id'] ?? 0) . ' when sending door code SMS.');
+            return false;
+        }
+
+        $template = get_option('gms_door_code_sms_template');
+        if (empty($template)) {
+            $template = 'Hi {guest_name}, your door code for {property_name} is {door_code}. Save this message for your stay. - {company_name}';
+        }
+
+        $checkin_date_raw = isset($reservation['checkin_date']) ? $reservation['checkin_date'] : '';
+
+        $replacements = array(
+            '{guest_name}' => sanitize_text_field($reservation['guest_name'] ?? ''),
+            '{property_name}' => sanitize_text_field($reservation['property_name'] ?? ''),
+            '{door_code}' => $sanitized_code,
+            '{checkin_date}' => $checkin_date_raw ? date('M j', strtotime($checkin_date_raw)) : '',
+            '{company_name}' => get_option('gms_company_name', get_option('blogname'))
+        );
+
+        $message = str_replace(array_keys($replacements), array_values($replacements), $template);
+        $message = $this->prepareMessageForSending($message);
+
+        $result = $this->sendSMS($phone_validation['sanitized'], $message);
+
+        GMS_Database::logCommunication(array(
+            'reservation_id' => intval($reservation['id'] ?? 0),
+            'guest_id' => intval($reservation['guest_id'] ?? 0),
+            'type' => 'sms',
+            'recipient' => $phone_validation['sanitized'],
+            'message' => $message,
+            'status' => $result ? 'sent' : 'failed',
+            'response_data' => array('result' => $result, 'door_code' => $sanitized_code)
+        ));
+
+        return $result;
+    }
+
     public function sendSMS($to, $message) {
         $api_username = get_option('gms_voipms_user');
         $api_password = get_option('gms_voipms_pass');

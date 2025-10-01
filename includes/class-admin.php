@@ -1279,6 +1279,7 @@ class GMS_Admin {
             'property_name' => '',
             'property_id' => '',
             'booking_reference' => '',
+            'door_code' => '',
             'checkin_date' => '',
             'checkout_date' => '',
             'status' => 'pending',
@@ -1309,6 +1310,9 @@ class GMS_Admin {
                         case 'guest_email':
                             $form_values[$key] = sanitize_email($value);
                             break;
+                        case 'door_code':
+                            $form_values[$key] = GMS_Database::sanitizeDoorCode($value);
+                            break;
                         case 'checkin_date':
                         case 'checkout_date':
                             $form_values[$key] = $this->format_datetime_for_input($value);
@@ -1331,6 +1335,10 @@ class GMS_Admin {
 
             if (!empty($form_values['guest_email']) && !is_email($form_values['guest_email'])) {
                 $errors[] = __('Please enter a valid email address.', 'guest-management-system');
+            }
+
+            if ($form_values['door_code'] !== '' && !preg_match('/^\d{4}$/', $form_values['door_code'])) {
+                $errors[] = __('Door code must be a 4-digit number.', 'guest-management-system');
             }
 
             $guest_id = 0;
@@ -1366,6 +1374,7 @@ class GMS_Admin {
                     'property_name' => $form_values['property_name'],
                     'property_id' => $form_values['property_id'],
                     'booking_reference' => $form_values['booking_reference'],
+                    'door_code' => $form_values['door_code'],
                     'checkin_date' => $this->format_datetime_for_database($form_values['checkin_date']),
                     'checkout_date' => $this->format_datetime_for_database($form_values['checkout_date']),
                     'status' => $form_values['status'],
@@ -1374,6 +1383,14 @@ class GMS_Admin {
                 $result = GMS_Database::createReservation($reservation_data);
 
                 if ($result) {
+                    if ($form_values['door_code'] !== '') {
+                        $reservation_for_sms = GMS_Database::getReservationById($result);
+                        if ($reservation_for_sms) {
+                            $sms_handler = new GMS_SMS_Handler();
+                            $sms_handler->sendDoorCodeSMS($reservation_for_sms, $form_values['door_code']);
+                        }
+                    }
+
                     $redirect_url = add_query_arg(
                         array(
                             'page' => 'guest-management-reservations',
@@ -1457,6 +1474,13 @@ class GMS_Admin {
                             <td><input name="booking_reference" type="text" id="gms_booking_reference" value="<?php echo esc_attr($form_values['booking_reference']); ?>" class="regular-text"></td>
                         </tr>
                         <tr>
+                            <th scope="row"><label for="gms_door_code"><?php esc_html_e('Door Code', 'guest-management-system'); ?></label></th>
+                            <td>
+                                <input name="door_code" type="text" id="gms_door_code" value="<?php echo esc_attr($form_values['door_code']); ?>" class="regular-text" maxlength="4" pattern="\d{4}" inputmode="numeric">
+                                <p class="description"><?php esc_html_e('Provide the 4-digit entry code for the guest.', 'guest-management-system'); ?></p>
+                            </td>
+                        </tr>
+                        <tr>
                             <th scope="row"><label for="gms_checkin_date"><?php esc_html_e('Check-in Date', 'guest-management-system'); ?></label></th>
                             <td><input name="checkin_date" type="datetime-local" id="gms_checkin_date" value="<?php echo esc_attr($form_values['checkin_date']); ?>" class="regular-text"></td>
                         </tr>
@@ -1504,6 +1528,8 @@ class GMS_Admin {
             return;
         }
 
+        $original_door_code = isset($reservation['door_code']) ? (string) $reservation['door_code'] : '';
+
 
         $list_url = add_query_arg(array('page' => 'guest-management-reservations'), admin_url('admin.php'));
 
@@ -1515,6 +1541,7 @@ class GMS_Admin {
             'property_name' => isset($reservation['property_name']) ? $reservation['property_name'] : '',
             'property_id' => isset($reservation['property_id']) ? $reservation['property_id'] : '',
             'booking_reference' => isset($reservation['booking_reference']) ? $reservation['booking_reference'] : '',
+            'door_code' => isset($reservation['door_code']) ? $reservation['door_code'] : '',
             'checkin_date' => $this->format_datetime_for_input(isset($reservation['checkin_date']) ? $reservation['checkin_date'] : ''),
             'checkout_date' => $this->format_datetime_for_input(isset($reservation['checkout_date']) ? $reservation['checkout_date'] : ''),
             'status' => isset($reservation['status']) ? $reservation['status'] : 'pending',
@@ -1560,6 +1587,9 @@ class GMS_Admin {
                     case 'guest_email':
                         $form_values[$field] = sanitize_email($value);
                         break;
+                    case 'door_code':
+                        $form_values[$field] = GMS_Database::sanitizeDoorCode($value);
+                        break;
                     case 'checkin_date':
                     case 'checkout_date':
                         $form_values[$field] = $this->format_datetime_for_input($value);
@@ -1576,6 +1606,10 @@ class GMS_Admin {
 
             if ($form_values['guest_email'] !== '' && !is_email($form_values['guest_email'])) {
                 $errors[] = __('Please enter a valid email address.', 'guest-management-system');
+            }
+
+            if ($form_values['door_code'] !== '' && !preg_match('/^\d{4}$/', $form_values['door_code'])) {
+                $errors[] = __('Door code must be a 4-digit number.', 'guest-management-system');
             }
 
             $allowed_statuses = array_keys($status_options);
@@ -1624,6 +1658,7 @@ class GMS_Admin {
                         'property_name' => $form_values['property_name'],
                         'property_id' => $form_values['property_id'],
                         'booking_reference' => $form_values['booking_reference'],
+                        'door_code' => $form_values['door_code'],
                         'checkin_date' => $this->format_datetime_for_database($form_values['checkin_date']),
                         'checkout_date' => $this->format_datetime_for_database($form_values['checkout_date']),
                         'status' => $form_values['status'],
@@ -1632,6 +1667,18 @@ class GMS_Admin {
                     $updated = GMS_Database::updateReservation($reservation_id, $update_data);
 
                     if ($updated) {
+                        $door_code_changed = ($form_values['door_code'] !== $original_door_code);
+
+                        if ($door_code_changed && $form_values['door_code'] !== '') {
+                            $reservation_for_sms = GMS_Database::getReservationById($reservation_id);
+                            if ($reservation_for_sms) {
+                                $sms_handler = new GMS_SMS_Handler();
+                                $sms_handler->sendDoorCodeSMS($reservation_for_sms, $form_values['door_code']);
+                            }
+                        }
+
+                        $original_door_code = $form_values['door_code'];
+
                         $redirect_url = add_query_arg(
                             array(
                                 'page' => 'guest-management-reservations',
@@ -1727,6 +1774,13 @@ class GMS_Admin {
                         <tr>
                             <th scope="row"><label for="gms_booking_reference_edit"><?php esc_html_e('Booking Reference', 'guest-management-system'); ?></label></th>
                             <td><input name="booking_reference" type="text" id="gms_booking_reference_edit" value="<?php echo esc_attr($form_values['booking_reference']); ?>" class="regular-text"></td>
+                        </tr>
+                        <tr>
+                            <th scope="row"><label for="gms_door_code_edit"><?php esc_html_e('Door Code', 'guest-management-system'); ?></label></th>
+                            <td>
+                                <input name="door_code" type="text" id="gms_door_code_edit" value="<?php echo esc_attr($form_values['door_code']); ?>" class="regular-text" maxlength="4" pattern="\d{4}" inputmode="numeric">
+                                <p class="description"><?php esc_html_e('Provide the 4-digit entry code for the guest.', 'guest-management-system'); ?></p>
+                            </td>
                         </tr>
                         <tr>
                             <th scope="row"><label for="gms_checkin_date_edit"><?php esc_html_e('Check-in Date', 'guest-management-system'); ?></label></th>
