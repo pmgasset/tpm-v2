@@ -166,19 +166,14 @@ class GuestManagementSystem {
             return;
         }
 
+        $this->synchronizePortalQueryState($portal_context['token']);
+
         if (function_exists('status_header')) {
             status_header(200);
         }
 
         if (function_exists('nocache_headers')) {
             nocache_headers();
-        }
-
-        global $wp_query;
-        if (is_object($wp_query)) {
-            $wp_query->is_404 = false;
-            $wp_query->is_home = false;
-            $wp_query->is_page = false;
         }
 
         $token = $portal_context['token'];
@@ -194,34 +189,9 @@ class GuestManagementSystem {
             return $preempt;
         }
 
-        if ($wp_query instanceof WP_Query) {
-            $wp_query->is_404 = false;
-            $wp_query->is_home = false;
-            $wp_query->is_page = false;
-            $wp_query->query['error'] = '';
-            $wp_query->query_vars['error'] = '';
-            $wp_query->set('guest_portal', 1);
-            $wp_query->set('guest_token', $portal_context['token']);
-        }
+        $this->synchronizePortalQueryState($portal_context['token'], $wp_query);
 
-        if (function_exists('set_query_var')) {
-            set_query_var('guest_portal', 1);
-            set_query_var('guest_token', $portal_context['token']);
-        }
-
-        global $wp;
-        if ($wp instanceof WP) {
-            $wp->query_vars['guest_portal'] = 1;
-            $wp->query_vars['guest_token'] = $portal_context['token'];
-
-            if (isset($wp->query_vars['error'])) {
-                unset($wp->query_vars['error']);
-            }
-
-            if (isset($wp->query['error'])) {
-                unset($wp->query['error']);
-            }
-        }
+        add_filter('redirect_canonical', '__return_false', 10, 2);
 
         if (function_exists('status_header')) {
             status_header(200);
@@ -231,7 +201,8 @@ class GuestManagementSystem {
             nocache_headers();
         }
 
-        return true;
+
+        return false;
     }
 
     public function enqueueScripts() {
@@ -370,6 +341,60 @@ class GuestManagementSystem {
         );
 
         return $this->portal_request;
+    }
+
+    private function synchronizePortalQueryState($token, $primary_query = null) {
+        $queries = array();
+
+        if ($primary_query instanceof WP_Query) {
+            $queries[] = $primary_query;
+        }
+
+        global $wp_query, $wp_the_query;
+
+        if ($wp_query instanceof WP_Query) {
+            $queries[] = $wp_query;
+        }
+
+        if ($wp_the_query instanceof WP_Query) {
+            $queries[] = $wp_the_query;
+        }
+
+        foreach ($queries as $query_obj) {
+            if (!$query_obj instanceof WP_Query) {
+                continue;
+            }
+
+            $query_obj->is_404 = false;
+            $query_obj->is_home = false;
+            $query_obj->is_page = false;
+            $query_obj->is_archive = false;
+            $query_obj->is_singular = false;
+            $query_obj->query['error'] = '';
+            $query_obj->query_vars['error'] = '';
+            $query_obj->set('guest_portal', 1);
+            $query_obj->set('guest_token', $token);
+        }
+
+        if (function_exists('set_query_var')) {
+            set_query_var('guest_portal', 1);
+            set_query_var('guest_token', $token);
+        }
+
+        global $wp;
+
+        if ($wp instanceof WP) {
+            $wp->query_vars['guest_portal'] = 1;
+            $wp->query_vars['guest_token'] = $token;
+
+            if (isset($wp->query_vars['error'])) {
+                unset($wp->query_vars['error']);
+            }
+
+            if (isset($wp->query) && is_array($wp->query) && isset($wp->query['error'])) {
+                unset($wp->query['error']);
+            }
+        }
     }
 
     private function extractPortalTokenFromPath($request_uri) {
