@@ -1878,11 +1878,25 @@ class GMS_Admin {
     }
 
     public function render_communications_page() {
+        if (!current_user_can('manage_options')) {
+            return;
+        }
+
         ?>
-        <div class="wrap">
-            <h1 class="wp-heading-inline"><?php esc_html_e('Communications & Logs', 'guest-management-system'); ?></h1>
+        <div class="wrap gms-messaging-wrap">
+            <h1 class="wp-heading-inline"><?php esc_html_e('Messaging Inbox', 'guest-management-system'); ?></h1>
             <hr class="wp-header-end">
-            <p><?php esc_html_e('Review automated emails, SMS activity, and other communication logs here.', 'guest-management-system'); ?></p>
+            <p class="description"><?php esc_html_e('Review guest conversations, reply in real time, and keep your team in sync across channels.', 'guest-management-system'); ?></p>
+
+            <div id="gms-messaging-app" class="gms-messaging-app" data-loading-text="<?php echo esc_attr__('Loading conversations…', 'guest-management-system'); ?>">
+                <div class="gms-messaging-app__placeholder">
+                    <span class="spinner is-active" aria-hidden="true"></span>
+                    <p><?php esc_html_e('Loading conversations…', 'guest-management-system'); ?></p>
+                    <noscript>
+                        <p><?php esc_html_e('Enable JavaScript to use the messaging inbox.', 'guest-management-system'); ?></p>
+                    </noscript>
+                </div>
+            </div>
         </div>
         <?php
     }

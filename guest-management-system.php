@@ -234,9 +234,81 @@ class GuestManagementSystem {
         if (strpos($hook, 'guest-management') === false) {
             return;
         }
+
         wp_enqueue_script('gms-admin', GMS_PLUGIN_URL . 'assets/js/admin.js', ['jquery'], GMS_VERSION, true);
         wp_enqueue_style('gms-admin', GMS_PLUGIN_URL . 'assets/css/admin.css', [], GMS_VERSION);
         wp_enqueue_media(); // For handling media uploads in settings (e.g., logo)
+
+        $is_messaging_screen = $hook === 'guest-management_page_guest-management-communications';
+
+        if ($is_messaging_screen) {
+            wp_enqueue_style('gms-messaging', GMS_PLUGIN_URL . 'assets/css/messaging.css', [], GMS_VERSION);
+            wp_enqueue_script('gms-messaging', GMS_PLUGIN_URL . 'assets/js/messaging.js', [], GMS_VERSION, true);
+
+            $template_map = array(
+                'gms_sms_template' => __('Primary SMS Template', 'guest-management-system'),
+                'gms_sms_reminder_template' => __('Reminder SMS Template', 'guest-management-system'),
+                'gms_approved_sms_template' => __('Approval SMS Template', 'guest-management-system'),
+            );
+
+            $templates = array();
+            foreach ($template_map as $option_key => $label) {
+                $raw_template = get_option($option_key, '');
+                if (empty($raw_template)) {
+                    continue;
+                }
+
+                $sanitized = trim(preg_replace('/\r\n|\r/', "\n", wp_specialchars_decode(wp_strip_all_tags($raw_template))));
+                if ($sanitized === '') {
+                    continue;
+                }
+
+                $templates[] = array(
+                    'id' => sanitize_key($option_key),
+                    'label' => $label,
+                    'content' => $sanitized,
+                );
+            }
+
+            wp_localize_script(
+                'gms-messaging',
+                'gmsMessaging',
+                array(
+                    'ajaxUrl' => admin_url('admin-ajax.php'),
+                    'nonce' => wp_create_nonce('gms_messaging_nonce'),
+                    'refreshInterval' => apply_filters('gms_messaging_refresh_interval', 20000),
+                    'dateFormat' => get_option('date_format', 'Y-m-d'),
+                    'timeFormat' => get_option('time_format', 'H:i'),
+                    'locale' => get_locale(),
+                    'templates' => $templates,
+                    'strings' => array(
+                        'searchPlaceholder' => __('Search guests, properties, or numbers…', 'guest-management-system'),
+                        'searchAction' => __('Search', 'guest-management-system'),
+                        'loading' => __('Loading…', 'guest-management-system'),
+                        'noConversations' => __('No conversations found. Try adjusting your filters.', 'guest-management-system'),
+                        'loadError' => __('Unable to load conversations. Please try again.', 'guest-management-system'),
+                        'messageLoadError' => __('Unable to load messages for this thread.', 'guest-management-system'),
+                        'sendPlaceholder' => __('Type your reply…', 'guest-management-system'),
+                        'sendLabel' => __('Send Reply', 'guest-management-system'),
+                        'markRead' => __('Mark all as read', 'guest-management-system'),
+                        'previousPage' => __('Previous conversations', 'guest-management-system'),
+                        'nextPage' => __('Next conversations', 'guest-management-system'),
+                        'templatePlaceholder' => __('Insert a template…', 'guest-management-system'),
+                        'sending' => __('Sending…', 'guest-management-system'),
+                        'sendFailed' => __('Message failed to send. Please try again.', 'guest-management-system'),
+                        'sendSuccess' => __('Message sent successfully.', 'guest-management-system'),
+                        'optimisticFailed' => __('We were unable to deliver your last message.', 'guest-management-system'),
+                        'unknownGuest' => __('Unknown Guest', 'guest-management-system'),
+                        'guestEmail' => __('Email', 'guest-management-system'),
+                        'guestPhone' => __('Phone', 'guest-management-system'),
+                        'bookingReference' => __('Booking Reference', 'guest-management-system'),
+                        'pagination' => __('Page %1$d of %2$d', 'guest-management-system'),
+                        'conversationHeading' => __('Select a conversation to view message history.', 'guest-management-system'),
+                        'emptyThread' => __('No messages yet. Start the conversation below.', 'guest-management-system'),
+                    ),
+                )
+            );
+        }
 
         $webhook_base = untrailingslashit(home_url('/webhook'));
         $webhook_urls = function_exists('gms_get_webhook_urls') ? gms_get_webhook_urls() : [];
@@ -261,8 +333,6 @@ class GuestManagementSystem {
                     'checkoutDate' => __('Check-out Date', 'guest-management-system'),
                     'statusLabel' => __('Status', 'guest-management-system'),
                     'ajaxUnavailable' => __('Unable to communicate with the server.', 'guest-management-system'),
-
-
                 ],
             ]
         );

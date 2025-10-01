@@ -1569,6 +1569,319 @@ class GMS_Database {
         return array_map(array(__CLASS__, 'formatCommunicationRow'), $rows);
     }
 
+    public static function getCommunicationThreads($args = array()) {
+        global $wpdb;
+
+        $defaults = array(
+            'page' => 1,
+            'per_page' => 20,
+            'search' => '',
+        );
+
+        $args = wp_parse_args($args, $defaults);
+        $page = max(1, intval($args['page']));
+        $per_page = max(1, min(100, intval($args['per_page'])));
+        $offset = ($page - 1) * $per_page;
+        $search = sanitize_text_field($args['search']);
+
+        $table = $wpdb->prefix . 'gms_communications';
+        $reservations_table = $wpdb->prefix . 'gms_reservations';
+        $guests_table = $wpdb->prefix . 'gms_guests';
+
+        $where = array("c.thread_key <> ''");
+        $params = array();
+
+        if ($search !== '') {
+            $like = '%' . $wpdb->esc_like($search) . '%';
+            $where[] = "(g.name LIKE %s OR g.email LIKE %s OR g.phone LIKE %s OR r.guest_name LIKE %s OR r.guest_email LIKE %s OR r.property_name LIKE %s OR c.to_number LIKE %s OR c.from_number LIKE %s)";
+            $params = array_merge($params, array_fill(0, 8, $like));
+        }
+
+        $where_sql = '';
+        if (!empty($where)) {
+            $where_sql = 'WHERE ' . implode(' AND ', $where);
+        }
+
+        if (!empty($params)) {
+            $where_sql = $wpdb->prepare($where_sql, $params);
+        }
+
+        $join_sql = "LEFT JOIN {$reservations_table} r ON r.id = c.reservation_id LEFT JOIN {$guests_table} g ON g.id = c.guest_id";
+
+        $total_sql = "SELECT COUNT(*) FROM (SELECT c.thread_key FROM {$table} c {$join_sql} {$where_sql} GROUP BY c.thread_key) threads";
+        $total = (int) $wpdb->get_var($total_sql);
+
+        $threads_sql = "
+            SELECT
+                c.thread_key,
+                MAX(c.channel) AS channel,
+                MAX(c.reservation_id) AS reservation_id,
+                MAX(c.guest_id) AS guest_id,
+                MAX(r.property_name) AS property_name,
+                MAX(r.guest_name) AS reservation_guest_name,
+                MAX(r.guest_email) AS reservation_guest_email,
+                MAX(r.guest_phone) AS reservation_guest_phone,
+                MAX(g.name) AS guest_name,
+                MAX(g.email) AS guest_email,
+                MAX(g.phone) AS guest_phone,
+                SUM(CASE WHEN c.direction = 'inbound' AND (c.read_at IS NULL OR c.read_at = '' OR c.read_at = '0000-00-00 00:00:00') THEN 1 ELSE 0 END) AS unread_count,
+                MAX(c.sent_at) AS last_message_at,
+                SUBSTRING_INDEX(MAX(CONCAT(c.sent_at, '|||', c.message)), '|||', -1) AS last_message,
+                MAX(CASE WHEN c.direction = 'outbound' THEN c.from_number ELSE c.to_number END) AS service_number,
+                MAX(CASE WHEN c.direction = 'outbound' THEN c.from_number_e164 ELSE c.to_number_e164 END) AS service_number_e164,
+                MAX(CASE WHEN c.direction = 'outbound' THEN c.to_number ELSE c.from_number END) AS guest_number,
+                MAX(CASE WHEN c.direction = 'outbound' THEN c.to_number_e164 ELSE c.from_number_e164 END) AS guest_number_e164
+            FROM {$table} c
+            {$join_sql}
+            {$where_sql}
+            GROUP BY c.thread_key
+            ORDER BY last_message_at DESC
+        ";
+
+        $threads_sql .= $wpdb->prepare(' LIMIT %d OFFSET %d', $per_page, $offset);
+
+        $rows = $wpdb->get_results($threads_sql, ARRAY_A);
+
+        $items = array();
+        if (!empty($rows)) {
+            foreach ($rows as $row) {
+                $items[] = self::normalizeThreadRow($row);
+            }
+        }
+
+        $total_pages = $per_page > 0 ? (int) ceil($total / $per_page) : 1;
+        if ($total_pages < 1) {
+            $total_pages = 1;
+        }
+
+        return array(
+            'items' => $items,
+            'total' => $total,
+            'total_pages' => $total_pages,
+            'page' => $page,
+            'per_page' => $per_page,
+        );
+    }
+
+    public static function getThreadMessages($thread_key, $args = array()) {
+        global $wpdb;
+
+        $defaults = array(
+            'page' => 1,
+            'per_page' => 50,
+            'order' => 'ASC',
+        );
+
+        $args = wp_parse_args($args, $defaults);
+        $page = max(1, intval($args['page']));
+        $per_page = max(1, min(200, intval($args['per_page'])));
+        $offset = ($page - 1) * $per_page;
+        $order = strtoupper($args['order']) === 'DESC' ? 'DESC' : 'ASC';
+
+        $thread_key = sanitize_text_field($thread_key);
+        if ($thread_key === '') {
+            return array(
+                'items' => array(),
+                'total' => 0,
+                'page' => $page,
+                'per_page' => $per_page,
+                'total_pages' => 1,
+            );
+        }
+
+        $table = $wpdb->prefix . 'gms_communications';
+
+        $query = $wpdb->prepare(
+            "SELECT * FROM {$table} WHERE thread_key = %s ORDER BY sent_at {$order}, id {$order} LIMIT %d OFFSET %d",
+            $thread_key,
+            $per_page,
+            $offset
+        );
+
+        $rows = $wpdb->get_results($query, ARRAY_A);
+        $items = array_map(array(__CLASS__, 'formatCommunicationRow'), $rows);
+
+        $total = (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$table} WHERE thread_key = %s", $thread_key));
+        $total_pages = $per_page > 0 ? (int) ceil($total / $per_page) : 1;
+        if ($total_pages < 1) {
+            $total_pages = 1;
+        }
+
+        return array(
+            'items' => $items,
+            'total' => $total,
+            'page' => $page,
+            'per_page' => $per_page,
+            'total_pages' => $total_pages,
+        );
+    }
+
+    public static function getCommunicationById($communication_id) {
+        global $wpdb;
+
+        $communication_id = intval($communication_id);
+        if ($communication_id <= 0) {
+            return null;
+        }
+
+        $table = $wpdb->prefix . 'gms_communications';
+        $row = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$table} WHERE id = %d", $communication_id), ARRAY_A);
+
+        if (!$row) {
+            return null;
+        }
+
+        return self::formatCommunicationRow($row);
+    }
+
+    public static function getCommunicationThreadContext($thread_key) {
+        global $wpdb;
+
+        $thread_key = sanitize_text_field($thread_key);
+        if ($thread_key === '') {
+            return null;
+        }
+
+        $table = $wpdb->prefix . 'gms_communications';
+        $reservations_table = $wpdb->prefix . 'gms_reservations';
+        $guests_table = $wpdb->prefix . 'gms_guests';
+
+        $sql = $wpdb->prepare(
+            "SELECT c.*, r.property_name, r.guest_name AS reservation_guest_name, r.guest_email AS reservation_guest_email, r.guest_phone AS reservation_guest_phone, r.booking_reference AS reservation_booking_reference, g.name AS guest_name, g.email AS guest_email, g.phone AS guest_phone FROM {$table} c LEFT JOIN {$reservations_table} r ON r.id = c.reservation_id LEFT JOIN {$guests_table} g ON g.id = c.guest_id WHERE c.thread_key = %s ORDER BY c.sent_at DESC, c.id DESC LIMIT 1",
+            $thread_key
+        );
+
+        $row = $wpdb->get_row($sql, ARRAY_A);
+        if (!$row) {
+            return null;
+        }
+
+        $guest_number = $row['direction'] === 'outbound' ? ($row['to_number'] ?? '') : ($row['from_number'] ?? '');
+        $guest_number_e164 = $row['direction'] === 'outbound' ? ($row['to_number_e164'] ?? '') : ($row['from_number_e164'] ?? '');
+        $service_number = $row['direction'] === 'outbound' ? ($row['from_number'] ?? '') : ($row['to_number'] ?? '');
+        $service_number_e164 = $row['direction'] === 'outbound' ? ($row['from_number_e164'] ?? '') : ($row['to_number_e164'] ?? '');
+
+        $normalized = self::normalizeThreadRow(array_merge($row, array(
+            'guest_number' => $guest_number,
+            'guest_number_e164' => $guest_number_e164,
+            'service_number' => $service_number,
+            'service_number_e164' => $service_number_e164,
+            'last_message' => $row['message'] ?? '',
+            'last_message_at' => $row['sent_at'] ?? '',
+            'unread_count' => 0,
+        )));
+
+        $normalized['reservation_id'] = intval($row['reservation_id'] ?? 0);
+        $normalized['guest_id'] = intval($row['guest_id'] ?? 0);
+        $normalized['channel'] = sanitize_key($row['channel'] ?? $normalized['channel']);
+        $normalized['reservation_guest_name'] = sanitize_text_field($row['reservation_guest_name'] ?? '');
+        $normalized['reservation_guest_email'] = sanitize_email($row['reservation_guest_email'] ?? '');
+        $normalized['reservation_guest_phone'] = sanitize_text_field($row['reservation_guest_phone'] ?? '');
+        $normalized['guest_email'] = $normalized['guest_email'] !== '' ? $normalized['guest_email'] : sanitize_email($row['guest_email'] ?? '');
+        $normalized['guest_phone'] = $normalized['guest_phone'] !== '' ? $normalized['guest_phone'] : sanitize_text_field($row['guest_phone'] ?? '');
+        $normalized['booking_reference'] = sanitize_text_field($row['reservation_booking_reference'] ?? '');
+        $normalized['last_direction'] = sanitize_key($row['direction'] ?? '');
+
+        return $normalized;
+    }
+
+    public static function markThreadAsRead($thread_key) {
+        global $wpdb;
+
+        $thread_key = sanitize_text_field($thread_key);
+        if ($thread_key === '') {
+            return 0;
+        }
+
+        $table = $wpdb->prefix . 'gms_communications';
+        $now = current_time('mysql');
+
+        $updated = $wpdb->query(
+            $wpdb->prepare(
+                "UPDATE {$table} SET read_at = %s WHERE thread_key = %s AND direction = %s AND (read_at IS NULL OR read_at = '' OR read_at = '0000-00-00 00:00:00')",
+                $now,
+                $thread_key,
+                'inbound'
+            )
+        );
+
+        if ($updated === false) {
+            return 0;
+        }
+
+        return intval($updated);
+    }
+
+    private static function normalizeThreadRow($row) {
+        if (!is_array($row)) {
+            return array();
+        }
+
+        $thread_key = sanitize_text_field($row['thread_key'] ?? '');
+        $channel = sanitize_key($row['channel'] ?? '');
+        if ($channel === '') {
+            $channel = 'sms';
+        }
+
+        $guest_name = isset($row['guest_name']) ? trim(wp_strip_all_tags($row['guest_name'])) : '';
+        $reservation_guest_name = isset($row['reservation_guest_name']) ? trim(wp_strip_all_tags($row['reservation_guest_name'])) : '';
+
+        if ($guest_name === '' && $reservation_guest_name !== '') {
+            $guest_name = $reservation_guest_name;
+        }
+
+        if ($guest_name === '') {
+            $guest_name = __('Unknown Guest', 'guest-management-system');
+        }
+
+        $guest_email = isset($row['guest_email']) ? sanitize_email($row['guest_email']) : '';
+        if ($guest_email === '' && !empty($row['reservation_guest_email'])) {
+            $guest_email = sanitize_email($row['reservation_guest_email']);
+        }
+
+        $guest_phone = isset($row['guest_phone']) ? sanitize_text_field($row['guest_phone']) : '';
+        if ($guest_phone === '' && !empty($row['reservation_guest_phone'])) {
+            $guest_phone = sanitize_text_field($row['reservation_guest_phone']);
+        }
+
+        $guest_number = isset($row['guest_number']) ? sanitize_text_field($row['guest_number']) : $guest_phone;
+        $guest_number_e164 = isset($row['guest_number_e164']) ? sanitize_text_field($row['guest_number_e164']) : self::normalizePhoneNumber($guest_number);
+
+        $service_number = isset($row['service_number']) ? sanitize_text_field($row['service_number']) : '';
+        if ($service_number === '' && !empty($row['service_number_e164'])) {
+            $service_number = sanitize_text_field($row['service_number_e164']);
+        }
+
+        $property_name = isset($row['property_name']) ? sanitize_text_field($row['property_name']) : '';
+
+        $preview = isset($row['last_message']) ? wp_strip_all_tags($row['last_message']) : '';
+        if ($preview !== '') {
+            $preview = trim(preg_replace('/\s+/', ' ', $preview));
+            $preview = wp_html_excerpt($preview, 180, '&hellip;');
+        }
+
+        return array(
+            'thread_key' => $thread_key,
+            'channel' => $channel,
+            'reservation_id' => intval($row['reservation_id'] ?? 0),
+            'guest_id' => intval($row['guest_id'] ?? 0),
+            'guest_name' => $guest_name,
+            'guest_email' => $guest_email,
+            'guest_phone' => $guest_phone,
+            'guest_number' => $guest_number,
+            'guest_number_e164' => $guest_number_e164,
+            'service_number' => $service_number,
+            'service_number_e164' => isset($row['service_number_e164']) ? sanitize_text_field($row['service_number_e164']) : self::normalizePhoneNumber($service_number),
+            'property_name' => $property_name,
+            'reservation_guest_name' => $reservation_guest_name,
+            'reservation_guest_email' => isset($row['reservation_guest_email']) ? sanitize_email($row['reservation_guest_email']) : '',
+            'reservation_guest_phone' => isset($row['reservation_guest_phone']) ? sanitize_text_field($row['reservation_guest_phone']) : '',
+            'last_message_at' => isset($row['last_message_at']) ? $row['last_message_at'] : '',
+            'last_message_preview' => $preview,
+            'unread_count' => intval($row['unread_count'] ?? 0),
+        );
+    }
+
     private static function formatCommunicationRow($row) {
         if (!is_array($row)) {
             return $row;
