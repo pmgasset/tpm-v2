@@ -201,6 +201,7 @@ class GuestManagementSystem {
             nocache_headers();
         }
 
+
         return false;
     }
 
