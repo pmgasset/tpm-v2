@@ -46,15 +46,35 @@ class GMS_Database {
             webhook_payload longtext NULL,
             created_at datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
             updated_at datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
-            PRIMARY KEY  (id),
-            KEY guest_id (guest_id),
-            KEY guest_record_id (guest_record_id),
-            KEY booking_reference (booking_reference),
-            KEY portal_token (portal_token),
-            KEY platform (platform),
-            KEY status (status)
+            PRIMARY KEY  (id)
         ) $charset_collate;";
         dbDelta($sql_reservations);
+        self::maybeAddIndexes($table_reservations, [
+            [
+                'name' => 'guest_id',
+                'columns' => ['guest_id'],
+            ],
+            [
+                'name' => 'guest_record_id',
+                'columns' => ['guest_record_id'],
+            ],
+            [
+                'name' => 'booking_reference',
+                'columns' => ['booking_reference'],
+            ],
+            [
+                'name' => 'portal_token',
+                'columns' => ['portal_token'],
+            ],
+            [
+                'name' => 'platform',
+                'columns' => ['platform'],
+            ],
+            [
+                'name' => 'status',
+                'columns' => ['status'],
+            ],
+        ]);
 
         $table_guests = $wpdb->prefix . 'gms_guests';
         $sql_guests = "CREATE TABLE $table_guests (
@@ -66,11 +86,20 @@ class GMS_Database {
             wp_user_id bigint(20) unsigned NOT NULL DEFAULT 0,
             created_at datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
             updated_at datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
-            PRIMARY KEY  (id),
-            UNIQUE KEY email (email),
-            KEY wp_user_id (wp_user_id)
+            PRIMARY KEY  (id)
         ) $charset_collate;";
         dbDelta($sql_guests);
+        self::maybeAddIndexes($table_guests, [
+            [
+                'name' => 'email',
+                'columns' => ['email'],
+                'unique' => true,
+            ],
+            [
+                'name' => 'wp_user_id',
+                'columns' => ['wp_user_id'],
+            ],
+        ]);
 
         $table_agreements = $wpdb->prefix . 'gms_guest_agreements';
         $sql_agreements = "CREATE TABLE $table_agreements (
@@ -86,11 +115,20 @@ class GMS_Database {
             signed_at datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
             created_at datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
             updated_at datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
-            PRIMARY KEY  (id),
-            UNIQUE KEY reservation_id (reservation_id),
-            KEY guest_id (guest_id)
+            PRIMARY KEY  (id)
         ) $charset_collate;";
         dbDelta($sql_agreements);
+        self::maybeAddIndexes($table_agreements, [
+            [
+                'name' => 'reservation_id',
+                'columns' => ['reservation_id'],
+                'unique' => true,
+            ],
+            [
+                'name' => 'guest_id',
+                'columns' => ['guest_id'],
+            ],
+        ]);
 
         $table_verification = $wpdb->prefix . 'gms_identity_verification';
         $sql_verification = "CREATE TABLE $table_verification (
@@ -104,11 +142,20 @@ class GMS_Database {
             verified_at datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
             created_at datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
             updated_at datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
-            PRIMARY KEY  (id),
-            UNIQUE KEY stripe_verification_session_id (stripe_verification_session_id),
-            KEY reservation_id (reservation_id)
+            PRIMARY KEY  (id)
         ) $charset_collate;";
         dbDelta($sql_verification);
+        self::maybeAddIndexes($table_verification, [
+            [
+                'name' => 'stripe_verification_session_id',
+                'columns' => ['stripe_verification_session_id'],
+                'unique' => true,
+            ],
+            [
+                'name' => 'reservation_id',
+                'columns' => ['reservation_id'],
+            ],
+        ]);
 
         $table_communications = $wpdb->prefix . 'gms_communications';
         $sql_communications = "CREATE TABLE $table_communications (
@@ -133,19 +180,51 @@ class GMS_Database {
             read_at datetime NULL DEFAULT NULL,
             sent_at datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
             created_at datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
-            PRIMARY KEY  (id),
-            KEY reservation_id (reservation_id),
-            KEY guest_id (guest_id),
-            KEY communication_type (communication_type),
-            KEY delivery_status (delivery_status),
-            KEY channel (channel),
-            KEY direction (direction),
-            KEY thread_key (thread_key),
-            KEY external_id (external_id),
-            KEY from_number_e164 (from_number_e164),
-            KEY to_number_e164 (to_number_e164)
+            PRIMARY KEY  (id)
         ) $charset_collate;";
         dbDelta($sql_communications);
+        self::maybeAddIndexes($table_communications, [
+            [
+                'name' => 'reservation_id',
+                'columns' => ['reservation_id'],
+            ],
+            [
+                'name' => 'guest_id',
+                'columns' => ['guest_id'],
+            ],
+            [
+                'name' => 'communication_type',
+                'columns' => ['communication_type'],
+            ],
+            [
+                'name' => 'delivery_status',
+                'columns' => ['delivery_status'],
+            ],
+            [
+                'name' => 'channel',
+                'columns' => ['channel'],
+            ],
+            [
+                'name' => 'direction',
+                'columns' => ['direction'],
+            ],
+            [
+                'name' => 'thread_key',
+                'columns' => ['thread_key'],
+            ],
+            [
+                'name' => 'external_id',
+                'columns' => ['external_id'],
+            ],
+            [
+                'name' => 'from_number_e164',
+                'columns' => ['from_number_e164'],
+            ],
+            [
+                'name' => 'to_number_e164',
+                'columns' => ['to_number_e164'],
+            ],
+        ]);
 
         $table_templates = $wpdb->prefix . 'gms_message_templates';
         $sql_templates = "CREATE TABLE $table_templates (
@@ -156,11 +235,19 @@ class GMS_Database {
             is_active tinyint(1) NOT NULL DEFAULT 1,
             created_at datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
             updated_at datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
-            PRIMARY KEY  (id),
-            KEY channel (channel),
-            KEY is_active (is_active)
+            PRIMARY KEY  (id)
         ) $charset_collate;";
         dbDelta($sql_templates);
+        self::maybeAddIndexes($table_templates, [
+            [
+                'name' => 'channel',
+                'columns' => ['channel'],
+            ],
+            [
+                'name' => 'is_active',
+                'columns' => ['is_active'],
+            ],
+        ]);
 
         update_option(self::OPTION_DB_VERSION, self::DB_VERSION);
     }
@@ -207,6 +294,63 @@ class GMS_Database {
 
         self::backfillCommunicationNumbers($table_name);
         self::backfillCommunicationThreads($table_name);
+    }
+
+    private static function maybeAddIndexes($table, array $indexes) {
+        global $wpdb;
+
+        if (!self::tableExists($table)) {
+            return;
+        }
+
+        foreach ($indexes as $index) {
+            $name = sanitize_key($index['name'] ?? '');
+            $columns = isset($index['columns']) && is_array($index['columns']) ? $index['columns'] : array();
+
+            if ($name === '' || empty($columns)) {
+                continue;
+            }
+
+            if (self::indexExists($table, $name)) {
+                continue;
+            }
+
+            $column_sql = array();
+            foreach ($columns as $column) {
+                $sanitized = preg_replace('/[^A-Za-z0-9_]/', '', (string) $column);
+                if ($sanitized === '') {
+                    continue 2;
+                }
+                $column_sql[] = "`{$sanitized}`";
+            }
+
+            if (empty($column_sql)) {
+                continue;
+            }
+
+            $unique = !empty($index['unique']) ? 'UNIQUE ' : '';
+            $sql = sprintf(
+                'ALTER TABLE %s ADD %sKEY `%s` (%s)',
+                $table,
+                $unique,
+                $name,
+                implode(', ', $column_sql)
+            );
+
+            $wpdb->query($sql);
+        }
+    }
+
+    private static function indexExists($table, $index_name) {
+        global $wpdb;
+
+        $sql = $wpdb->prepare(
+            'SELECT 1 FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s AND INDEX_NAME = %s LIMIT 1',
+            $table,
+            $index_name
+        );
+
+        return (bool) $wpdb->get_var($sql);
     }
 
     private static function maybeSeedMessageTemplates() {
