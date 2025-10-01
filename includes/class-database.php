@@ -1772,10 +1772,9 @@ class GMS_Database {
     public static function findReservationByPhone($phone) {
         global $wpdb;
 
-        $normalized = self::normalizePhoneNumber($phone);
-        $digits = self::normalizePhoneDigits($phone);
+        $variations = self::buildPhoneSearchVariations($phone);
 
-        if ($normalized === '' && $digits === '') {
+        if (empty($variations['normalized']) && empty($variations['digits'])) {
             return null;
         }
 
@@ -1784,17 +1783,18 @@ class GMS_Database {
         $conditions = array();
         $params = array();
 
-        if ($normalized !== '') {
+        foreach ($variations['normalized'] as $value) {
             $conditions[] = 'guest_phone = %s';
-            $params[] = $normalized;
-
-            $conditions[] = 'guest_phone = %s';
-            $params[] = ltrim($normalized, '+');
+            $params[] = $value;
         }
 
-        if ($digits !== '') {
-            $conditions[] = "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(guest_phone, '+', ''), '-', ''), ' ', ''), '(', ''), ')', ''), '.', '') LIKE %s";
-            $params[] = '%' . $digits . '%';
+        if (!empty($variations['digits'])) {
+            $sanitized_guest_phone = "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(guest_phone, '+', ''), '-', ''), ' ', ''), '(', ''), ')', ''), '.', '')";
+
+            foreach ($variations['digits'] as $digits) {
+                $conditions[] = $sanitized_guest_phone . ' LIKE %s';
+                $params[] = '%' . $digits . '%';
+            }
         }
 
         if (empty($conditions)) {
@@ -1815,10 +1815,9 @@ class GMS_Database {
     public static function findGuestByPhone($phone) {
         global $wpdb;
 
-        $normalized = self::normalizePhoneNumber($phone);
-        $digits = self::normalizePhoneDigits($phone);
+        $variations = self::buildPhoneSearchVariations($phone);
 
-        if ($normalized === '' && $digits === '') {
+        if (empty($variations['normalized']) && empty($variations['digits'])) {
             return null;
         }
 
@@ -1827,17 +1826,18 @@ class GMS_Database {
         $conditions = array();
         $params = array();
 
-        if ($normalized !== '') {
+        foreach ($variations['normalized'] as $value) {
             $conditions[] = 'phone = %s';
-            $params[] = $normalized;
-
-            $conditions[] = 'phone = %s';
-            $params[] = ltrim($normalized, '+');
+            $params[] = $value;
         }
 
-        if ($digits !== '') {
-            $conditions[] = "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(phone, '+', ''), '-', ''), ' ', ''), '(', ''), ')', ''), '.', '') LIKE %s";
-            $params[] = '%' . $digits . '%';
+        if (!empty($variations['digits'])) {
+            $sanitized_guest_phone = "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(phone, '+', ''), '-', ''), ' ', ''), '(', ''), ')', ''), '.', '')";
+
+            foreach ($variations['digits'] as $digits) {
+                $conditions[] = $sanitized_guest_phone . ' LIKE %s';
+                $params[] = '%' . $digits . '%';
+            }
         }
 
         if (empty($conditions)) {
@@ -1973,6 +1973,40 @@ class GMS_Database {
         }
 
         return substr($number, -15);
+    }
+
+    private static function buildPhoneSearchVariations($phone) {
+        $variations = array(
+            'normalized' => array(),
+            'digits' => array(),
+        );
+
+        $normalized = self::normalizePhoneNumber($phone);
+        if ($normalized !== '') {
+            $variations['normalized'][] = $normalized;
+
+            $trimmed = ltrim($normalized, '+');
+            if ($trimmed !== '' && $trimmed !== $normalized) {
+                $variations['normalized'][] = $trimmed;
+            }
+        }
+
+        $digits = self::normalizePhoneDigits($phone);
+        if ($digits !== '') {
+            $variations['digits'][] = $digits;
+
+            if (strlen($digits) > 10) {
+                $last_ten = substr($digits, -10);
+                if ($last_ten !== '') {
+                    $variations['digits'][] = $last_ten;
+                }
+            }
+        }
+
+        $variations['normalized'] = array_values(array_unique($variations['normalized']));
+        $variations['digits'] = array_values(array_unique($variations['digits']));
+
+        return $variations;
     }
 
     public static function getCommunicationsForGuest($guest_id, $args = array()) {
