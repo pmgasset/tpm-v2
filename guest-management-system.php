@@ -25,8 +25,9 @@ define('GMS_PLUGIN_PATH', plugin_dir_path(__FILE__));
 define('GMS_VERSION', '1.1.0');
 
 class GuestManagementSystem {
-    
+
     private static $instance = null;
+    private $portal_request = null;
     
     public static function getInstance() {
         if (self::$instance === null) {
@@ -158,32 +159,53 @@ class GuestManagementSystem {
     }
     
     public function handleGuestPortal() {
-        if (get_query_var('guest_portal')) {
-            $token = get_query_var('guest_token');
-            if ($token) {
-                GMS_Guest_Portal::displayPortal($token);
-                exit;
-            }
+        $portal_context = $this->resolvePortalRequest();
+
+        if (!$portal_context['is_portal']) {
+            return;
         }
+
+        if (function_exists('status_header')) {
+            status_header(200);
+        }
+
+        if (function_exists('nocache_headers')) {
+            nocache_headers();
+        }
+
+        global $wp_query;
+        if (is_object($wp_query)) {
+            $wp_query->is_404 = false;
+            $wp_query->is_home = false;
+            $wp_query->is_page = false;
+        }
+
+        $token = $portal_context['token'];
+
+        GMS_Guest_Portal::displayPortal($token);
+        exit;
     }
-    
+
     public function enqueueScripts() {
-        if (get_query_var('guest_portal')) {
-            wp_enqueue_script('stripe-js', 'https://js.stripe.com/v3/', [], null, true);
-            wp_enqueue_script('gms-guest-portal', GMS_PLUGIN_URL . 'assets/js/guest-portal.js', ['jquery', 'stripe-js'], GMS_VERSION, true);
-            wp_enqueue_style('gms-guest-portal', GMS_PLUGIN_URL . 'assets/css/guest-portal.css', [], GMS_VERSION);
-            
-            $token = get_query_var('guest_token');
-            $reservation = GMS_Database::getReservationByToken($token);
-            
-            // Pass data from PHP to JavaScript securely
-            wp_localize_script('gms-guest-portal', 'gmsConfig', array(
-                'ajaxUrl' => admin_url('admin-ajax.php'),
-                'nonce' => wp_create_nonce('gms_guest_nonce'),
-                'stripeKey' => get_option('gms_stripe_pk'),
-                'reservationId' => $reservation ? $reservation['id'] : 0
-            ));
+        $portal_context = $this->resolvePortalRequest();
+
+        if (!$portal_context['is_portal']) {
+            return;
         }
+
+        wp_enqueue_script('stripe-js', 'https://js.stripe.com/v3/', [], null, true);
+        wp_enqueue_script('gms-guest-portal', GMS_PLUGIN_URL . 'assets/js/guest-portal.js', ['jquery', 'stripe-js'], GMS_VERSION, true);
+        wp_enqueue_style('gms-guest-portal', GMS_PLUGIN_URL . 'assets/css/guest-portal.css', [], GMS_VERSION);
+
+        $reservation = GMS_Database::getReservationByToken($portal_context['token']);
+
+        // Pass data from PHP to JavaScript securely
+        wp_localize_script('gms-guest-portal', 'gmsConfig', array(
+            'ajaxUrl' => admin_url('admin-ajax.php'),
+            'nonce' => wp_create_nonce('gms_guest_nonce'),
+            'stripeKey' => get_option('gms_stripe_pk'),
+            'reservationId' => $reservation ? $reservation['id'] : 0
+        ));
     }
     
     public function enqueueAdminScripts($hook) {
@@ -243,6 +265,109 @@ class GuestManagementSystem {
 
     private function getDefaultApprovedSMSTemplate() {
         return 'Your stay at {property_name} is approved! Finish your check-in tasks here: {portal_link} - {company_name}';
+    }
+
+    private function resolvePortalRequest() {
+        if ($this->portal_request !== null) {
+            return $this->portal_request;
+        }
+
+        $is_portal = false;
+        $token = '';
+
+        $query_flag = get_query_var('guest_portal');
+        if (!empty($query_flag)) {
+            $token = (string) get_query_var('guest_token');
+            if ($token !== '') {
+                $is_portal = true;
+            }
+        }
+
+        if (!$is_portal && isset($_GET['guest_portal'])) {
+            $raw_flag = strtolower(trim(wp_unslash($_GET['guest_portal'])));
+            $truthy_flags = array('1', 'true', 'yes', 'on');
+
+            if (in_array($raw_flag, $truthy_flags, true)) {
+                $token = isset($_GET['guest_token']) ? wp_unslash($_GET['guest_token']) : '';
+                if ($token !== '') {
+                    $is_portal = true;
+                }
+            }
+        }
+
+        if (!$is_portal && isset($_SERVER['REQUEST_URI'])) {
+            $extracted = $this->extractPortalTokenFromPath(wp_unslash($_SERVER['REQUEST_URI']));
+            if ($extracted !== '') {
+                $token = $extracted;
+                $is_portal = true;
+            }
+        }
+
+        if ($is_portal) {
+            $token = sanitize_text_field($token);
+
+            if ($token === '') {
+                $is_portal = false;
+            }
+        }
+
+        if ($is_portal && function_exists('set_query_var')) {
+            set_query_var('guest_portal', 1);
+            set_query_var('guest_token', $token);
+        }
+
+        $this->portal_request = array(
+            'is_portal' => $is_portal,
+            'token' => $is_portal ? $token : ''
+        );
+
+        return $this->portal_request;
+    }
+
+    private function extractPortalTokenFromPath($request_uri) {
+        if ($request_uri === '') {
+            return '';
+        }
+
+        $parsed_request = wp_parse_url($request_uri);
+        $path = isset($parsed_request['path']) ? trim($parsed_request['path'], '/') : '';
+
+        if ($path === '') {
+            return '';
+        }
+
+        $home_path = '';
+        $home_parts = wp_parse_url(home_url('/'));
+        if ($home_parts && !empty($home_parts['path'])) {
+            $home_path = trim($home_parts['path'], '/');
+        }
+
+        if ($home_path !== '' && strpos($path, $home_path) === 0) {
+            $path = trim(substr($path, strlen($home_path)), '/');
+        }
+
+        if ($path === '') {
+            return '';
+        }
+
+        $prefix = 'guest-portal/';
+
+        if (strpos($path, $prefix) !== 0) {
+            return '';
+        }
+
+        $token = substr($path, strlen($prefix));
+        $token = trim($token, '/');
+
+        if ($token === '') {
+            return '';
+        }
+
+        if (strpos($token, '/') !== false) {
+            return '';
+        }
+
+        return rawurldecode($token);
     }
 }
 
