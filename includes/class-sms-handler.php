@@ -69,6 +69,7 @@ class GMS_SMS_Handler implements GMS_Messaging_Channel_Interface {
         if (!$this->isVoipmsConfigured()) {
             return array(
                 'success' => false,
+                'status' => 'error',
                 'message' => 'VoIP.ms credentials are not configured.',
                 'processed' => 0,
                 'duplicates' => 0,
@@ -80,7 +81,17 @@ class GMS_SMS_Handler implements GMS_Messaging_Channel_Interface {
         $fetch = $this->fetchVoipmsInbox($args);
 
         if (!$fetch['success']) {
-            return $fetch;
+            return array_merge(
+                array(
+                    'success' => false,
+                    'status' => 'error',
+                    'processed' => 0,
+                    'duplicates' => 0,
+                    'errors' => isset($fetch['errors']) ? intval($fetch['errors']) : 0,
+                    'total' => 0,
+                ),
+                $fetch
+            );
         }
 
         $processed = 0;
@@ -114,10 +125,16 @@ class GMS_SMS_Handler implements GMS_Messaging_Channel_Interface {
             update_option(self::OPTION_LAST_SYNC, current_time('mysql', true));
         }
 
-        $success = ($processed > 0) || ($duplicates > 0 && $errors === 0);
+        $success = ($errors === 0);
+        if ($success) {
+            $status = ($processed === 0 && $duplicates === 0) ? 'noop' : 'success';
+        } else {
+            $status = ($processed > 0 || $duplicates > 0) ? 'partial' : 'error';
+        }
 
         return array(
             'success' => $success,
+            'status' => $status,
             'processed' => $processed,
             'duplicates' => $duplicates,
             'errors' => $errors,
@@ -160,10 +177,16 @@ class GMS_SMS_Handler implements GMS_Messaging_Channel_Interface {
             update_option(self::OPTION_LAST_SYNC, current_time('mysql', true));
         }
 
-        $success = ($processed > 0) || ($duplicates > 0 && $errors === 0);
+        $success = ($errors === 0);
+        if ($success) {
+            $status = ($processed === 0 && $duplicates === 0) ? 'noop' : 'success';
+        } else {
+            $status = ($processed > 0 || $duplicates > 0) ? 'partial' : 'error';
+        }
 
         return array(
             'success' => $success,
+            'status' => $status,
             'processed' => $processed,
             'duplicates' => $duplicates,
             'errors' => $errors,
@@ -176,12 +199,16 @@ class GMS_SMS_Handler implements GMS_Messaging_Channel_Interface {
         $result = $this->syncProviderInbox($assoc_args);
 
         if ($result['success']) {
-            \WP_CLI::success(sprintf(
-                'Processed %d message(s) (%d duplicates, %d errors).',
-                $result['processed'],
-                $result['duplicates'],
-                $result['errors']
-            ));
+            if (($result['status'] ?? '') === 'noop') {
+                \WP_CLI::success('No new messages to process.');
+            } else {
+                \WP_CLI::success(sprintf(
+                    'Processed %d message(s) (%d duplicates, %d errors).',
+                    $result['processed'],
+                    $result['duplicates'],
+                    $result['errors']
+                ));
+            }
         } else {
             $message = $result['message'] ?? 'No messages processed.';
             \WP_CLI::warning($message);

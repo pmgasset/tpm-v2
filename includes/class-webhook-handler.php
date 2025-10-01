@@ -223,7 +223,15 @@ class GMS_Webhook_Handler {
 
         $result = $handler->ingestWebhookPayload($payload, $request);
 
-        $status = !empty($result['success']) ? 200 : 400;
+        $status = 200;
+
+        if (!empty($result['errors'])) {
+            $status = 400;
+        }
+
+        if (!empty($result['status']) && in_array($result['status'], array('error', 'partial'), true)) {
+            $status = 400;
+        }
 
         return new WP_REST_Response($result, $status);
     }
