@@ -321,8 +321,25 @@ class GMS_SMS_Handler implements GMS_Messaging_Channel_Interface {
     }
 
     private function normalizeVoipmsMessage(array $message) {
-        $from = $message['from'] ?? $message['src'] ?? $message['contact'] ?? '';
-        $to = $message['to'] ?? $message['dst'] ?? $message['did'] ?? $this->getConfiguredDid();
+        $from_source = $message['from'] ?? $message['src'] ?? $message['contact'] ?? '';
+        $to_source = $message['to'] ?? $message['dst'] ?? $message['did'] ?? $this->getConfiguredDid();
+
+        $from = $this->extractPhoneNumberField($from_source);
+        if ($from === '' && !is_array($from_source)) {
+            $from = trim((string) $from_source);
+        }
+
+        $to = $this->extractPhoneNumberField($to_source);
+        if ($to === '') {
+            if (!is_array($to_source)) {
+                $to = trim((string) $to_source);
+            }
+
+            if ($to === '') {
+                $to = $this->getConfiguredDid();
+            }
+        }
+
         $body = $message['message'] ?? $message['body'] ?? $message['text'] ?? '';
 
         $external_id = (string) ($message['id'] ?? $message['sms_id'] ?? $message['message_id'] ?? '');
@@ -331,7 +348,7 @@ class GMS_SMS_Handler implements GMS_Messaging_Channel_Interface {
             $hash_source = array(
                 $from,
                 $to,
-                $message['date'] ?? $message['timestamp'] ?? '',
+                $message['date'] ?? $message['timestamp'] ?? $message['received_at'] ?? '',
                 $body,
             );
 
@@ -348,7 +365,7 @@ class GMS_SMS_Handler implements GMS_Messaging_Channel_Interface {
             'from_e164' => GMS_Database::normalizePhoneNumber($from),
             'to_e164' => GMS_Database::normalizePhoneNumber($to),
             'body' => (string) $body,
-            'timestamp' => $this->sanitizeTimestamp($message['date'] ?? $message['timestamp'] ?? $message['created'] ?? ''),
+            'timestamp' => $this->sanitizeTimestamp($message['date'] ?? $message['timestamp'] ?? $message['created'] ?? $message['received_at'] ?? ''),
             'direction' => $direction,
             'raw' => $message,
         );
@@ -495,6 +512,10 @@ class GMS_SMS_Handler implements GMS_Messaging_Channel_Interface {
                 }
             }
 
+            if ($this->hasMessageIndicators($candidate)) {
+                break;
+            }
+
             $envelope_key = $this->detectPayloadEnvelopeKey($candidate);
             if ($envelope_key === null) {
                 break;
@@ -516,14 +537,20 @@ class GMS_SMS_Handler implements GMS_Messaging_Channel_Interface {
     }
 
     private function detectPayloadEnvelopeKey(array $payload) {
-        $preferred_keys = array('payload', 'sms', 'data', 'result');
+        $preferred_keys = array('body', 'payload', 'sms', 'data', 'result');
         foreach ($preferred_keys as $key) {
             if (isset($payload[$key]) && is_array($payload[$key])) {
                 return $key;
             }
         }
 
+        $message_collection_keys = array('to', 'from', 'media', 'attachments', 'recipients');
+
         foreach ($payload as $key => $value) {
+            if (in_array($key, $message_collection_keys, true)) {
+                continue;
+            }
+
             if (is_array($value) && $this->isSequentialArray($value)) {
                 $has_arrays = false;
                 foreach ($value as $item) {
@@ -549,7 +576,69 @@ class GMS_SMS_Handler implements GMS_Messaging_Channel_Interface {
 
         return array_keys($value) === range(0, count($value) - 1);
     }
-    
+
+    private function hasMessageIndicators(array $candidate) {
+        $indicator_keys = array('text', 'message', 'body', 'from', 'to', 'src', 'dst', 'direction');
+
+        foreach ($indicator_keys as $key) {
+            if (!array_key_exists($key, $candidate)) {
+                continue;
+            }
+
+            $value = $candidate[$key];
+
+            if (is_array($value)) {
+                if (in_array($key, array('from', 'to'), true) && !empty($value)) {
+                    return true;
+                }
+
+                continue;
+            }
+
+            if (trim((string) $value) !== '') {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function extractPhoneNumberField($value) {
+        if (is_string($value)) {
+            $value = trim($value);
+
+            if ($value !== '' && preg_match('/[0-9]/', $value)) {
+                return $value;
+            }
+
+            return '';
+        }
+
+        if (!is_array($value) || empty($value)) {
+            return '';
+        }
+
+        $preferred_keys = array('phone_number', 'number', 'phone', 'value', 'e164');
+
+        foreach ($preferred_keys as $key) {
+            if (isset($value[$key])) {
+                $candidate = $this->extractPhoneNumberField($value[$key]);
+                if ($candidate !== '') {
+                    return $candidate;
+                }
+            }
+        }
+
+        foreach ($value as $item) {
+            $candidate = $this->extractPhoneNumberField($item);
+            if ($candidate !== '') {
+                return $candidate;
+            }
+        }
+
+        return '';
+    }
+
     public function sendWelcomeSMS($reservation) {
         if (empty($reservation['guest_phone'])) {
             error_log('GMS: No phone number for reservation ' . intval($reservation['id'] ?? 0));
