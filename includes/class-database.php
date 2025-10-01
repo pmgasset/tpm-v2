@@ -2058,7 +2058,7 @@ class GMS_Database {
 
         if ($search !== '') {
             $like = '%' . $wpdb->esc_like($search) . '%';
-            $where[] = "(g.name LIKE %s OR g.email LIKE %s OR g.phone LIKE %s OR r.guest_name LIKE %s OR r.guest_email LIKE %s OR r.property_name LIKE %s OR c.to_number LIKE %s OR c.from_number LIKE %s)";
+            $where[] = "(TRIM(CONCAT_WS(' ', g.first_name, g.last_name)) LIKE %s OR g.email LIKE %s OR g.phone LIKE %s OR r.guest_name LIKE %s OR r.guest_email LIKE %s OR r.property_name LIKE %s OR c.to_number LIKE %s OR c.from_number LIKE %s)";
             $params = array_merge($params, array_fill(0, 8, $like));
         }
 
@@ -2086,7 +2086,7 @@ class GMS_Database {
                 MAX(r.guest_name) AS reservation_guest_name,
                 MAX(r.guest_email) AS reservation_guest_email,
                 MAX(r.guest_phone) AS reservation_guest_phone,
-                MAX(g.name) AS guest_name,
+                MAX(TRIM(CONCAT_WS(' ', g.first_name, g.last_name))) AS guest_name,
                 MAX(g.email) AS guest_email,
                 MAX(g.phone) AS guest_phone,
                 SUM(CASE WHEN c.direction = 'inbound' AND (c.read_at IS NULL OR c.read_at = '' OR c.read_at = '0000-00-00 00:00:00') THEN 1 ELSE 0 END) AS unread_count,
@@ -2212,7 +2212,7 @@ class GMS_Database {
         $guests_table = $wpdb->prefix . 'gms_guests';
 
         $sql = $wpdb->prepare(
-            "SELECT c.*, r.property_name, r.guest_name AS reservation_guest_name, r.guest_email AS reservation_guest_email, r.guest_phone AS reservation_guest_phone, r.booking_reference AS reservation_booking_reference, g.name AS guest_name, g.email AS guest_email, g.phone AS guest_phone FROM {$table} c LEFT JOIN {$reservations_table} r ON r.id = c.reservation_id LEFT JOIN {$guests_table} g ON g.id = c.guest_id WHERE c.thread_key = %s ORDER BY c.sent_at DESC, c.id DESC LIMIT 1",
+            "SELECT c.*, r.property_name, r.guest_name AS reservation_guest_name, r.guest_email AS reservation_guest_email, r.guest_phone AS reservation_guest_phone, r.booking_reference AS reservation_booking_reference, TRIM(CONCAT_WS(' ', g.first_name, g.last_name)) AS guest_name, g.email AS guest_email, g.phone AS guest_phone FROM {$table} c LEFT JOIN {$reservations_table} r ON r.id = c.reservation_id LEFT JOIN {$guests_table} g ON g.id = c.guest_id WHERE c.thread_key = %s ORDER BY c.sent_at DESC, c.id DESC LIMIT 1",
             $thread_key
         );
 
