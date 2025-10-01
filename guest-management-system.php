@@ -245,31 +245,6 @@ class GuestManagementSystem {
             wp_enqueue_style('gms-messaging', GMS_PLUGIN_URL . 'assets/css/messaging.css', [], GMS_VERSION);
             wp_enqueue_script('gms-messaging', GMS_PLUGIN_URL . 'assets/js/messaging.js', [], GMS_VERSION, true);
 
-            $template_map = array(
-                'gms_sms_template' => __('Primary SMS Template', 'guest-management-system'),
-                'gms_sms_reminder_template' => __('Reminder SMS Template', 'guest-management-system'),
-                'gms_approved_sms_template' => __('Approval SMS Template', 'guest-management-system'),
-            );
-
-            $templates = array();
-            foreach ($template_map as $option_key => $label) {
-                $raw_template = get_option($option_key, '');
-                if (empty($raw_template)) {
-                    continue;
-                }
-
-                $sanitized = trim(preg_replace('/\r\n|\r/', "\n", wp_specialchars_decode(wp_strip_all_tags($raw_template))));
-                if ($sanitized === '') {
-                    continue;
-                }
-
-                $templates[] = array(
-                    'id' => sanitize_key($option_key),
-                    'label' => $label,
-                    'content' => $sanitized,
-                );
-            }
-
             wp_localize_script(
                 'gms-messaging',
                 'gmsMessaging',
@@ -280,7 +255,6 @@ class GuestManagementSystem {
                     'dateFormat' => get_option('date_format', 'Y-m-d'),
                     'timeFormat' => get_option('time_format', 'H:i'),
                     'locale' => get_locale(),
-                    'templates' => $templates,
                     'strings' => array(
                         'searchPlaceholder' => __('Search guests, properties, or numbers…', 'guest-management-system'),
                         'searchAction' => __('Search', 'guest-management-system'),
@@ -294,6 +268,12 @@ class GuestManagementSystem {
                         'previousPage' => __('Previous conversations', 'guest-management-system'),
                         'nextPage' => __('Next conversations', 'guest-management-system'),
                         'templatePlaceholder' => __('Insert a template…', 'guest-management-system'),
+                        'templateSearchPlaceholder' => __('Search templates…', 'guest-management-system'),
+                        'templateLoading' => __('Loading templates…', 'guest-management-system'),
+                        'templateEmpty' => __('No templates available for this channel yet.', 'guest-management-system'),
+                        'templateEmptySearch' => __('No templates match your search.', 'guest-management-system'),
+                        'templateLoadError' => __('Unable to load templates. Please try again.', 'guest-management-system'),
+                        'templateUnavailable' => __('Select a conversation to browse templates.', 'guest-management-system'),
                         'sending' => __('Sending…', 'guest-management-system'),
                         'sendFailed' => __('Message failed to send. Please try again.', 'guest-management-system'),
                         'sendSuccess' => __('Message sent successfully.', 'guest-management-system'),

@@ -12,7 +12,7 @@ if (!defined('ABSPATH')) {
 class GMS_Database {
 
     const GUEST_PLACEHOLDER_DOMAIN = 'guest.invalid';
-    const DB_VERSION = '1.2.0';
+    const DB_VERSION = '1.3.0';
     const OPTION_DB_VERSION = 'gms_db_version';
 
     public function __construct() {
@@ -147,6 +147,21 @@ class GMS_Database {
         ) $charset_collate;";
         dbDelta($sql_communications);
 
+        $table_templates = $wpdb->prefix . 'gms_message_templates';
+        $sql_templates = "CREATE TABLE $table_templates (
+            id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            label varchar(191) NOT NULL DEFAULT '',
+            channel varchar(50) NOT NULL DEFAULT 'sms',
+            content text NOT NULL,
+            is_active tinyint(1) NOT NULL DEFAULT 1,
+            created_at datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
+            updated_at datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
+            PRIMARY KEY  (id),
+            KEY channel (channel),
+            KEY is_active (is_active)
+        ) $charset_collate;";
+        dbDelta($sql_templates);
+
         update_option(self::OPTION_DB_VERSION, self::DB_VERSION);
     }
 
@@ -159,6 +174,7 @@ class GMS_Database {
 
         self::createTables();
         self::migrateCommunicationsTable($installed);
+        self::maybeSeedMessageTemplates();
 
         update_option(self::OPTION_DB_VERSION, self::DB_VERSION);
     }
@@ -191,6 +207,62 @@ class GMS_Database {
 
         self::backfillCommunicationNumbers($table_name);
         self::backfillCommunicationThreads($table_name);
+    }
+
+    private static function maybeSeedMessageTemplates() {
+        global $wpdb;
+
+        $table = $wpdb->prefix . 'gms_message_templates';
+
+        if (!self::tableExists($table)) {
+            return;
+        }
+
+        $existing = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$table}");
+        if ($existing > 0) {
+            return;
+        }
+
+        $now = current_time('mysql');
+        $option_map = array(
+            'gms_sms_template' => array(
+                'label' => __('Welcome SMS Template', 'guest-management-system'),
+                'channel' => 'sms',
+            ),
+            'gms_approved_sms_template' => array(
+                'label' => __('Reservation Approved SMS Template', 'guest-management-system'),
+                'channel' => 'sms',
+            ),
+            'gms_sms_reminder_template' => array(
+                'label' => __('Reminder SMS Template', 'guest-management-system'),
+                'channel' => 'sms',
+            ),
+        );
+
+        foreach ($option_map as $option_key => $meta) {
+            $raw = get_option($option_key, '');
+            if ($raw === '') {
+                continue;
+            }
+
+            $content = self::normalizeTemplateContent($raw);
+            if ($content === '') {
+                continue;
+            }
+
+            $wpdb->insert(
+                $table,
+                array(
+                    'label' => sanitize_text_field($meta['label']),
+                    'channel' => sanitize_key($meta['channel']),
+                    'content' => $content,
+                    'is_active' => 1,
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ),
+                array('%s', '%s', '%s', '%d', '%s', '%s')
+            );
+        }
     }
 
     private static function backfillCommunicationNumbers($table_name) {
@@ -289,6 +361,255 @@ class GMS_Database {
         $result = $wpdb->get_var($sql);
 
         return $result === $table_name;
+    }
+
+    private static function normalizeTemplateContent($content) {
+        $content = sanitize_textarea_field((string) $content);
+        $content = preg_replace('/\r\n?|\r/', "\n", $content);
+
+        return trim($content);
+    }
+
+    private static function formatMessageTemplateRow($row) {
+        return array(
+            'id' => intval($row['id'] ?? 0),
+            'label' => sanitize_text_field($row['label'] ?? ''),
+            'channel' => sanitize_key($row['channel'] ?? ''),
+            'content' => self::normalizeTemplateContent($row['content'] ?? ''),
+            'is_active' => intval($row['is_active'] ?? 0) === 1,
+            'created_at' => isset($row['created_at']) ? sanitize_text_field($row['created_at']) : '',
+            'updated_at' => isset($row['updated_at']) ? sanitize_text_field($row['updated_at']) : '',
+        );
+    }
+
+    public static function getMessageTemplates($args = array()) {
+        global $wpdb;
+
+        $defaults = array(
+            'channel' => '',
+            'search' => '',
+            'page' => 1,
+            'per_page' => 20,
+            'include_inactive' => false,
+        );
+
+        $args = wp_parse_args($args, $defaults);
+
+        $channel = sanitize_key($args['channel']);
+        $search = sanitize_text_field($args['search']);
+        $page = max(1, intval($args['page']));
+        $per_page = max(1, min(100, intval($args['per_page'])));
+        $include_inactive = !empty($args['include_inactive']);
+
+        $table = $wpdb->prefix . 'gms_message_templates';
+        if (!self::tableExists($table)) {
+            return array(
+                'items' => array(),
+                'total' => 0,
+                'page' => $page,
+                'per_page' => $per_page,
+                'total_pages' => 1,
+            );
+        }
+
+        $where_clauses = array();
+        $params = array();
+
+        if (!$include_inactive) {
+            $where_clauses[] = 'is_active = 1';
+        }
+
+        if ($channel !== '') {
+            $channels = array($channel);
+            if ($channel !== 'all') {
+                $channels[] = 'all';
+            }
+
+            $placeholders = implode(',', array_fill(0, count($channels), '%s'));
+            $where_clauses[] = "channel IN ({$placeholders})";
+            $params = array_merge($params, $channels);
+        }
+
+        if ($search !== '') {
+            $like = '%' . $wpdb->esc_like($search) . '%';
+            $where_clauses[] = '(label LIKE %s OR content LIKE %s)';
+            $params[] = $like;
+            $params[] = $like;
+        }
+
+        $where_sql = $where_clauses ? 'WHERE ' . implode(' AND ', $where_clauses) : '';
+
+        $offset = ($page - 1) * $per_page;
+        if ($offset < 0) {
+            $offset = 0;
+        }
+
+        $count_sql = "SELECT COUNT(*) FROM {$table} {$where_sql}";
+        $count_query = $params ? $wpdb->prepare($count_sql, $params) : $count_sql;
+        $total = (int) $wpdb->get_var($count_query);
+
+        $total_pages = $per_page > 0 ? (int) ceil($total / $per_page) : 1;
+        if ($total_pages < 1) {
+            $total_pages = 1;
+        }
+
+        $query_sql = "SELECT * FROM {$table} {$where_sql} ORDER BY updated_at DESC, id DESC LIMIT %d OFFSET %d";
+        $query_params = array_merge($params, array($per_page, $offset));
+        $query = $wpdb->prepare($query_sql, $query_params);
+
+        $rows = $wpdb->get_results($query, ARRAY_A);
+        $items = array();
+
+        if (!empty($rows)) {
+            foreach ($rows as $row) {
+                $items[] = self::formatMessageTemplateRow($row);
+            }
+        }
+
+        return array(
+            'items' => $items,
+            'total' => $total,
+            'page' => $page,
+            'per_page' => $per_page,
+            'total_pages' => $total_pages,
+        );
+    }
+
+    public static function getMessageTemplateById($template_id) {
+        global $wpdb;
+
+        $template_id = intval($template_id);
+        if ($template_id <= 0) {
+            return null;
+        }
+
+        $table = $wpdb->prefix . 'gms_message_templates';
+        if (!self::tableExists($table)) {
+            return null;
+        }
+
+        $row = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$table} WHERE id = %d", $template_id), ARRAY_A);
+        if (!$row) {
+            return null;
+        }
+
+        return self::formatMessageTemplateRow($row);
+    }
+
+    public static function createMessageTemplate($data) {
+        global $wpdb;
+
+        $table = $wpdb->prefix . 'gms_message_templates';
+        if (!self::tableExists($table)) {
+            return new \WP_Error('missing_table', __('Message templates table is missing.', 'guest-management-system'));
+        }
+
+        $label = sanitize_text_field($data['label'] ?? '');
+        $channel = sanitize_key($data['channel'] ?? 'sms');
+        $content = self::normalizeTemplateContent($data['content'] ?? '');
+        $is_active = !empty($data['is_active']) ? 1 : 0;
+
+        $allowed_channels = array('sms', 'whatsapp', 'all');
+        if (!in_array($channel, $allowed_channels, true)) {
+            $channel = 'sms';
+        }
+
+        if ($label === '' || $content === '') {
+            return new \WP_Error('invalid_data', __('Template label and content are required.', 'guest-management-system'));
+        }
+
+        $now = current_time('mysql');
+
+        $inserted = $wpdb->insert(
+            $table,
+            array(
+                'label' => $label,
+                'channel' => $channel,
+                'content' => $content,
+                'is_active' => $is_active,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ),
+            array('%s', '%s', '%s', '%d', '%s', '%s')
+        );
+
+        if (!$inserted) {
+            return new \WP_Error('db_insert_failed', __('Unable to create the message template.', 'guest-management-system'));
+        }
+
+        return intval($wpdb->insert_id);
+    }
+
+    public static function updateMessageTemplate($template_id, $data) {
+        global $wpdb;
+
+        $template_id = intval($template_id);
+        if ($template_id <= 0) {
+            return new \WP_Error('invalid_id', __('Invalid template selected.', 'guest-management-system'));
+        }
+
+        $table = $wpdb->prefix . 'gms_message_templates';
+        if (!self::tableExists($table)) {
+            return new \WP_Error('missing_table', __('Message templates table is missing.', 'guest-management-system'));
+        }
+
+        $label = sanitize_text_field($data['label'] ?? '');
+        $channel = sanitize_key($data['channel'] ?? 'sms');
+        $content = self::normalizeTemplateContent($data['content'] ?? '');
+        $is_active = !empty($data['is_active']) ? 1 : 0;
+
+        $allowed_channels = array('sms', 'whatsapp', 'all');
+        if (!in_array($channel, $allowed_channels, true)) {
+            $channel = 'sms';
+        }
+
+        if ($label === '' || $content === '') {
+            return new \WP_Error('invalid_data', __('Template label and content are required.', 'guest-management-system'));
+        }
+
+        $now = current_time('mysql');
+
+        $updated = $wpdb->update(
+            $table,
+            array(
+                'label' => $label,
+                'channel' => $channel,
+                'content' => $content,
+                'is_active' => $is_active,
+                'updated_at' => $now,
+            ),
+            array('id' => $template_id),
+            array('%s', '%s', '%s', '%d', '%s'),
+            array('%d')
+        );
+
+        if ($updated === false) {
+            return new \WP_Error('db_update_failed', __('Unable to update the message template.', 'guest-management-system'));
+        }
+
+        return true;
+    }
+
+    public static function deleteMessageTemplate($template_id) {
+        global $wpdb;
+
+        $template_id = intval($template_id);
+        if ($template_id <= 0) {
+            return new \WP_Error('invalid_id', __('Invalid template selected.', 'guest-management-system'));
+        }
+
+        $table = $wpdb->prefix . 'gms_message_templates';
+        if (!self::tableExists($table)) {
+            return new \WP_Error('missing_table', __('Message templates table is missing.', 'guest-management-system'));
+        }
+
+        $deleted = $wpdb->delete($table, array('id' => $template_id), array('%d'));
+
+        if ($deleted === false) {
+            return new \WP_Error('db_delete_failed', __('Unable to delete the message template.', 'guest-management-system'));
+        }
+
+        return true;
     }
 
     public static function upsert_guest($guest_data, $options = array()) {

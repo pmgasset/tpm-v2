@@ -260,11 +260,32 @@
 .gms-messaging__composer-row {
     display: flex;
     align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.gms-messaging__template-row {
+    align-items: stretch;
+}
+
+.gms-messaging__template-search {
+    flex: 1 1 200px;
+    min-width: 160px;
+    max-width: 320px;
 }
 
 .gms-messaging__template {
-    width: 100%;
-    max-width: 280px;
+    flex: 1 1 200px;
+    max-width: none;
+}
+
+.gms-messaging__template-row.is-loading {
+    opacity: 0.6;
+}
+
+.gms-messaging__template-row.is-loading .gms-messaging__template,
+.gms-messaging__template-row.is-loading .gms-messaging__template-search {
+    cursor: progress;
 }
 
 .gms-messaging__input {

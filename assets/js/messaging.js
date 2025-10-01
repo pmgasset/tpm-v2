@@ -29,6 +29,11 @@
             pendingMessages: new Map(),
             pollTimer: null,
             initialized: false,
+            templates: [],
+            templatesKey: '',
+            templatesLoading: false,
+            templateSearchTerm: '',
+            templateChannel: '',
         };
 
         var layout = document.createElement('div');
@@ -127,28 +132,24 @@
         composerForm.noValidate = true;
 
         var templateRow = document.createElement('div');
-        templateRow.className = 'gms-messaging__composer-row';
+        templateRow.className = 'gms-messaging__composer-row gms-messaging__template-row';
+
+        var templateSearchInput = document.createElement('input');
+        templateSearchInput.type = 'search';
+        templateSearchInput.className = 'gms-messaging__template-search';
+        templateSearchInput.placeholder = strings.templateSearchPlaceholder || '';
+        templateSearchInput.setAttribute('aria-label', strings.templateSearchPlaceholder || '');
+        templateRow.appendChild(templateSearchInput);
 
         var templateSelect = document.createElement('select');
         templateSelect.className = 'gms-messaging__template';
         templateSelect.setAttribute('aria-label', strings.templatePlaceholder || 'Templates');
+        templateSelect.disabled = true;
 
         var templatePlaceholder = document.createElement('option');
         templatePlaceholder.value = '';
         templatePlaceholder.textContent = strings.templatePlaceholder || '';
         templateSelect.appendChild(templatePlaceholder);
-
-        if (Array.isArray(config.templates)) {
-            config.templates.forEach(function(template) {
-                if (!template || !template.content) {
-                    return;
-                }
-                var option = document.createElement('option');
-                option.value = template.content;
-                option.textContent = template.label || template.id;
-                templateSelect.appendChild(option);
-            });
-        }
 
         templateRow.appendChild(templateSelect);
         composerForm.appendChild(templateRow);
@@ -216,6 +217,168 @@
                 }, 5000);
             }
         }
+
+        var templateSearchTimer = null;
+
+        function renderTemplateOptions() {
+            if (!templateSelect) {
+                return;
+            }
+
+            while (templateSelect.options.length > 1) {
+                templateSelect.remove(1);
+            }
+
+            var hasThread = !!state.selectedThread;
+            templateRow.classList.toggle('is-loading', state.templatesLoading);
+
+            if (templateSearchInput) {
+                templateSearchInput.disabled = !hasThread || state.templatesLoading;
+                if (templateSearchInput.value !== state.templateSearchTerm) {
+                    templateSearchInput.value = state.templateSearchTerm;
+                }
+            }
+
+            templateSelect.disabled = true;
+            templateSelect.value = '';
+            templateSelect.selectedIndex = 0;
+
+            if (!hasThread) {
+                templatePlaceholder.textContent = strings.templateUnavailable || strings.templatePlaceholder || '';
+                return;
+            }
+
+            if (state.templatesLoading) {
+                templatePlaceholder.textContent = strings.templateLoading || strings.templatePlaceholder || '';
+                return;
+            }
+
+            if (!state.templates.length) {
+                if (state.templateSearchTerm) {
+                    templatePlaceholder.textContent = strings.templateEmptySearch || strings.templateEmpty || strings.templatePlaceholder || '';
+                } else {
+                    templatePlaceholder.textContent = strings.templateEmpty || strings.templatePlaceholder || '';
+                }
+                return;
+            }
+
+            templatePlaceholder.textContent = strings.templatePlaceholder || '';
+
+            state.templates.forEach(function(template) {
+                if (!template || !template.content) {
+                    return;
+                }
+                var option = document.createElement('option');
+                option.value = template.content;
+                option.textContent = template.label || template.id || '';
+                option.setAttribute('data-channel', template.channel || '');
+                templateSelect.appendChild(option);
+            });
+
+            templateSelect.disabled = false;
+        }
+
+        function handleTemplateSearchInput() {
+            if (!templateSearchInput) {
+                return;
+            }
+
+            state.templateSearchTerm = templateSearchInput.value.trim();
+
+            if (!state.selectedThread) {
+                renderTemplateOptions();
+                return;
+            }
+
+            if (templateSearchTimer) {
+                window.clearTimeout(templateSearchTimer);
+            }
+
+            templateSearchTimer = window.setTimeout(function() {
+                var channel = state.templateChannel || (state.selectedThread && state.selectedThread.channel) || 'sms';
+                fetchTemplates({
+                    channel: channel,
+                    searchTerm: state.templateSearchTerm
+                });
+            }, 250);
+        }
+
+        function fetchTemplates(options) {
+            if (!state.selectedThread) {
+                state.templates = [];
+                state.templatesKey = '';
+                state.templatesLoading = false;
+                renderTemplateOptions();
+                return Promise.resolve(null);
+            }
+
+            var desiredChannel = (options && options.channel) || state.templateChannel || ((state.selectedThread && state.selectedThread.channel) || 'sms');
+            var searchTerm = (options && options.searchTerm !== undefined) ? options.searchTerm : state.templateSearchTerm || '';
+            var key = desiredChannel + '|' + searchTerm;
+
+            state.templateChannel = desiredChannel;
+            state.templateSearchTerm = searchTerm;
+            state.templatesLoading = true;
+            renderTemplateOptions();
+
+            return request('gms_list_message_templates', {
+                channel: desiredChannel,
+                search: searchTerm,
+                page: 1,
+                per_page: 100
+            }).then(function(data) {
+                state.templatesLoading = false;
+                state.templatesKey = key;
+                state.templates = (data && Array.isArray(data.items)) ? data.items : [];
+                renderTemplateOptions();
+                return data;
+            }).catch(function(error) {
+                state.templatesLoading = false;
+                state.templatesKey = '';
+                state.templates = [];
+                renderTemplateOptions();
+                if (error && error.message) {
+                    showStatus(error.message, true);
+                } else if (strings.templateLoadError) {
+                    showStatus(strings.templateLoadError, true);
+                }
+                return null;
+            });
+        }
+
+        function ensureTemplatesForChannel(channel, options) {
+            var normalized = (channel || 'sms').toLowerCase();
+            var resetSearch = options && options.resetSearch;
+
+            if (resetSearch) {
+                state.templateSearchTerm = '';
+            }
+
+            state.templateChannel = normalized;
+
+            if (!state.selectedThread) {
+                state.templates = [];
+                state.templatesKey = '';
+                state.templatesLoading = false;
+                renderTemplateOptions();
+                return;
+            }
+
+            var key = normalized + '|' + (state.templateSearchTerm || '');
+
+            if (options && options.force) {
+                fetchTemplates({ channel: normalized, searchTerm: state.templateSearchTerm || '' });
+                return;
+            }
+
+            if (state.templatesKey !== key) {
+                fetchTemplates({ channel: normalized, searchTerm: state.templateSearchTerm || '' });
+            } else {
+                renderTemplateOptions();
+            }
+        }
+
+        renderTemplateOptions();
 
         function pad(number) {
             return number < 10 ? '0' + number : String(number);
@@ -396,11 +559,21 @@
                 threadMeta.innerHTML = '';
                 markReadButton.disabled = true;
                 sendButton.disabled = true;
+                state.templateChannel = '';
+                state.templateSearchTerm = '';
+                state.templates = [];
+                state.templatesKey = '';
+                state.templatesLoading = false;
+                renderTemplateOptions();
                 return;
             }
 
             threadTitle.textContent = thread.guest_name || strings.unknownGuest || '';
             threadSubtitle.textContent = thread.property_name || '';
+
+            var threadChannel = (thread.channel || 'sms').toLowerCase();
+            var channelChanged = state.templateChannel !== threadChannel;
+            ensureTemplatesForChannel(threadChannel, { resetSearch: channelChanged });
 
             var metaItems = [];
             if (thread.guest_phone) {
@@ -563,7 +736,18 @@
             state.initialized = true;
             state.selectedThreadKey = threadKey;
             state.loadingMessages = true;
+            state.selectedThread = null;
             state.messages = [];
+            state.templates = [];
+            state.templatesKey = '';
+            state.templateChannel = '';
+            state.templateSearchTerm = '';
+            state.templatesLoading = false;
+            if (templateSearchTimer) {
+                window.clearTimeout(templateSearchTimer);
+                templateSearchTimer = null;
+            }
+            renderTemplateOptions();
             renderThreadDetails();
             renderMessages();
             renderThreads();
@@ -754,11 +938,37 @@
             }
         });
 
+        if (templateSearchInput) {
+            templateSearchInput.addEventListener('input', handleTemplateSearchInput);
+            templateSearchInput.addEventListener('search', handleTemplateSearchInput);
+        }
+
         templateSelect.addEventListener('change', function() {
-            if (!templateSelect.value) {
+            var templateText = templateSelect.value;
+            if (!templateText) {
                 return;
             }
-            textarea.value = templateSelect.value;
+
+            var existing = textarea.value || '';
+            var start = typeof textarea.selectionStart === 'number' ? textarea.selectionStart : null;
+            var end = typeof textarea.selectionEnd === 'number' ? textarea.selectionEnd : null;
+
+            if (start === null || end === null) {
+                var prefix = existing && !/[\s\n]$/.test(existing) ? '\n\n' : '';
+                textarea.value = existing + prefix + templateText;
+            } else {
+                var before = existing.slice(0, start);
+                var after = existing.slice(end);
+                var needsGapBefore = before && !/[\s\n]$/.test(before);
+                var needsGapAfter = after && !/^\s/.test(after);
+                var insertion = (needsGapBefore ? '\n\n' : '') + templateText + (needsGapAfter ? '\n\n' : '');
+                textarea.value = before + insertion + after;
+                if (typeof textarea.setSelectionRange === 'function') {
+                    var cursorPosition = before.length + insertion.length;
+                    textarea.setSelectionRange(cursorPosition, cursorPosition);
+                }
+            }
+
             templateSelect.selectedIndex = 0;
             textarea.focus();
             try {

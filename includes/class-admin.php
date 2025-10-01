@@ -201,6 +201,176 @@ class GMS_Guests_List_Table extends WP_List_Table {
     }
 }
 
+class GMS_Message_Templates_List_Table extends WP_List_Table {
+    public function __construct() {
+        parent::__construct([
+            'singular' => 'gms_message_template',
+            'plural' => 'gms_message_templates',
+            'ajax' => false,
+        ]);
+    }
+
+    public function get_columns() {
+        return array(
+            'label' => __('Label', 'guest-management-system'),
+            'channel' => __('Channel', 'guest-management-system'),
+            'content' => __('Preview', 'guest-management-system'),
+            'is_active' => __('Active', 'guest-management-system'),
+            'updated_at' => __('Last Updated', 'guest-management-system'),
+        );
+    }
+
+    protected function get_table_classes() {
+        $classes = parent::get_table_classes();
+        $classes[] = 'widefat';
+
+        return $classes;
+    }
+
+    public function no_items() {
+        esc_html_e('No templates found.', 'guest-management-system');
+    }
+
+    protected function column_label($item) {
+        $label = isset($item['label']) ? (string) $item['label'] : '';
+        $template_id = isset($item['id']) ? intval($item['id']) : 0;
+
+        $actions = array();
+
+        if ($template_id > 0) {
+            $edit_url = add_query_arg(
+                array(
+                    'page' => 'guest-management-templates',
+                    'action' => 'edit_template',
+                    'template_id' => $template_id,
+                ),
+                admin_url('admin.php')
+            );
+
+            $delete_url = wp_nonce_url(
+                add_query_arg(
+                    array(
+                        'action' => 'gms_delete_message_template',
+                        'template_id' => $template_id,
+                    ),
+                    admin_url('admin-post.php')
+                ),
+                'gms_delete_message_template_' . $template_id
+            );
+
+            $actions['edit'] = sprintf('<a href="%s">%s</a>', esc_url($edit_url), esc_html__('Edit', 'guest-management-system'));
+            $actions['delete'] = sprintf(
+                '<a href="%1$s" class="submitdelete" onclick="return confirm(%2$s);">%3$s</a>',
+                esc_url($delete_url),
+                wp_json_encode(__('Are you sure you want to delete this template?', 'guest-management-system')),
+                esc_html__('Delete', 'guest-management-system')
+            );
+        }
+
+        $label_display = '<strong>' . esc_html($label) . '</strong>';
+
+        if (!empty($actions)) {
+            $label_display .= $this->row_actions($actions);
+        }
+
+        return $label_display;
+    }
+
+    protected function column_default($item, $column_name) {
+        switch ($column_name) {
+            case 'channel':
+                $channel = sanitize_key($item['channel'] ?? '');
+                switch ($channel) {
+                    case 'whatsapp':
+                        return esc_html__('WhatsApp', 'guest-management-system');
+                    case 'all':
+                        return esc_html__('All Channels', 'guest-management-system');
+                    case 'sms':
+                    default:
+                        return esc_html__('SMS', 'guest-management-system');
+                }
+            case 'content':
+                $content = isset($item['content']) ? (string) $item['content'] : '';
+                if ($content === '') {
+                    return '&mdash;';
+                }
+
+                $substr = function_exists('mb_substr') ? 'mb_substr' : 'substr';
+                $strlen = function_exists('mb_strlen') ? 'mb_strlen' : 'strlen';
+
+                $preview = $substr($content, 0, 120);
+                if ($strlen($content) > 120) {
+                    $preview .= '…';
+                }
+
+                $preview = str_replace('\n', ' / ', $preview);
+
+                return esc_html($preview);
+            case 'is_active':
+                $active = !empty($item['is_active']);
+                return $active ? esc_html__('Yes', 'guest-management-system') : esc_html__('No', 'guest-management-system');
+            case 'updated_at':
+                $timestamp = isset($item['updated_at']) ? strtotime($item['updated_at']) : false;
+                if (!$timestamp) {
+                    return '&mdash;';
+                }
+
+                return esc_html(date_i18n(get_option('date_format') . ' ' . get_option('time_format'), $timestamp));
+            default:
+                return isset($item[$column_name]) ? esc_html($item[$column_name]) : '';
+        }
+    }
+
+    protected function extra_tablenav($which) {
+        if ($which !== 'top') {
+            return;
+        }
+
+        $channel = isset($_REQUEST['filter_channel']) ? sanitize_key(wp_unslash($_REQUEST['filter_channel'])) : '';
+
+        $channels = array(
+            '' => __('All channels', 'guest-management-system'),
+            'sms' => __('SMS', 'guest-management-system'),
+            'whatsapp' => __('WhatsApp', 'guest-management-system'),
+            'all' => __('All templates', 'guest-management-system'),
+        );
+
+        echo '<div class="alignleft actions">';
+        echo '<label class="screen-reader-text" for="filter_channel">' . esc_html__('Filter by channel', 'guest-management-system') . '</label>';
+        echo '<select name="filter_channel" id="filter_channel">';
+        foreach ($channels as $value => $label) {
+            printf('<option value="%s" %s>%s</option>', esc_attr($value), selected($channel, $value, false), esc_html($label));
+        }
+        echo '</select>';
+        submit_button(__('Filter'), 'secondary', false, false, array('id' => 'gms-filter-message-templates'));
+        echo '</div>';
+    }
+
+    public function prepare_items() {
+        $per_page = 10;
+        $current_page = $this->get_pagenum();
+        $search = isset($_REQUEST['s']) ? sanitize_text_field(wp_unslash($_REQUEST['s'])) : '';
+        $channel = isset($_REQUEST['filter_channel']) ? sanitize_key(wp_unslash($_REQUEST['filter_channel'])) : '';
+
+        $result = GMS_Database::getMessageTemplates(array(
+            'page' => $current_page,
+            'per_page' => $per_page,
+            'search' => $search,
+            'channel' => $channel,
+            'include_inactive' => true,
+        ));
+
+        $this->items = isset($result['items']) ? $result['items'] : array();
+        $total_items = isset($result['total']) ? intval($result['total']) : 0;
+
+        $this->set_pagination_args(array(
+            'total_items' => $total_items,
+            'per_page' => $per_page,
+            'total_pages' => isset($result['total_pages']) ? max(1, intval($result['total_pages'])) : 1,
+        ));
+    }
+}
+
 
 class GMS_Admin {
     public function __construct() {
@@ -212,6 +382,8 @@ class GMS_Admin {
         add_action('wp_ajax_gms_bulk_action', array($this, 'ajax_bulk_action'));
         add_action('wp_ajax_gms_autosave_template', array($this, 'ajax_autosave_template'));
         add_action('wp_ajax_gms_refresh_stats', array($this, 'ajax_refresh_stats'));
+        add_action('admin_post_gms_save_message_template', array($this, 'handle_save_message_template'));
+        add_action('admin_post_gms_delete_message_template', array($this, 'handle_delete_message_template'));
     }
 
     public function ajax_test_sms() {
@@ -403,6 +575,118 @@ class GMS_Admin {
         wp_send_json_success(array(
             'stats' => $stats,
         ));
+    }
+
+    public function handle_save_message_template() {
+        if (!current_user_can('manage_options')) {
+            wp_die(__('You do not have permission to manage templates.', 'guest-management-system'));
+        }
+
+        check_admin_referer('gms_save_message_template');
+
+        $template_id = isset($_POST['template_id']) ? absint(wp_unslash($_POST['template_id'])) : 0;
+        $label = isset($_POST['label']) ? sanitize_text_field(wp_unslash($_POST['label'])) : '';
+        $channel = isset($_POST['channel']) ? sanitize_key(wp_unslash($_POST['channel'])) : 'sms';
+        $content = isset($_POST['content']) ? wp_unslash($_POST['content']) : '';
+        $is_active = isset($_POST['is_active']) && (int) $_POST['is_active'] === 1;
+
+        $data = array(
+            'label' => $label,
+            'channel' => $channel,
+            'content' => $content,
+            'is_active' => $is_active ? 1 : 0,
+        );
+
+        if ($template_id > 0) {
+            $result = GMS_Database::updateMessageTemplate($template_id, $data);
+            $notice_key = 'updated';
+        } else {
+            $result = GMS_Database::createMessageTemplate($data);
+            $notice_key = 'created';
+            if (!is_wp_error($result)) {
+                $template_id = intval($result);
+            }
+        }
+
+        $notice = 'created';
+        $message = '';
+
+        if (is_wp_error($result)) {
+            $notice = 'error';
+            $message = wp_strip_all_tags($result->get_error_message());
+        } else {
+            $notice = $notice_key;
+            if ($notice === 'created') {
+                $message = __('Template created successfully.', 'guest-management-system');
+            } elseif ($notice === 'updated') {
+                $message = __('Template updated successfully.', 'guest-management-system');
+            }
+        }
+
+        $redirect_url = wp_get_referer();
+        $base_url = admin_url('admin.php?page=guest-management-templates');
+
+        if (!$redirect_url || strpos($redirect_url, 'guest-management-templates') === false) {
+            $redirect_url = $base_url;
+        }
+
+        $redirect_url = remove_query_arg(array('gms_template_notice', 'gms_template_message', 'action', 'template_id'), $redirect_url);
+
+        $args = array(
+            'gms_template_notice' => $notice,
+        );
+
+        if ($message !== '') {
+            $args['gms_template_message'] = rawurlencode($message);
+        }
+
+        if ($notice === 'error' && $template_id > 0) {
+            $args['action'] = 'edit_template';
+            $args['template_id'] = $template_id;
+        }
+
+        $redirect_url = add_query_arg($args, $redirect_url);
+
+        wp_safe_redirect($redirect_url);
+        exit;
+    }
+
+    public function handle_delete_message_template() {
+        if (!current_user_can('manage_options')) {
+            wp_die(__('You do not have permission to delete templates.', 'guest-management-system'));
+        }
+
+        $template_id = isset($_GET['template_id']) ? absint(wp_unslash($_GET['template_id'])) : 0;
+        check_admin_referer('gms_delete_message_template_' . $template_id);
+
+        $result = GMS_Database::deleteMessageTemplate($template_id);
+
+        $notice = 'deleted';
+        $message = __('Template deleted successfully.', 'guest-management-system');
+
+        if (is_wp_error($result)) {
+            $notice = 'error';
+            $message = wp_strip_all_tags($result->get_error_message());
+        }
+
+        $redirect_url = wp_get_referer();
+        $base_url = admin_url('admin.php?page=guest-management-templates');
+
+        if (!$redirect_url || strpos($redirect_url, 'guest-management-templates') === false) {
+            $redirect_url = $base_url;
+        }
+
+        $redirect_url = remove_query_arg(array('gms_template_notice', 'gms_template_message', 'action', 'template_id'), $redirect_url);
+        $redirect_url = add_query_arg(
+            array(
+                'gms_template_notice' => $notice,
+                'gms_template_message' => rawurlencode($message),
+            ),
+            $redirect_url
+        );
+
+        wp_safe_redirect($redirect_url);
+        exit;
     }
     public function ajax_get_reservation() {
         check_ajax_referer('gms_admin_nonce', 'nonce');
@@ -1910,6 +2194,56 @@ class GMS_Admin {
             add_settings_error('gms_settings_messages', 'gms_settings_updated', __('Settings saved.', 'guest-management-system'), 'updated');
         }
 
+        $templates_table = new GMS_Message_Templates_List_Table();
+        $templates_table->prepare_items();
+
+        $editing_template = null;
+        $editing_id = 0;
+
+        if (isset($_GET['action']) && sanitize_key($_GET['action']) === 'edit_template') {
+            $editing_id = isset($_GET['template_id']) ? absint($_GET['template_id']) : 0;
+
+            if ($editing_id > 0) {
+                $editing_template = GMS_Database::getMessageTemplateById($editing_id);
+
+                if (!$editing_template) {
+                    add_settings_error('gms_quick_templates', 'gms_template_missing', __('The selected template could not be found.', 'guest-management-system'), 'error');
+                }
+            }
+        }
+
+        if (isset($_GET['gms_template_notice'])) {
+            $notice_key = sanitize_key($_GET['gms_template_notice']);
+            $message_param = isset($_GET['gms_template_message']) ? wp_unslash($_GET['gms_template_message']) : '';
+            $message_param = $message_param !== '' ? rawurldecode($message_param) : '';
+            $message_param = sanitize_text_field($message_param);
+
+            if ($message_param === '') {
+                switch ($notice_key) {
+                    case 'created':
+                        $message_param = __('Template created successfully.', 'guest-management-system');
+                        break;
+                    case 'updated':
+                        $message_param = __('Template updated successfully.', 'guest-management-system');
+                        break;
+                    case 'deleted':
+                        $message_param = __('Template deleted successfully.', 'guest-management-system');
+                        break;
+                    case 'error':
+                        $message_param = __('There was a problem saving the template.', 'guest-management-system');
+                        break;
+                }
+            }
+
+            $notice_type = $notice_key === 'error' ? 'error' : 'updated';
+
+            if ($message_param !== '') {
+                add_settings_error('gms_quick_templates', 'gms_quick_templates_notice', $message_param, $notice_type);
+            }
+        }
+
+        $base_templates_url = admin_url('admin.php?page=guest-management-templates');
+
         ?>
         <div class="wrap gms-settings">
             <h1 class="wp-heading-inline"><?php esc_html_e('Templates', 'guest-management-system'); ?></h1>
@@ -1925,6 +2259,76 @@ class GMS_Admin {
                 submit_button();
                 ?>
             </form>
+
+            <hr class="gms-settings__divider">
+
+            <h2><?php esc_html_e('Quick Reply Templates', 'guest-management-system'); ?></h2>
+            <p><?php esc_html_e('Create reusable SMS and WhatsApp snippets that your team can quickly insert into conversations.', 'guest-management-system'); ?></p>
+
+            <?php settings_errors('gms_quick_templates'); ?>
+
+            <div class="gms-quick-templates">
+                <div class="gms-quick-templates__list">
+                    <form method="get">
+                        <input type="hidden" name="page" value="guest-management-templates" />
+                        <?php $templates_table->search_box(__('Search templates', 'guest-management-system'), 'gms-message-templates'); ?>
+                        <?php $templates_table->display(); ?>
+                    </form>
+                </div>
+                <div class="gms-quick-templates__form">
+                    <h3><?php echo $editing_template ? esc_html__('Edit Template', 'guest-management-system') : esc_html__('Add New Template', 'guest-management-system'); ?></h3>
+                    <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+                        <?php wp_nonce_field('gms_save_message_template'); ?>
+                        <input type="hidden" name="action" value="gms_save_message_template">
+                        <?php if ($editing_template) : ?>
+                            <input type="hidden" name="template_id" value="<?php echo esc_attr($editing_template['id']); ?>">
+                        <?php endif; ?>
+
+                        <table class="form-table" role="presentation">
+                            <tbody>
+                                <tr>
+                                    <th scope="row"><label for="gms-template-label"><?php esc_html_e('Label', 'guest-management-system'); ?></label></th>
+                                    <td><input name="label" type="text" id="gms-template-label" value="<?php echo esc_attr($editing_template['label'] ?? ''); ?>" class="regular-text" required></td>
+                                </tr>
+                                <tr>
+                                    <th scope="row"><label for="gms-template-channel"><?php esc_html_e('Channel', 'guest-management-system'); ?></label></th>
+                                    <td>
+                                        <?php $channel_value = sanitize_key($editing_template['channel'] ?? 'sms'); ?>
+                                        <select name="channel" id="gms-template-channel">
+                                            <option value="sms" <?php selected($channel_value, 'sms'); ?>><?php esc_html_e('SMS', 'guest-management-system'); ?></option>
+                                            <option value="whatsapp" <?php selected($channel_value, 'whatsapp'); ?>><?php esc_html_e('WhatsApp', 'guest-management-system'); ?></option>
+                                            <option value="all" <?php selected($channel_value, 'all'); ?>><?php esc_html_e('All Channels', 'guest-management-system'); ?></option>
+                                        </select>
+                                        <p class="description"><?php esc_html_e('Select which messaging channel(s) this template applies to.', 'guest-management-system'); ?></p>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <th scope="row"><label for="gms-template-content"><?php esc_html_e('Message', 'guest-management-system'); ?></label></th>
+                                    <td>
+                                        <textarea name="content" id="gms-template-content" rows="6" class="large-text code" required><?php echo esc_textarea($editing_template['content'] ?? ''); ?></textarea>
+                                        <p class="description"><?php esc_html_e('Use merge tags like {guest_name} or {property_name} to personalize messages.', 'guest-management-system'); ?></p>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <th scope="row"><?php esc_html_e('Status', 'guest-management-system'); ?></th>
+                                    <td>
+                                        <label>
+                                            <input type="checkbox" name="is_active" value="1" <?php checked($editing_template ? !empty($editing_template['is_active']) : true); ?>>
+                                            <?php esc_html_e('Active', 'guest-management-system'); ?>
+                                        </label>
+                                        <p class="description"><?php esc_html_e('Inactive templates are hidden from the messaging inbox.', 'guest-management-system'); ?></p>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+
+                        <?php submit_button($editing_template ? __('Update Template', 'guest-management-system') : __('Add Template', 'guest-management-system')); ?>
+                        <?php if ($editing_template) : ?>
+                            <a class="button button-secondary" href="<?php echo esc_url($base_templates_url); ?>"><?php esc_html_e('Cancel', 'guest-management-system'); ?></a>
+                        <?php endif; ?>
+                    </form>
+                </div>
+            </div>
         </div>
         <?php
     }

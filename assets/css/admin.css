@@ -59,6 +59,53 @@
     margin-right: 10px;
 }
 
+.gms-settings__divider {
+    border: 0;
+    border-top: 1px solid #dcdcde;
+    margin: 40px 0 30px;
+}
+
+.gms-quick-templates {
+    display: grid;
+    grid-template-columns: minmax(0, 2fr) minmax(0, 1.1fr);
+    gap: 24px;
+    margin-top: 20px;
+}
+
+.gms-quick-templates__list .tablenav.top {
+    margin-bottom: 12px;
+}
+
+.gms-quick-templates__form {
+    background: #fff;
+    border: 1px solid #dcdcde;
+    border-radius: 6px;
+    padding: 20px;
+}
+
+.gms-quick-templates__form .form-table th {
+    width: 140px;
+    padding-left: 0;
+}
+
+.gms-quick-templates__form .form-table td {
+    padding-right: 0;
+}
+
+.gms-quick-templates__form .form-table textarea {
+    font-family: inherit;
+}
+
+@media (max-width: 960px) {
+    .gms-quick-templates {
+        grid-template-columns: 1fr;
+    }
+
+    .gms-quick-templates__form {
+        padding: 16px;
+    }
+}
+
 /* Status Badges */
 .status-badge {
     padding: 4px 8px;
