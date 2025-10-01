@@ -67,7 +67,8 @@ class GuestManagementSystem {
         // Add custom rewrite rules for the guest portal
         add_action('init', array($this, 'addRewriteRules'));
         add_filter('query_vars', array($this, 'addQueryVars'));
-        add_action('template_redirect', array($this, 'handleGuestPortal'));
+        add_action('template_redirect', array($this, 'handleGuestPortal'), 0);
+        add_filter('pre_handle_404', array($this, 'preHandlePortal404'), 0, 2);
     }
     
     private function loadIncludes() {
@@ -184,6 +185,53 @@ class GuestManagementSystem {
 
         GMS_Guest_Portal::displayPortal($token);
         exit;
+    }
+
+    public function preHandlePortal404($preempt, $wp_query) {
+        $portal_context = $this->resolvePortalRequest();
+
+        if (!$portal_context['is_portal']) {
+            return $preempt;
+        }
+
+        if ($wp_query instanceof WP_Query) {
+            $wp_query->is_404 = false;
+            $wp_query->is_home = false;
+            $wp_query->is_page = false;
+            $wp_query->query['error'] = '';
+            $wp_query->query_vars['error'] = '';
+            $wp_query->set('guest_portal', 1);
+            $wp_query->set('guest_token', $portal_context['token']);
+        }
+
+        if (function_exists('set_query_var')) {
+            set_query_var('guest_portal', 1);
+            set_query_var('guest_token', $portal_context['token']);
+        }
+
+        global $wp;
+        if ($wp instanceof WP) {
+            $wp->query_vars['guest_portal'] = 1;
+            $wp->query_vars['guest_token'] = $portal_context['token'];
+
+            if (isset($wp->query_vars['error'])) {
+                unset($wp->query_vars['error']);
+            }
+
+            if (isset($wp->query['error'])) {
+                unset($wp->query['error']);
+            }
+        }
+
+        if (function_exists('status_header')) {
+            status_header(200);
+        }
+
+        if (function_exists('nocache_headers')) {
+            nocache_headers();
+        }
+
+        return true;
     }
 
     public function enqueueScripts() {
