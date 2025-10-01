@@ -27,7 +27,10 @@ class GMS_Email_Handler {
         $template = get_option('gms_email_template');
         $subject = 'Complete Your Check-in for ' . $reservation['property_name'];
 
-        $portal_url = home_url('/guest-portal/' . $reservation['portal_token']);
+        $portal_url = gms_build_portal_url($reservation['portal_token']);
+        if ($portal_url === false) {
+            $portal_url = '';
+        }
         
         $replacements = array(
             '{guest_name}' => $reservation['guest_name'],
@@ -79,7 +82,10 @@ class GMS_Email_Handler {
             $reservation['property_name']
         );
 
-        $portal_url = home_url('/guest-portal/' . $reservation['portal_token']);
+        $portal_url = gms_build_portal_url($reservation['portal_token']);
+        if ($portal_url === false) {
+            $portal_url = '';
+        }
 
         $replacements = array(
             '{guest_name}' => $reservation['guest_name'],
@@ -128,7 +134,10 @@ class GMS_Email_Handler {
     public function sendReminderEmail($reservation) {
         $subject = 'Reminder: Complete Your Check-in';
         
-        $portal_url = home_url('/guest-portal/' . $reservation['portal_token']);
+        $portal_url = gms_build_portal_url($reservation['portal_token']);
+        if ($portal_url === false) {
+            $portal_url = '';
+        }
         
         $message = "Hi {$reservation['guest_name']},\n\n";
         $message .= "This is a friendly reminder to complete your check-in process for {$reservation['property_name']}.\n\n";
@@ -229,7 +238,10 @@ class GMS_Email_Handler {
         
         // Add portal button if reservation provided
         if ($reservation) {
-            $portal_url = home_url('/guest-portal/' . $reservation['portal_token']);
+            $portal_url = gms_build_portal_url($reservation['portal_token']);
+            if ($portal_url === false) {
+                $portal_url = '';
+            }
             $html .= '
                     <tr>
                         <td align="center" style="padding: 0 30px 40px 30px;">
@@ -274,7 +286,11 @@ class GMS_Email_Handler {
                 $message .= "Check-out: " . date('M j, Y g:i A', strtotime($reservation['checkout_date'])) . "\n";
                 $message .= "Booking Reference: {$reservation['booking_reference']}\n";
                 $message .= "Platform: {$reservation['platform']}\n\n";
-                $message .= "Guest Portal: " . home_url('/guest-portal/' . $reservation['portal_token']);
+                $portal_url = gms_build_portal_url($reservation['portal_token']);
+                if ($portal_url === false) {
+                    $portal_url = '';
+                }
+                $message .= "Guest Portal: " . $portal_url;
                 break;
                 
             case 'check_in_complete':

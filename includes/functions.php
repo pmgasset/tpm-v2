@@ -55,16 +55,53 @@ function gms_is_reservation_complete($reservation_id) {
 }
 
 /**
+ * Build the guest portal URL for a token.
+ *
+ * @param string $token Portal token.
+ *
+ * @return string|false
+ */
+function gms_build_portal_url($token) {
+    if (!is_scalar($token)) {
+        return false;
+    }
+
+    $token = trim((string) $token);
+
+    if ($token === '') {
+        return false;
+    }
+
+    global $wp_rewrite;
+
+    $encoded_token = rawurlencode($token);
+
+    if (is_object($wp_rewrite) && method_exists($wp_rewrite, 'using_permalinks') && $wp_rewrite->using_permalinks()) {
+        $path = 'guest-portal/' . $encoded_token;
+
+        return home_url(user_trailingslashit($path));
+    }
+
+    return add_query_arg(
+        array(
+            'guest_portal' => 1,
+            'guest_token'  => $encoded_token,
+        ),
+        home_url('/')
+    );
+}
+
+/**
  * Get portal URL for reservation
  */
 function gms_get_portal_url($reservation_id) {
     $reservation = GMS_Database::getReservationById($reservation_id);
-    
-    if (!$reservation) {
+
+    if (!$reservation || empty($reservation['portal_token'])) {
         return false;
     }
-    
-    return home_url('/guest-portal/' . $reservation['portal_token']);
+
+    return gms_build_portal_url($reservation['portal_token']);
 }
 
 /**
