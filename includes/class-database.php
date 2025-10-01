@@ -12,6 +12,12 @@ if (!defined('ABSPATH')) {
 class GMS_Database {
 
     const GUEST_PLACEHOLDER_DOMAIN = 'guest.invalid';
+    const DB_VERSION = '1.2.0';
+    const OPTION_DB_VERSION = 'gms_db_version';
+
+    public function __construct() {
+        self::maybeRunMigrations();
+    }
     
     public static function createTables() {
         global $wpdb;
@@ -116,15 +122,173 @@ class GMS_Database {
             delivery_status varchar(50) NOT NULL DEFAULT '',
             response_data longtext NULL,
             provider_reference varchar(191) NOT NULL DEFAULT '',
+            channel varchar(50) NOT NULL DEFAULT '',
+            direction varchar(50) NOT NULL DEFAULT '',
+            from_number varchar(50) NOT NULL DEFAULT '',
+            to_number varchar(50) NOT NULL DEFAULT '',
+            from_number_e164 varchar(20) NOT NULL DEFAULT '',
+            to_number_e164 varchar(20) NOT NULL DEFAULT '',
+            thread_key varchar(191) NOT NULL DEFAULT '',
+            external_id varchar(191) NOT NULL DEFAULT '',
+            read_at datetime NULL DEFAULT NULL,
             sent_at datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
             created_at datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
             PRIMARY KEY  (id),
             KEY reservation_id (reservation_id),
             KEY guest_id (guest_id),
             KEY communication_type (communication_type),
-            KEY delivery_status (delivery_status)
+            KEY delivery_status (delivery_status),
+            KEY channel (channel),
+            KEY direction (direction),
+            KEY thread_key (thread_key),
+            KEY external_id (external_id),
+            KEY from_number_e164 (from_number_e164),
+            KEY to_number_e164 (to_number_e164)
         ) $charset_collate;";
         dbDelta($sql_communications);
+
+        update_option(self::OPTION_DB_VERSION, self::DB_VERSION);
+    }
+
+    public static function maybeRunMigrations() {
+        $installed = get_option(self::OPTION_DB_VERSION, '');
+
+        if (!empty($installed) && version_compare($installed, self::DB_VERSION, '>=')) {
+            return;
+        }
+
+        self::createTables();
+        self::migrateCommunicationsTable($installed);
+
+        update_option(self::OPTION_DB_VERSION, self::DB_VERSION);
+    }
+
+    private static function migrateCommunicationsTable($previous_version) {
+        global $wpdb;
+
+        $table_name = $wpdb->prefix . 'gms_communications';
+
+        if (!self::tableExists($table_name)) {
+            return;
+        }
+
+        $wpdb->query("UPDATE {$table_name} SET direction = 'outbound' WHERE direction IS NULL OR direction = ''");
+        $wpdb->query("UPDATE {$table_name} SET channel = LOWER(communication_type) WHERE (channel = '' OR channel IS NULL) AND communication_type <> ''");
+        $wpdb->query("UPDATE {$table_name} SET channel = 'sms' WHERE channel = '' OR channel IS NULL");
+        $wpdb->query("UPDATE {$table_name} SET to_number = recipient WHERE channel = 'sms' AND (to_number = '' OR to_number IS NULL) AND recipient <> ''");
+        $wpdb->query("UPDATE {$table_name} SET external_id = provider_reference WHERE (external_id = '' OR external_id IS NULL) AND provider_reference <> ''");
+
+        $default_from = sanitize_text_field(get_option('gms_voipms_did', ''));
+        if ($default_from !== '') {
+            $wpdb->query(
+                $wpdb->prepare(
+                    "UPDATE {$table_name} SET from_number = %s WHERE (from_number = '' OR from_number IS NULL) AND channel = %s",
+                    $default_from,
+                    'sms'
+                )
+            );
+        }
+
+        self::backfillCommunicationNumbers($table_name);
+        self::backfillCommunicationThreads($table_name);
+    }
+
+    private static function backfillCommunicationNumbers($table_name) {
+        global $wpdb;
+
+        $batch_size = 200;
+
+        do {
+            $rows = $wpdb->get_results(
+                $wpdb->prepare(
+                    "SELECT id, from_number, to_number, from_number_e164, to_number_e164 FROM {$table_name} WHERE channel = %s AND ((from_number <> '' AND (from_number_e164 = '' OR from_number_e164 IS NULL)) OR (to_number <> '' AND (to_number_e164 = '' OR to_number_e164 IS NULL))) LIMIT %d",
+                    'sms',
+                    $batch_size
+                ),
+                ARRAY_A
+            );
+
+            if (empty($rows)) {
+                break;
+            }
+
+            foreach ($rows as $row) {
+                $updates = array();
+                $formats = array();
+
+                if ($row['from_number'] !== '' && ($row['from_number_e164'] === '' || $row['from_number_e164'] === null)) {
+                    $updates['from_number_e164'] = self::normalizePhoneNumber($row['from_number']);
+                    $formats[] = '%s';
+                }
+
+                if ($row['to_number'] !== '' && ($row['to_number_e164'] === '' || $row['to_number_e164'] === null)) {
+                    $updates['to_number_e164'] = self::normalizePhoneNumber($row['to_number']);
+                    $formats[] = '%s';
+                }
+
+                if (!empty($updates)) {
+                    $wpdb->update(
+                        $table_name,
+                        $updates,
+                        array('id' => intval($row['id'])),
+                        $formats,
+                        array('%d')
+                    );
+                }
+            }
+        } while (!empty($rows));
+    }
+
+    private static function backfillCommunicationThreads($table_name) {
+        global $wpdb;
+
+        $batch_size = 200;
+
+        do {
+            $rows = $wpdb->get_results(
+                $wpdb->prepare(
+                    "SELECT id, reservation_id, guest_id, channel, from_number_e164, to_number_e164, thread_key FROM {$table_name} WHERE thread_key = '' OR thread_key IS NULL LIMIT %d",
+                    $batch_size
+                ),
+                ARRAY_A
+            );
+
+            if (empty($rows)) {
+                break;
+            }
+
+            foreach ($rows as $row) {
+                $thread_key = self::generateThreadKey(
+                    sanitize_key($row['channel']),
+                    intval($row['reservation_id']),
+                    intval($row['guest_id']),
+                    (string) $row['from_number_e164'],
+                    (string) $row['to_number_e164']
+                );
+
+                if ($thread_key === '') {
+                    continue;
+                }
+
+                $wpdb->update(
+                    $table_name,
+                    array('thread_key' => substr($thread_key, 0, 191)),
+                    array('id' => intval($row['id'])),
+                    array('%s'),
+                    array('%d')
+                );
+            }
+        } while (!empty($rows));
+    }
+
+    private static function tableExists($table_name) {
+        global $wpdb;
+
+        $like = $wpdb->esc_like($table_name);
+        $sql = $wpdb->prepare('SHOW TABLES LIKE %s', $like);
+        $result = $wpdb->get_var($sql);
+
+        return $result === $table_name;
     }
 
     public static function upsert_guest($guest_data, $options = array()) {
@@ -978,27 +1142,320 @@ class GMS_Database {
             'status' => '',
             'response_data' => array(),
             'provider_reference' => '',
+            'channel' => '',
+            'direction' => '',
+            'from_number' => '',
+            'to_number' => '',
+            'thread_key' => '',
+            'external_id' => '',
+            'read_at' => '',
+            'sent_at' => '',
         );
 
         $data = wp_parse_args($data, $defaults);
 
+        $reservation_id = intval($data['reservation_id']);
+        $guest_id = intval($data['guest_id']);
+        $communication_type = sanitize_text_field($data['type']);
+
+        $channel = $data['channel'] !== '' ? $data['channel'] : $communication_type;
+        $channel = sanitize_key($channel);
+
+        if ($channel === 'text') {
+            $channel = 'sms';
+        }
+
+        $direction = sanitize_key($data['direction']);
+        if ($direction === '') {
+            $direction = 'outbound';
+        }
+
+        $from_number = sanitize_text_field($data['from_number']);
+        $to_number = sanitize_text_field($data['to_number'] !== '' ? $data['to_number'] : $data['recipient']);
+
+        if ($channel === 'sms' && $from_number === '') {
+            $from_number = sanitize_text_field(get_option('gms_voipms_did', ''));
+        }
+
+        $from_number_e164 = $channel === 'sms' ? self::normalizePhoneNumber($from_number) : '';
+        $to_number_e164 = $channel === 'sms' ? self::normalizePhoneNumber($to_number) : '';
+
+        $thread_key = sanitize_text_field($data['thread_key']);
+        if ($thread_key === '') {
+            $thread_key = self::generateThreadKey($channel, $reservation_id, $guest_id, $from_number_e164, $to_number_e164);
+        }
+
+        $external_id = sanitize_text_field($data['external_id'] !== '' ? $data['external_id'] : $data['provider_reference']);
+
+        $read_at = self::sanitizeNullableDateTime($data['read_at']);
+        $sent_at = $data['sent_at'] !== '' ? self::sanitizeDateTime($data['sent_at']) : current_time('mysql');
+        $created_at = current_time('mysql');
+
         $insert_data = array(
-            'reservation_id' => intval($data['reservation_id']),
-            'guest_id' => intval($data['guest_id']),
-            'communication_type' => sanitize_text_field($data['type']),
+            'reservation_id' => $reservation_id,
+            'guest_id' => $guest_id,
+            'communication_type' => $communication_type,
             'recipient' => sanitize_text_field($data['recipient']),
             'subject' => sanitize_text_field($data['subject']),
             'message' => wp_kses_post($data['message']),
             'delivery_status' => sanitize_text_field($data['status']),
             'response_data' => self::maybeEncodeJson($data['response_data']),
             'provider_reference' => sanitize_text_field($data['provider_reference']),
-            'sent_at' => current_time('mysql'),
-            'created_at' => current_time('mysql'),
+            'channel' => $channel,
+            'direction' => $direction,
+            'from_number' => $from_number,
+            'to_number' => $to_number,
+            'from_number_e164' => $from_number_e164,
+            'to_number_e164' => $to_number_e164,
+            'thread_key' => substr($thread_key, 0, 191),
+            'external_id' => $external_id,
+            'read_at' => $read_at,
+            'sent_at' => $sent_at,
+            'created_at' => $created_at,
         );
 
-        $formats = array('%d', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s');
+        $formats = array(
+            '%d', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s',
+            '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s'
+        );
 
         $wpdb->insert($table_name, $insert_data, $formats);
+    }
+
+    public static function getCommunicationsForReservation($reservation_id, $args = array()) {
+        global $wpdb;
+
+        $table_name = $wpdb->prefix . 'gms_communications';
+        $defaults = array(
+            'channel' => '',
+            'direction' => '',
+            'limit' => 50,
+            'order' => 'DESC',
+            'thread_key' => '',
+            'phone' => '',
+        );
+
+        $args = wp_parse_args($args, $defaults);
+
+        $sql = "SELECT * FROM {$table_name} WHERE reservation_id = %d";
+        $params = array(intval($reservation_id));
+
+        if ($args['channel'] !== '') {
+            $sql .= " AND channel = %s";
+            $params[] = sanitize_key($args['channel']);
+        }
+
+        if ($args['direction'] !== '') {
+            $sql .= " AND direction = %s";
+            $params[] = sanitize_key($args['direction']);
+        }
+
+        if ($args['thread_key'] !== '') {
+            $sql .= " AND thread_key = %s";
+            $params[] = sanitize_text_field($args['thread_key']);
+        }
+
+        if ($args['phone'] !== '') {
+            $normalized = self::normalizePhoneNumber($args['phone']);
+            if ($normalized !== '') {
+                $sql .= " AND (from_number_e164 = %s OR to_number_e164 = %s)";
+                $params[] = $normalized;
+                $params[] = $normalized;
+            }
+        }
+
+        $order = strtoupper($args['order']) === 'ASC' ? 'ASC' : 'DESC';
+        $limit = max(1, intval($args['limit']));
+
+        $sql .= " ORDER BY sent_at {$order}, id {$order} LIMIT %d";
+        $params[] = $limit;
+
+        $rows = $wpdb->get_results($wpdb->prepare($sql, $params), ARRAY_A);
+
+        return array_map(array(__CLASS__, 'formatCommunicationRow'), $rows);
+    }
+
+    public static function getCommunicationsForGuest($guest_id, $args = array()) {
+        global $wpdb;
+
+        $table_name = $wpdb->prefix . 'gms_communications';
+        $defaults = array(
+            'reservation_id' => 0,
+            'channel' => '',
+            'direction' => '',
+            'limit' => 50,
+            'order' => 'DESC',
+            'thread_key' => '',
+            'phone' => '',
+        );
+
+        $args = wp_parse_args($args, $defaults);
+
+        $sql = "SELECT * FROM {$table_name} WHERE guest_id = %d";
+        $params = array(intval($guest_id));
+
+        if (!empty($args['reservation_id'])) {
+            $sql .= " AND reservation_id = %d";
+            $params[] = intval($args['reservation_id']);
+        }
+
+        if ($args['channel'] !== '') {
+            $sql .= " AND channel = %s";
+            $params[] = sanitize_key($args['channel']);
+        }
+
+        if ($args['direction'] !== '') {
+            $sql .= " AND direction = %s";
+            $params[] = sanitize_key($args['direction']);
+        }
+
+        if ($args['thread_key'] !== '') {
+            $sql .= " AND thread_key = %s";
+            $params[] = sanitize_text_field($args['thread_key']);
+        }
+
+        if ($args['phone'] !== '') {
+            $normalized = self::normalizePhoneNumber($args['phone']);
+            if ($normalized !== '') {
+                $sql .= " AND (from_number_e164 = %s OR to_number_e164 = %s)";
+                $params[] = $normalized;
+                $params[] = $normalized;
+            }
+        }
+
+        $order = strtoupper($args['order']) === 'ASC' ? 'ASC' : 'DESC';
+        $limit = max(1, intval($args['limit']));
+
+        $sql .= " ORDER BY sent_at {$order}, id {$order} LIMIT %d";
+        $params[] = $limit;
+
+        $rows = $wpdb->get_results($wpdb->prepare($sql, $params), ARRAY_A);
+
+        return array_map(array(__CLASS__, 'formatCommunicationRow'), $rows);
+    }
+
+    private static function formatCommunicationRow($row) {
+        if (!is_array($row)) {
+            return $row;
+        }
+
+        if (isset($row['response_data']) && $row['response_data'] !== '') {
+            $decoded = self::maybeDecodeJson($row['response_data']);
+            if ($decoded['decoded']) {
+                $row['response_data'] = $decoded['value'];
+            }
+        }
+
+        return $row;
+    }
+
+    private static function maybeDecodeJson($value) {
+        if ($value === '' || (!is_string($value) && !is_numeric($value))) {
+            return array(
+                'value' => $value,
+                'decoded' => false,
+            );
+        }
+
+        if (!is_string($value)) {
+            return array(
+                'value' => $value,
+                'decoded' => false,
+            );
+        }
+
+        $decoded = json_decode($value, true);
+        if (json_last_error() === JSON_ERROR_NONE) {
+            return array(
+                'value' => $decoded,
+                'decoded' => true,
+            );
+        }
+
+        return array(
+            'value' => $value,
+            'decoded' => false,
+        );
+    }
+
+    private static function sanitizeNullableDateTime($value) {
+        if (empty($value)) {
+            return null;
+        }
+
+        $timestamp = strtotime($value);
+        if ($timestamp === false) {
+            return null;
+        }
+
+        return date('Y-m-d H:i:s', $timestamp);
+    }
+
+    private static function normalizePhoneNumber($number) {
+        $number = trim((string) $number);
+
+        if ($number === '') {
+            return '';
+        }
+
+        if (function_exists('gms_sanitize_phone')) {
+            $number = gms_sanitize_phone($number);
+        } else {
+            $number = preg_replace('/[^0-9+]/', '', $number);
+        }
+
+        if ($number === '') {
+            return '';
+        }
+
+        if (str_starts_with($number, '00')) {
+            $number = '+' . substr($number, 2);
+        }
+
+        if (!str_starts_with($number, '+')) {
+            $number = '+' . ltrim($number, '+');
+        }
+
+        $digits = preg_replace('/[^0-9]/', '', substr($number, 1));
+
+        if ($digits === '') {
+            return '';
+        }
+
+        $digits = substr($digits, 0, 15);
+
+        return '+' . $digits;
+    }
+
+    private static function generateThreadKey($channel, $reservation_id, $guest_id, $from_number_e164, $to_number_e164) {
+        $parts = array();
+
+        $channel = sanitize_key($channel);
+        if ($channel !== '') {
+            $parts[] = 'channel:' . $channel;
+        }
+
+        $reservation_id = intval($reservation_id);
+        if ($reservation_id > 0) {
+            $parts[] = 'reservation:' . $reservation_id;
+        }
+
+        $guest_id = intval($guest_id);
+        if ($guest_id > 0) {
+            $parts[] = 'guest:' . $guest_id;
+        }
+
+        $numbers = array_filter(array($from_number_e164, $to_number_e164));
+        if (!empty($numbers)) {
+            sort($numbers);
+            $parts[] = 'party:' . implode(',', $numbers);
+        }
+
+        if (empty($parts)) {
+            return '';
+        }
+
+        return implode('|', $parts);
     }
 
     public static function getUserIP() {
