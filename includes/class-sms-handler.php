@@ -155,7 +155,11 @@ class GMS_SMS_Handler implements GMS_Messaging_Channel_Interface {
             $normalized = $this->normalizeVoipmsMessage($message);
 
             if (trim($normalized['body']) === '') {
-                $details[] = array('stored' => false, 'reason' => 'empty_body');
+                $details[] = array(
+                    'stored' => false,
+                    'reason' => 'empty_body',
+                    'payload' => $message,
+                );
                 $errors++;
                 continue;
             }
@@ -471,24 +475,79 @@ class GMS_SMS_Handler implements GMS_Messaging_Channel_Interface {
     }
 
     private function extractMessagesFromPayload(array $payload) {
-        if (isset($payload['messages']) && is_array($payload['messages'])) {
-            return array_values(array_filter($payload['messages'], 'is_array'));
-        }
+        $candidate = $payload;
 
-        if (!empty($payload) && isset($payload[0]) && is_array($payload)) {
-            $all = array();
-            foreach ($payload as $item) {
-                if (is_array($item)) {
-                    $all[] = $item;
+        while (is_array($candidate)) {
+            if (isset($candidate['messages']) && is_array($candidate['messages'])) {
+                return array_values(array_filter($candidate['messages'], 'is_array'));
+            }
+
+            if ($this->isSequentialArray($candidate)) {
+                $all = array();
+                foreach ($candidate as $item) {
+                    if (is_array($item)) {
+                        $all[] = $item;
+                    }
+                }
+
+                if (!empty($all)) {
+                    return $all;
                 }
             }
 
-            if (!empty($all)) {
-                return $all;
+            $envelope_key = $this->detectPayloadEnvelopeKey($candidate);
+            if ($envelope_key === null) {
+                break;
             }
+
+            $next_candidate = $candidate[$envelope_key];
+            if ($next_candidate === $candidate) {
+                break;
+            }
+
+            $candidate = $next_candidate;
+        }
+
+        if (is_array($candidate)) {
+            return array($candidate);
         }
 
         return array($payload);
+    }
+
+    private function detectPayloadEnvelopeKey(array $payload) {
+        $preferred_keys = array('payload', 'sms', 'data', 'result');
+        foreach ($preferred_keys as $key) {
+            if (isset($payload[$key]) && is_array($payload[$key])) {
+                return $key;
+            }
+        }
+
+        foreach ($payload as $key => $value) {
+            if (is_array($value) && $this->isSequentialArray($value)) {
+                $has_arrays = false;
+                foreach ($value as $item) {
+                    if (is_array($item)) {
+                        $has_arrays = true;
+                        break;
+                    }
+                }
+
+                if ($has_arrays) {
+                    return $key;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private function isSequentialArray(array $value) {
+        if (empty($value)) {
+            return true;
+        }
+
+        return array_keys($value) === range(0, count($value) - 1);
     }
     
     public function sendWelcomeSMS($reservation) {
