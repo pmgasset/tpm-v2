@@ -75,6 +75,7 @@ class GuestManagementSystem {
         $includes = array(
             'class-database.php',
             'class-admin.php',
+            'class-messaging-channel-interface.php',
             'class-webhook-handler.php',
             'class-guest-portal.php',
             'class-email-handler.php',
@@ -135,6 +136,7 @@ class GuestManagementSystem {
     
     public function deactivate() {
         flush_rewrite_rules();
+        wp_clear_scheduled_hook('gms_sync_provider_messages');
     }
     
     private function addGuestRole() {

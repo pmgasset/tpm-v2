@@ -14,10 +14,10 @@ class GMS_Webhook_Handler {
         add_action('wp_ajax_nopriv_gms_webhook_airbnb', array($this, 'handleAirbnbWebhook'));
         add_action('wp_ajax_nopriv_gms_webhook_vrbo', array($this, 'handleVrboWebhook'));
         add_action('wp_ajax_nopriv_gms_webhook_generic', array($this, 'handleGenericWebhook'));
-        
+
         // Email parsing hook
         add_action('wp_mail_succeeded', array($this, 'parseIncomingEmail'));
-        
+
         // REST API endpoints
         add_action('rest_api_init', array($this, 'registerRestEndpoints'));
     }
@@ -92,6 +92,18 @@ class GMS_Webhook_Handler {
                 )
             )
         ));
+
+        register_rest_route('gms/v1', '/messaging/(?P<channel>[a-z0-9_-]+)/inbound', array(
+            'methods' => array('POST'),
+            'callback' => array($this, 'handleMessagingWebhook'),
+            'permission_callback' => '__return_true',
+            'args' => array(
+                'channel' => array(
+                    'required' => true,
+                    'type' => 'string'
+                )
+            )
+        ));
     }
     
     public function handleRestWebhook($request) {
@@ -132,15 +144,30 @@ class GMS_Webhook_Handler {
             : get_option('gms_webhook_token', '');
         
         // Get token from request (header or query param)
-        $auth_token = $request->get_header('x-webhook-token'); // Try lowercase
-        
-        if (!$auth_token) {
-            $auth_token = $request->get_header('X-Webhook-Token'); // Try capitalized
+        $auth_token = '';
+        $header_keys = array(
+            'x-webhook-token',
+            'X-Webhook-Token',
+            'x-messaging-token',
+            'X-Messaging-Token',
+            'x-messaging-secret',
+            'X-Messaging-Secret'
+        );
+
+        foreach ($header_keys as $header_key) {
+            $candidate = $request->get_header($header_key);
+            if (!empty($candidate)) {
+                $auth_token = $candidate;
+                break;
+            }
         }
-        
-        // If not in header, check query parameter
-        if (!$auth_token) {
+
+        if (empty($auth_token)) {
             $auth_token = $request->get_param('webhook_token');
+        }
+
+        if (empty($auth_token)) {
+            $auth_token = $request->get_param('token');
         }
         
         // Debug logging
@@ -156,13 +183,65 @@ class GMS_Webhook_Handler {
         }
         
         // Verify token matches
-        if ($auth_token === $expected_token) {
+        if (!empty($expected_token) && !empty($auth_token) && hash_equals($expected_token, $auth_token)) {
             error_log('GMS: Webhook authentication successful');
             return true;
         }
-        
+
         error_log('GMS: Webhook authentication FAILED - token mismatch');
         return false;
+    }
+
+    public function handleMessagingWebhook($request) {
+        if (!$this->verifyWebhookAuth($request)) {
+            return new WP_REST_Response(array(
+                'success' => false,
+                'message' => 'Unauthorized - Invalid webhook token'
+            ), 401);
+        }
+
+        $channel = sanitize_key($request->get_param('channel'));
+
+        $handler = $this->resolveMessagingChannelHandler($channel);
+
+        if (!$handler) {
+            return new WP_REST_Response(array(
+                'success' => false,
+                'message' => 'Unsupported messaging channel'
+            ), 404);
+        }
+
+        $payload = $request->get_json_params();
+
+        if (empty($payload)) {
+            $payload = $request->get_params();
+        }
+
+        if (!is_array($payload)) {
+            $payload = array();
+        }
+
+        $result = $handler->ingestWebhookPayload($payload, $request);
+
+        $status = !empty($result['success']) ? 200 : 400;
+
+        return new WP_REST_Response($result, $status);
+    }
+
+    private function resolveMessagingChannelHandler($channel) {
+        $handler = null;
+
+        if ($channel === 'sms') {
+            $handler = new GMS_SMS_Handler();
+        }
+
+        $handler = apply_filters('gms_messaging_channel_handler', $handler, $channel);
+
+        if ($handler instanceof GMS_Messaging_Channel_Interface) {
+            return $handler;
+        }
+
+        return null;
     }
     
     public function handleBookingWebhook() {
