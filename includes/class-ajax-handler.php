@@ -25,6 +25,7 @@ class GMS_AJAX_Handler {
         add_action('wp_ajax_gms_fetch_thread_messages', array($this, 'fetch_thread_messages'));
         add_action('wp_ajax_gms_send_message_reply', array($this, 'send_message_reply'));
         add_action('wp_ajax_gms_mark_thread_read', array($this, 'mark_thread_read'));
+        add_action('wp_ajax_gms_list_message_templates', array($this, 'list_message_templates'));
     }
 
     /**
@@ -219,5 +220,23 @@ class GMS_AJAX_Handler {
             'updated' => $updated,
             'thread' => $context,
         ));
+    }
+
+    public function list_message_templates() {
+        $this->verify_messaging_permissions();
+
+        $channel = isset($_REQUEST['channel']) ? sanitize_key(wp_unslash($_REQUEST['channel'])) : '';
+        $search = isset($_REQUEST['search']) ? sanitize_text_field(wp_unslash($_REQUEST['search'])) : '';
+        $page = isset($_REQUEST['page']) ? max(1, intval($_REQUEST['page'])) : 1;
+        $per_page = isset($_REQUEST['per_page']) ? max(1, min(100, intval($_REQUEST['per_page']))) : 25;
+
+        $templates = GMS_Database::getMessageTemplates(array(
+            'channel' => $channel,
+            'search' => $search,
+            'page' => $page,
+            'per_page' => $per_page,
+        ));
+
+        wp_send_json_success($templates);
     }
 }
