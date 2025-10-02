@@ -236,54 +236,11 @@ class GMS_Reservations_List_Table extends WP_List_Table {
     }
 
     public function process_bulk_action() {
-        if ($this->current_action() !== 'delete') {
+        // Bulk deletions are processed early on the load-* hook to avoid
+        // triggering redirects after headers have already been sent.
+        if ($this->current_action() === 'delete') {
             return;
         }
-
-        $nonce = isset($_REQUEST['_wpnonce']) ? wp_unslash($_REQUEST['_wpnonce']) : '';
-        if (!wp_verify_nonce($nonce, 'bulk-' . $this->_args['plural'])) {
-            return;
-        }
-
-        $ids = isset($_REQUEST['reservation']) ? array_map('absint', (array) $_REQUEST['reservation']) : [];
-        $ids = array_filter($ids);
-
-        $redirect_args = [
-            'page' => 'guest-management-reservations',
-        ];
-
-        foreach (['reservation_status', 'checkin_filter', 'orderby', 'order'] as $key) {
-            if (!isset($_REQUEST[$key])) {
-                continue;
-            }
-
-            $value = sanitize_key(wp_unslash($_REQUEST[$key]));
-            if ($value !== '') {
-                $redirect_args[$key] = $value;
-            }
-        }
-
-        if (!empty($_REQUEST['s'])) {
-            $redirect_args['s'] = sanitize_text_field(wp_unslash($_REQUEST['s']));
-        }
-
-        $redirect_url = add_query_arg($redirect_args, admin_url('admin.php'));
-
-        if (empty($ids)) {
-            wp_safe_redirect($redirect_url);
-            exit;
-        }
-
-        $deleted = GMS_Database::delete_reservations($ids);
-
-        if ($deleted > 0) {
-            $redirect_url = add_query_arg('gms_reservation_deleted', $deleted, $redirect_url);
-        } else {
-            $redirect_url = add_query_arg('gms_reservation_delete_error', 1, $redirect_url);
-        }
-
-        wp_safe_redirect($redirect_url);
-        exit;
     }
 
     public function prepare_items() {
@@ -483,54 +440,11 @@ class GMS_Guests_List_Table extends WP_List_Table {
     }
 
     public function process_bulk_action() {
-        if ($this->current_action() !== 'delete') {
+        // Bulk deletions are handled before the page renders so redirects
+        // occur before WordPress outputs the admin header.
+        if ($this->current_action() === 'delete') {
             return;
         }
-
-        $nonce = isset($_REQUEST['_wpnonce']) ? wp_unslash($_REQUEST['_wpnonce']) : '';
-        if (!wp_verify_nonce($nonce, 'bulk-' . $this->_args['plural'])) {
-            return;
-        }
-
-        $ids = isset($_REQUEST['guest']) ? array_map('absint', (array) $_REQUEST['guest']) : [];
-        $ids = array_filter($ids);
-
-        $redirect_args = [
-            'page' => 'guest-management-guests',
-        ];
-
-        foreach (['guest_status', 'orderby', 'order'] as $key) {
-            if (!isset($_REQUEST[$key])) {
-                continue;
-            }
-
-            $value = sanitize_key(wp_unslash($_REQUEST[$key]));
-            if ($value !== '') {
-                $redirect_args[$key] = $value;
-            }
-        }
-
-        if (!empty($_REQUEST['s'])) {
-            $redirect_args['s'] = sanitize_text_field(wp_unslash($_REQUEST['s']));
-        }
-
-        $redirect_url = add_query_arg($redirect_args, admin_url('admin.php'));
-
-        if (empty($ids)) {
-            wp_safe_redirect($redirect_url);
-            exit;
-        }
-
-        $deleted = GMS_Database::delete_guests($ids);
-
-        if ($deleted > 0) {
-            $redirect_url = add_query_arg('gms_guest_deleted', $deleted, $redirect_url);
-        } else {
-            $redirect_url = add_query_arg('gms_guest_delete_error', 1, $redirect_url);
-        }
-
-        wp_safe_redirect($redirect_url);
-        exit;
     }
 
     public function prepare_items() {
@@ -759,6 +673,64 @@ class GMS_Admin {
         add_action('wp_ajax_gms_refresh_stats', array($this, 'ajax_refresh_stats'));
         add_action('admin_post_gms_save_message_template', array($this, 'handle_save_message_template'));
         add_action('admin_post_gms_delete_message_template', array($this, 'handle_delete_message_template'));
+    }
+
+    private function build_reservations_redirect_url() {
+        $redirect_args = array(
+            'page' => 'guest-management-reservations',
+        );
+
+        $keys = array('reservation_status', 'checkin_filter', 'orderby', 'order');
+        foreach ($keys as $key) {
+            if (!isset($_REQUEST[$key])) {
+                continue;
+            }
+
+            $value = sanitize_key(wp_unslash($_REQUEST[$key]));
+            if ($value !== '') {
+                $redirect_args[$key] = $value;
+            }
+        }
+
+        if (!empty($_REQUEST['s'])) {
+            $redirect_args['s'] = sanitize_text_field(wp_unslash($_REQUEST['s']));
+        }
+
+        $paged = isset($_REQUEST['paged']) ? absint($_REQUEST['paged']) : 0;
+        if ($paged > 1) {
+            $redirect_args['paged'] = $paged;
+        }
+
+        return add_query_arg($redirect_args, admin_url('admin.php'));
+    }
+
+    private function build_guests_redirect_url() {
+        $redirect_args = array(
+            'page' => 'guest-management-guests',
+        );
+
+        $keys = array('guest_status', 'orderby', 'order');
+        foreach ($keys as $key) {
+            if (!isset($_REQUEST[$key])) {
+                continue;
+            }
+
+            $value = sanitize_key(wp_unslash($_REQUEST[$key]));
+            if ($value !== '') {
+                $redirect_args[$key] = $value;
+            }
+        }
+
+        if (!empty($_REQUEST['s'])) {
+            $redirect_args['s'] = sanitize_text_field(wp_unslash($_REQUEST['s']));
+        }
+
+        $paged = isset($_REQUEST['paged']) ? absint($_REQUEST['paged']) : 0;
+        if ($paged > 1) {
+            $redirect_args['paged'] = $paged;
+        }
+
+        return add_query_arg($redirect_args, admin_url('admin.php'));
     }
 
     public function ajax_test_sms() {
@@ -1741,7 +1713,7 @@ class GMS_Admin {
             [$this, 'render_dashboard_page']
         );
 
-        add_submenu_page(
+        $reservations_hook = add_submenu_page(
             'guest-management-dashboard',
             'Reservations',
             'Reservations',
@@ -1750,7 +1722,7 @@ class GMS_Admin {
             [$this, 'render_reservations_page']
         );
 
-        add_submenu_page(
+        $guests_hook = add_submenu_page(
             'guest-management-dashboard',
             'Guests',
             'Guests',
@@ -1785,6 +1757,142 @@ class GMS_Admin {
             'guest-management-settings',
             [$this, 'render_settings_page']
         );
+
+        if (!empty($reservations_hook)) {
+            add_action('load-' . $reservations_hook, [$this, 'handle_reservations_actions']);
+        }
+
+        if (!empty($guests_hook)) {
+            add_action('load-' . $guests_hook, [$this, 'handle_guests_actions']);
+        }
+    }
+
+    public function handle_reservations_actions() {
+        if (!current_user_can('manage_options')) {
+            return;
+        }
+
+        if (isset($_GET['action']) && sanitize_key(wp_unslash($_GET['action'])) === 'delete') {
+            $reservation_id = isset($_GET['reservation_id']) ? absint(wp_unslash($_GET['reservation_id'])) : 0;
+            $nonce = isset($_GET['_wpnonce']) ? wp_unslash($_GET['_wpnonce']) : '';
+
+            $redirect_url = $this->build_reservations_redirect_url();
+
+            if ($reservation_id > 0 && wp_verify_nonce($nonce, 'gms_delete_reservation_' . $reservation_id)) {
+                $deleted = GMS_Database::delete_reservations(array($reservation_id));
+
+                if ($deleted > 0) {
+                    $redirect_url = add_query_arg('gms_reservation_deleted', $deleted, $redirect_url);
+                } else {
+                    $redirect_url = add_query_arg('gms_reservation_delete_error', 1, $redirect_url);
+                }
+            } else {
+                $redirect_url = add_query_arg('gms_reservation_delete_error', 1, $redirect_url);
+            }
+
+            wp_safe_redirect($redirect_url);
+            exit;
+        }
+
+        $primary_action = isset($_REQUEST['action']) ? sanitize_key(wp_unslash($_REQUEST['action'])) : '';
+        $secondary_action = isset($_REQUEST['action2']) ? sanitize_key(wp_unslash($_REQUEST['action2'])) : '';
+        $current_action = $primary_action !== '-1' ? $primary_action : $secondary_action;
+
+        if ($current_action !== 'delete') {
+            return;
+        }
+
+        $redirect_url = $this->build_reservations_redirect_url();
+
+        $nonce = isset($_REQUEST['_wpnonce']) ? wp_unslash($_REQUEST['_wpnonce']) : '';
+        if (!wp_verify_nonce($nonce, 'bulk-reservations')) {
+            $redirect_url = add_query_arg('gms_reservation_delete_error', 1, $redirect_url);
+            wp_safe_redirect($redirect_url);
+            exit;
+        }
+
+        $ids = isset($_REQUEST['reservation']) ? array_map('absint', (array) $_REQUEST['reservation']) : array();
+        $ids = array_filter($ids);
+
+        if (empty($ids)) {
+            wp_safe_redirect($redirect_url);
+            exit;
+        }
+
+        $deleted = GMS_Database::delete_reservations($ids);
+
+        if ($deleted > 0) {
+            $redirect_url = add_query_arg('gms_reservation_deleted', $deleted, $redirect_url);
+        } else {
+            $redirect_url = add_query_arg('gms_reservation_delete_error', 1, $redirect_url);
+        }
+
+        wp_safe_redirect($redirect_url);
+        exit;
+    }
+
+    public function handle_guests_actions() {
+        if (!current_user_can('manage_options')) {
+            return;
+        }
+
+        if (isset($_GET['action']) && sanitize_key(wp_unslash($_GET['action'])) === 'delete') {
+            $guest_id = isset($_GET['guest_id']) ? absint(wp_unslash($_GET['guest_id'])) : 0;
+            $nonce = isset($_GET['_wpnonce']) ? wp_unslash($_GET['_wpnonce']) : '';
+
+            $redirect_url = $this->build_guests_redirect_url();
+
+            if ($guest_id > 0 && wp_verify_nonce($nonce, 'gms_delete_guest_' . $guest_id)) {
+                $deleted = GMS_Database::delete_guests(array($guest_id));
+
+                if ($deleted > 0) {
+                    $redirect_url = add_query_arg('gms_guest_deleted', $deleted, $redirect_url);
+                } else {
+                    $redirect_url = add_query_arg('gms_guest_delete_error', 1, $redirect_url);
+                }
+            } else {
+                $redirect_url = add_query_arg('gms_guest_delete_error', 1, $redirect_url);
+            }
+
+            wp_safe_redirect($redirect_url);
+            exit;
+        }
+
+        $primary_action = isset($_REQUEST['action']) ? sanitize_key(wp_unslash($_REQUEST['action'])) : '';
+        $secondary_action = isset($_REQUEST['action2']) ? sanitize_key(wp_unslash($_REQUEST['action2'])) : '';
+        $current_action = $primary_action !== '-1' ? $primary_action : $secondary_action;
+
+        if ($current_action !== 'delete') {
+            return;
+        }
+
+        $redirect_url = $this->build_guests_redirect_url();
+
+        $nonce = isset($_REQUEST['_wpnonce']) ? wp_unslash($_REQUEST['_wpnonce']) : '';
+        if (!wp_verify_nonce($nonce, 'bulk-guests')) {
+            $redirect_url = add_query_arg('gms_guest_delete_error', 1, $redirect_url);
+            wp_safe_redirect($redirect_url);
+            exit;
+        }
+
+        $ids = isset($_REQUEST['guest']) ? array_map('absint', (array) $_REQUEST['guest']) : array();
+        $ids = array_filter($ids);
+
+        if (empty($ids)) {
+            wp_safe_redirect($redirect_url);
+            exit;
+        }
+
+        $deleted = GMS_Database::delete_guests($ids);
+
+        if ($deleted > 0) {
+            $redirect_url = add_query_arg('gms_guest_deleted', $deleted, $redirect_url);
+        } else {
+            $redirect_url = add_query_arg('gms_guest_delete_error', 1, $redirect_url);
+        }
+
+        wp_safe_redirect($redirect_url);
+        exit;
     }
 
     public function render_dashboard_page() {
@@ -2613,45 +2721,6 @@ class GMS_Admin {
             $guest_id = isset($_GET['guest_id']) ? absint(wp_unslash($_GET['guest_id'])) : 0;
             $this->render_guest_edit_page($guest_id);
             return;
-        }
-
-        if ($action === 'delete') {
-            $guest_id = isset($_GET['guest_id']) ? absint(wp_unslash($_GET['guest_id'])) : 0;
-            $nonce = isset($_GET['_wpnonce']) ? wp_unslash($_GET['_wpnonce']) : '';
-
-            $redirect_args = ['page' => 'guest-management-guests'];
-
-            foreach (['guest_status', 'orderby', 'order'] as $key) {
-                if (!isset($_GET[$key])) {
-                    continue;
-                }
-
-                $value = sanitize_key(wp_unslash($_GET[$key]));
-                if ($value !== '') {
-                    $redirect_args[$key] = $value;
-                }
-            }
-
-            if (isset($_GET['s']) && $_GET['s'] !== '') {
-                $redirect_args['s'] = sanitize_text_field(wp_unslash($_GET['s']));
-            }
-
-            $redirect_url = add_query_arg($redirect_args, admin_url('admin.php'));
-
-            if ($guest_id > 0 && wp_verify_nonce($nonce, 'gms_delete_guest_' . $guest_id)) {
-                $deleted = GMS_Database::delete_guests([$guest_id]);
-
-                if ($deleted > 0) {
-                    $redirect_url = add_query_arg('gms_guest_deleted', $deleted, $redirect_url);
-                } else {
-                    $redirect_url = add_query_arg('gms_guest_delete_error', 1, $redirect_url);
-                }
-            } else {
-                $redirect_url = add_query_arg('gms_guest_delete_error', 1, $redirect_url);
-            }
-
-            wp_safe_redirect($redirect_url);
-            exit;
         }
 
         $guests_table = new GMS_Guests_List_Table();
