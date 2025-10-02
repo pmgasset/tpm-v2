@@ -664,11 +664,18 @@
 
         // Bulk actions for reservations
         $('#doaction, #doaction2').on('click', function(e) {
-            e.preventDefault();
-            
             var action = $(this).prev('select').val();
+
+            // Allow the standard form submission to process deletions so
+            // nonce validation and the server-side redirect/notices occur.
+            if (action === 'delete') {
+                return;
+            }
+
+            e.preventDefault();
+
             var selectedIds = [];
-            
+
             $('input[type="checkbox"]:checked').each(function() {
                 var id = $(this).val();
                 if (id && id !== 'on') {
