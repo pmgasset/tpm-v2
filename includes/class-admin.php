@@ -2027,6 +2027,45 @@ class GMS_Admin {
             return;
         }
 
+        if ($action === 'delete') {
+            $reservation_id = isset($_GET['reservation_id']) ? absint(wp_unslash($_GET['reservation_id'])) : 0;
+            $nonce = isset($_GET['_wpnonce']) ? wp_unslash($_GET['_wpnonce']) : '';
+
+            $redirect_args = ['page' => 'guest-management-reservations'];
+
+            foreach (['reservation_status', 'checkin_filter', 'orderby', 'order'] as $key) {
+                if (!isset($_GET[$key])) {
+                    continue;
+                }
+
+                $value = sanitize_key(wp_unslash($_GET[$key]));
+                if ($value !== '') {
+                    $redirect_args[$key] = $value;
+                }
+            }
+
+            if (isset($_GET['s']) && $_GET['s'] !== '') {
+                $redirect_args['s'] = sanitize_text_field(wp_unslash($_GET['s']));
+            }
+
+            $redirect_url = add_query_arg($redirect_args, admin_url('admin.php'));
+
+            if ($reservation_id > 0 && wp_verify_nonce($nonce, 'gms_delete_reservation_' . $reservation_id)) {
+                $deleted = GMS_Database::delete_reservations([$reservation_id]);
+
+                if ($deleted > 0) {
+                    $redirect_url = add_query_arg('gms_reservation_deleted', $deleted, $redirect_url);
+                } else {
+                    $redirect_url = add_query_arg('gms_reservation_delete_error', 1, $redirect_url);
+                }
+            } else {
+                $redirect_url = add_query_arg('gms_reservation_delete_error', 1, $redirect_url);
+            }
+
+            wp_safe_redirect($redirect_url);
+            exit;
+        }
+
         $reservations_table = new GMS_Reservations_List_Table();
         $reservations_table->prepare_items();
 
