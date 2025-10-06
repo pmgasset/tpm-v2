@@ -13,12 +13,12 @@
         constructor(canvasId) {
             this.canvas = document.getElementById(canvasId);
             if (!this.canvas) return;
-            
+
             this.ctx = this.canvas.getContext('2d');
             this.isDrawing = false;
             this.lastX = 0;
             this.lastY = 0;
-            
+
             this.init();
         }
 
@@ -114,9 +114,281 @@
         }
     }
 
+    function parseBoolean(value) {
+        if (typeof value === 'boolean') {
+            return value;
+        }
+
+        if (typeof value === 'string') {
+            return value.toLowerCase() === 'true';
+        }
+
+        return Boolean(value);
+    }
+
+    const reservationId = typeof window.gmsReservationId !== 'undefined'
+        ? parseInt(window.gmsReservationId, 10) || 0
+        : 0;
+    const ajaxUrl = typeof window.gmsAjaxUrl === 'string'
+        ? window.gmsAjaxUrl
+        : (typeof window.ajaxurl === 'string' ? window.ajaxurl : '');
+    const guestNonce = typeof window.gmsNonce === 'string' ? window.gmsNonce : '';
+    const contactStrings = window.gmsContactStrings || {
+        helperComplete: 'Need to make a change? Update your contact details below.',
+        helperIncomplete: 'We need your legal name and contact information before we can confirm the reservation. The remaining steps will unlock once this is saved.',
+        saving: 'Saving your details…',
+        success: 'Contact information saved. You can move on to the next step.',
+        failure: 'Unable to save contact information. Please try again.',
+        networkError: 'We could not save your details due to a network error. Please try again.',
+        saveLabel: 'Save & Continue',
+        updateLabel: 'Update Details',
+        missingConfig: 'We could not save your details because the portal is missing required configuration.'
+    };
+
+    let contactInfoComplete = parseBoolean(window.gmsContactInfoComplete);
+
+    function toggleContactDependentSections() {
+        const sections = document.querySelectorAll('.requires-contact-info');
+        sections.forEach((section) => {
+            if (!section) {
+                return;
+            }
+
+            if (contactInfoComplete) {
+                section.classList.remove('hidden');
+            } else {
+                section.classList.add('hidden');
+            }
+        });
+    }
+
+    function updateContactSummary(payload) {
+        const summary = document.getElementById('contact-info-summary');
+        if (summary) {
+            const nameEl = document.getElementById('contact-summary-name');
+            if (nameEl && payload.guest_name) {
+                nameEl.textContent = payload.guest_name;
+            }
+
+            const emailEl = document.getElementById('contact-summary-email');
+            if (emailEl && payload.guest_email) {
+                emailEl.textContent = payload.guest_email;
+            }
+
+            const phoneEl = document.getElementById('contact-summary-phone');
+            if (phoneEl && (payload.display_phone || payload.guest_phone)) {
+                phoneEl.textContent = payload.display_phone || payload.guest_phone;
+            }
+
+            summary.classList.remove('hidden');
+        }
+
+        const helper = document.getElementById('contact-section-helper');
+        if (helper) {
+            helper.textContent = contactStrings.helperComplete;
+        }
+    }
+
+    function submitContactInfo(context) {
+        const { contactForm, submitBtn, messageDiv, helper, updateSubmitState } = context;
+        const firstNameInput = document.getElementById('guest-first-name');
+        const lastNameInput = document.getElementById('guest-last-name');
+        const emailInput = document.getElementById('guest-email');
+        const phoneInput = document.getElementById('guest-phone');
+
+        const firstName = firstNameInput ? firstNameInput.value.trim() : '';
+        const lastName = lastNameInput ? lastNameInput.value.trim() : '';
+        const email = emailInput ? emailInput.value.trim() : '';
+        const phone = phoneInput ? phoneInput.value.trim() : '';
+
+        if (firstNameInput) {
+            firstNameInput.value = firstName;
+        }
+        if (lastNameInput) {
+            lastNameInput.value = lastName;
+        }
+        if (emailInput) {
+            emailInput.value = email;
+        }
+        if (phoneInput) {
+            phoneInput.value = phone;
+        }
+
+        const canSubmit = reservationId > 0 && ajaxUrl !== '' && guestNonce !== '';
+        const originalLabel = contactInfoComplete ? contactStrings.updateLabel : contactStrings.saveLabel;
+
+        if (submitBtn) {
+            submitBtn.disabled = true;
+            submitBtn.textContent = contactStrings.saving;
+        }
+
+        if (messageDiv) {
+            messageDiv.innerHTML = '<div class="loading"><div class="spinner"></div><p>' + contactStrings.saving + '</p></div>';
+        }
+
+        if (!canSubmit) {
+            if (messageDiv) {
+                messageDiv.innerHTML = '<div class="error-message">❌ ' + contactStrings.missingConfig + '</div>';
+            }
+            if (submitBtn) {
+                submitBtn.disabled = false;
+                submitBtn.textContent = originalLabel;
+            }
+            return;
+        }
+
+        const wasComplete = contactInfoComplete;
+
+        const formData = new FormData();
+        formData.append('action', 'gms_update_contact_info');
+        formData.append('reservation_id', reservationId);
+        formData.append('nonce', guestNonce);
+        formData.append('first_name', firstName);
+        formData.append('last_name', lastName);
+        formData.append('email', email);
+        formData.append('phone', phone);
+
+        fetch(ajaxUrl, {
+            method: 'POST',
+            body: formData
+        })
+            .then((response) => response.json())
+            .then((data) => {
+                if (data.success) {
+                    const payload = data.data || {};
+                    contactInfoComplete = true;
+                    window.gmsContactInfoComplete = true;
+
+                    updateContactSummary(payload);
+                    toggleContactDependentSections();
+
+                    const contactChecklist = document.getElementById('contact-checklist');
+                    if (contactChecklist) {
+                        contactChecklist.classList.add('completed');
+                        const icon = contactChecklist.querySelector('.checklist-icon');
+                        if (icon) {
+                            icon.textContent = '✓';
+                        }
+                    }
+
+                    if (payload.first_name && firstNameInput) {
+                        firstNameInput.value = payload.first_name;
+                    }
+                    if (payload.last_name && lastNameInput) {
+                        lastNameInput.value = payload.last_name;
+                    }
+                    if (payload.guest_email && emailInput) {
+                        emailInput.value = payload.guest_email;
+                    }
+                    if ((payload.guest_phone || payload.display_phone) && phoneInput) {
+                        phoneInput.value = payload.guest_phone || payload.display_phone;
+                    }
+
+                    if (helper) {
+                        helper.textContent = contactStrings.helperComplete;
+                    }
+
+                    if (messageDiv) {
+                        messageDiv.innerHTML = '<div class="success-message">✅ ' + contactStrings.success + '</div>';
+                    }
+
+                    const guestNameDisplay = document.getElementById('guest-name-display');
+                    if (guestNameDisplay && payload.guest_name) {
+                        guestNameDisplay.textContent = payload.guest_name;
+                    }
+
+                    if (payload.agreement_html) {
+                        const agreementText = document.getElementById('agreement-text');
+                        if (agreementText) {
+                            agreementText.innerHTML = payload.agreement_html;
+                        }
+                    }
+
+                    if (typeof updateProgress === 'function') {
+                        updateProgress();
+                    }
+
+                    if (!wasComplete) {
+                        const agreementSection = document.getElementById('agreement-section');
+                        if (agreementSection) {
+                            setTimeout(() => {
+                                agreementSection.scrollIntoView({ behavior: 'smooth' });
+                            }, 400);
+                        }
+                    }
+                } else if (messageDiv) {
+                    messageDiv.innerHTML = '<div class="error-message">❌ ' + (data.data || contactStrings.failure) + '</div>';
+                }
+            })
+            .catch(() => {
+                if (messageDiv) {
+                    messageDiv.innerHTML = '<div class="error-message">❌ ' + contactStrings.networkError + '</div>';
+                }
+            })
+            .finally(() => {
+                if (submitBtn) {
+                    submitBtn.textContent = contactInfoComplete ? contactStrings.updateLabel : contactStrings.saveLabel;
+                    submitBtn.disabled = false;
+                }
+
+                if (typeof updateSubmitState === 'function') {
+                    updateSubmitState();
+                }
+            });
+    }
+
+    function setupContactForm() {
+        const contactForm = document.getElementById('contact-info-form');
+        if (!contactForm) {
+            return;
+        }
+
+        const submitBtn = document.getElementById('save-contact-info');
+        const messageDiv = document.getElementById('contact-info-message');
+        const helper = document.getElementById('contact-section-helper');
+
+        if (helper) {
+            helper.textContent = contactInfoComplete ? contactStrings.helperComplete : contactStrings.helperIncomplete;
+        }
+
+        const updateSubmitState = () => {
+            if (!submitBtn) {
+                return;
+            }
+            submitBtn.disabled = !contactForm.checkValidity();
+        };
+
+        contactForm.querySelectorAll('input').forEach((input) => {
+            input.addEventListener('input', updateSubmitState);
+            input.addEventListener('blur', () => {
+                input.value = input.value.trim();
+                updateSubmitState();
+            });
+        });
+
+        updateSubmitState();
+
+        contactForm.addEventListener('submit', (event) => {
+            event.preventDefault();
+
+            if (!contactForm.checkValidity()) {
+                contactForm.reportValidity();
+                return;
+            }
+
+            submitContactInfo({
+                contactForm,
+                submitBtn,
+                messageDiv,
+                helper,
+                updateSubmitState
+            });
+        });
+    }
+
     // Initialize when DOM is ready
     document.addEventListener('DOMContentLoaded', function() {
-        
+
         // Initialize signature pad
         let signaturePad = null;
         const canvas = document.getElementById('signature-canvas');
@@ -174,6 +446,9 @@
             });
         }
 
+        setupContactForm();
+        toggleContactDependentSections();
+
         // Progress bar update
         updateProgress();
     });
@@ -193,11 +468,11 @@
 
         const formData = new FormData();
         formData.append('action', 'gms_submit_agreement');
-        formData.append('reservation_id', window.gmsReservationId);
+        formData.append('reservation_id', reservationId);
         formData.append('signature_data', signaturePad.toDataURL());
-        formData.append('nonce', window.gmsNonce);
+        formData.append('nonce', guestNonce);
 
-        fetch(window.gmsAjaxUrl, {
+        fetch(ajaxUrl, {
             method: 'POST',
             body: formData
         })
@@ -237,7 +512,7 @@
     // Start Identity Verification
     function startIdentityVerification() {
         if (!window.Stripe || !window.gmsStripeKey) {
-            document.getElementById('verification-message').innerHTML = 
+            document.getElementById('verification-message').innerHTML =
                 '<div class="error-message">❌ Identity verification is not configured</div>';
             return;
         }
@@ -250,10 +525,10 @@
 
         const formData = new FormData();
         formData.append('action', 'gms_create_verification_session');
-        formData.append('reservation_id', window.gmsReservationId);
-        formData.append('nonce', window.gmsNonce);
+        formData.append('reservation_id', reservationId);
+        formData.append('nonce', guestNonce);
 
-        fetch(window.gmsAjaxUrl, {
+        fetch(ajaxUrl, {
             method: 'POST',
             body: formData
         })
@@ -301,10 +576,10 @@
 
         const formData = new FormData();
         formData.append('action', 'gms_check_verification_status');
-        formData.append('reservation_id', window.gmsReservationId);
-        formData.append('nonce', window.gmsNonce);
+        formData.append('reservation_id', reservationId);
+        formData.append('nonce', guestNonce);
 
-        fetch(window.gmsAjaxUrl, {
+        fetch(ajaxUrl, {
             method: 'POST',
             body: formData
         })
@@ -413,11 +688,11 @@
         // Update reservation status
         const formData = new FormData();
         formData.append('action', 'gms_update_reservation_status');
-        formData.append('reservation_id', window.gmsReservationId);
+        formData.append('reservation_id', reservationId);
         formData.append('status', 'completed');
-        formData.append('nonce', window.gmsNonce);
+        formData.append('nonce', guestNonce);
 
-        fetch(window.gmsAjaxUrl, {
+        fetch(ajaxUrl, {
             method: 'POST',
             body: formData
         }).catch(error => console.error('Error updating status:', error));
