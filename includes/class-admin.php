@@ -1203,6 +1203,18 @@ class GMS_Admin {
             'gms_voipms_user' => array('label' => __('VoIP.ms Username', 'guest-management-system')),
             'gms_voipms_pass' => array('label' => __('VoIP.ms API Password', 'guest-management-system')),
             'gms_voipms_did' => array('label' => __('VoIP.ms SMS DID', 'guest-management-system')),
+            'gms_airbnb_access_token' => array(
+                'label' => __('Airbnb Messaging Token', 'guest-management-system'),
+                'description' => __('Required to send reservation updates directly to Airbnb inboxes.', 'guest-management-system'),
+            ),
+            'gms_vrbo_access_token' => array(
+                'label' => __('VRBO Messaging Token', 'guest-management-system'),
+                'description' => __('Enable VRBO in-app messaging when guest contact details are hidden.', 'guest-management-system'),
+            ),
+            'gms_booking_access_token' => array(
+                'label' => __('Booking.com Messaging Token', 'guest-management-system'),
+                'description' => __('Used for posting messages to Booking.com guest conversations.', 'guest-management-system'),
+            ),
             'gms_bitly_token' => array('label' => __('Bitly Access Token', 'guest-management-system')),
             'gms_webhook_token' => array('label' => __('Webhook Shared Secret', 'guest-management-system'))
         );
@@ -1663,7 +1675,7 @@ class GMS_Admin {
      * Render contextual guidance for integrations, including webhook endpoints
      */
     public function render_integrations_help() {
-        echo '<p>' . esc_html__('Provide credentials for payment processing, SMS delivery, URL shortening, and webhook security.', 'guest-management-system') . '</p>';
+        echo '<p>' . esc_html__('Provide credentials for payment processing, SMS delivery, OTA inbox messaging, URL shortening, and webhook security.', 'guest-management-system') . '</p>';
 
         $webhook_urls = function_exists('gms_get_webhook_urls') ? gms_get_webhook_urls() : array();
 
@@ -1691,6 +1703,8 @@ class GMS_Admin {
         echo '</ul>';
         echo '<p>' . esc_html__('Authenticate webhook requests by sending the shared secret saved below as the X-Webhook-Token header or as a webhook_token query parameter.', 'guest-management-system') . '</p>';
         echo '</div>';
+
+        echo '<p class="description">' . esc_html__('Add the Airbnb, VRBO, and Booking.com messaging tokens above to unlock automated OTA conversations when guest contact details are hidden.', 'guest-management-system') . '</p>';
     }
     
     public function add_admin_menu() {
@@ -2014,6 +2028,15 @@ class GMS_Admin {
     }
     
     public function render_reservations_page() {
+        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+            $post_action = isset($_POST['gms_action']) ? sanitize_key(wp_unslash($_POST['gms_action'])) : '';
+
+            if ($post_action === 'sync_platform_reservations') {
+                $this->handle_platform_sync_request();
+                return;
+            }
+        }
+
         $action = isset($_GET['action']) ? sanitize_key(wp_unslash($_GET['action'])) : '';
 
         if ($action === 'new') {
@@ -2078,10 +2101,74 @@ class GMS_Admin {
         );
 
         ?>
-        <div class="wrap">
+        <div class="wrap gms-reservations-index">
             <h1 class="wp-heading-inline">Reservations</h1>
             <a href="<?php echo esc_url($add_new_url); ?>" class="page-title-action"><?php esc_html_e('Add New', 'guest-management-system'); ?></a>
             <hr class="wp-header-end">
+
+            <p class="gms-reservations-index__intro"><?php esc_html_e('Centralize every reservation across your connected platforms.', 'guest-management-system'); ?></p>
+
+            <?php
+            $platform_sync_notice = $this->consume_platform_sync_notice();
+            if ($platform_sync_notice) {
+                $this->render_platform_sync_notice($platform_sync_notice);
+            }
+
+            $platform_configs = array();
+            if (class_exists('GMS_OTA_Reservation_Sync')) {
+                $platform_sync_handler = new GMS_OTA_Reservation_Sync();
+                $platform_configs = $platform_sync_handler->get_platform_config();
+            } else {
+                /**
+                 * Fallback configuration for OTA platforms when the sync handler is not available.
+                 *
+                 * @param array $config Default OTA configuration values.
+                 */
+                $platform_configs = apply_filters('gms_ota_reservation_config', array());
+            }
+
+            if (empty($platform_configs)) {
+                $platform_configs = array(
+                    'airbnb' => array('label' => __('Airbnb', 'guest-management-system')),
+                    'vrbo' => array('label' => __('VRBO', 'guest-management-system')),
+                    'booking_com' => array('label' => __('Booking.com', 'guest-management-system')),
+                );
+            }
+
+            if (!empty($platform_configs)) :
+                ?>
+                <div class="gms-panel gms-reservations-sync">
+                    <h2><?php esc_html_e('Sync Platform Reservations', 'guest-management-system'); ?></h2>
+                    <p><?php esc_html_e('Import the latest reservations from connected platforms so you can manage every stay here.', 'guest-management-system'); ?></p>
+                    <form method="post" class="gms-reservations-sync__form">
+                        <?php wp_nonce_field('gms_sync_platform_reservations'); ?>
+                        <input type="hidden" name="gms_action" value="sync_platform_reservations">
+                        <div class="gms-reservations-sync__field">
+                            <label for="gms_sync_platform"><?php esc_html_e('Platform', 'guest-management-system'); ?></label>
+                            <select name="gms_sync_platform" id="gms_sync_platform">
+                                <option value="all"><?php esc_html_e('All Connected Platforms', 'guest-management-system'); ?></option>
+                                <?php foreach ($platform_configs as $platform_key => $platform_settings) :
+                                    $label = isset($platform_settings['label']) ? $platform_settings['label'] : ucfirst(str_replace('_', ' ', $platform_key));
+                                    ?>
+                                    <option value="<?php echo esc_attr($platform_key); ?>"><?php echo esc_html($label); ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div class="gms-reservations-sync__field">
+                            <label for="gms_sync_since"><?php esc_html_e('Updated Since', 'guest-management-system'); ?></label>
+                            <input type="date" name="gms_sync_since" id="gms_sync_since" value="">
+                        </div>
+                        <div class="gms-reservations-sync__field">
+                            <label for="gms_sync_limit"><?php esc_html_e('Limit', 'guest-management-system'); ?></label>
+                            <input type="number" name="gms_sync_limit" id="gms_sync_limit" min="1" max="200" value="50">
+                            <p class="description"><?php esc_html_e('Optional cap to keep the import focused on recent reservations.', 'guest-management-system'); ?></p>
+                        </div>
+                        <div class="gms-reservations-sync__actions">
+                            <button type="submit" class="button button-secondary"><?php esc_html_e('Sync Reservations', 'guest-management-system'); ?></button>
+                        </div>
+                    </form>
+                </div>
+            <?php endif; ?>
 
             <?php if (isset($_GET['gms_reservation_created'])) : ?>
                 <div class="notice notice-success is-dismissible">
@@ -2112,11 +2199,13 @@ class GMS_Admin {
                 </div>
             <?php endif; ?>
 
-            <form method="get">
-                <input type="hidden" name="page" value="guest-management-reservations" />
-                <?php $reservations_table->search_box(__('Search Reservations', 'guest-management-system'), 'gms-reservations'); ?>
-                <?php $reservations_table->display(); ?>
-            </form>
+            <div class="gms-reservations-table">
+                <form method="get" class="gms-reservations-table__form">
+                    <input type="hidden" name="page" value="guest-management-reservations" />
+                    <?php $reservations_table->search_box(__('Search Reservations', 'guest-management-system'), 'gms-reservations'); ?>
+                    <?php $reservations_table->display(); ?>
+                </form>
+            </div>
         </div>
         <?php
     }
@@ -2384,30 +2473,13 @@ class GMS_Admin {
             return;
         }
 
-        $original_door_code = isset($reservation['door_code']) ? (string) $reservation['door_code'] : '';
-
-
         $list_url = add_query_arg(array('page' => 'guest-management-reservations'), admin_url('admin.php'));
 
-
-        $form_values = array(
-            'guest_name' => isset($reservation['guest_name']) ? $reservation['guest_name'] : '',
-            'guest_email' => isset($reservation['guest_email']) ? $reservation['guest_email'] : '',
-            'guest_phone' => isset($reservation['guest_phone']) ? $reservation['guest_phone'] : '',
-            'property_name' => isset($reservation['property_name']) ? $reservation['property_name'] : '',
-            'property_id' => isset($reservation['property_id']) ? $reservation['property_id'] : '',
-            'booking_reference' => isset($reservation['booking_reference']) ? $reservation['booking_reference'] : '',
-            'door_code' => isset($reservation['door_code']) ? $reservation['door_code'] : '',
-            'checkin_date' => $this->format_datetime_for_input(isset($reservation['checkin_date']) ? $reservation['checkin_date'] : ''),
-            'checkout_date' => $this->format_datetime_for_input(isset($reservation['checkout_date']) ? $reservation['checkout_date'] : ''),
-            'status' => isset($reservation['status']) ? $reservation['status'] : 'pending',
-        );
+        $form_values = $this->map_reservation_to_form_values($reservation);
+        $original_door_code = isset($reservation['door_code']) ? (string) $reservation['door_code'] : '';
 
         $errors = array();
-
-
         $success_notice = '';
-
 
         $status_options = function_exists('gms_get_reservation_status_options')
             ? gms_get_reservation_status_options()
@@ -2420,161 +2492,307 @@ class GMS_Admin {
                 'cancelled' => __('Cancelled', 'guest-management-system'),
             );
 
-        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-            check_admin_referer('gms_edit_reservation_' . $reservation_id);
+        $step_feedback = array(
+            'portal' => array('type' => '', 'messages' => array()),
+            'door_code' => array('type' => '', 'messages' => array()),
+            'welcome' => array('type' => '', 'messages' => array()),
+        );
 
+        $platform_refresh_feedback = array('type' => '', 'messages' => array());
+
+        $manual_action_processed = false;
+
+        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+            $action = isset($_POST['gms_action']) ? sanitize_key(wp_unslash($_POST['gms_action'])) : '';
             $posted_id = isset($_POST['reservation_id']) ? absint(wp_unslash($_POST['reservation_id'])) : 0;
 
-            if ($posted_id !== $reservation_id) {
-                $errors[] = __('Invalid reservation request. Please try again.', 'guest-management-system');
-            }
-
-            $fields = array_keys($form_values);
-
-            foreach ($fields as $field) {
-                if (!isset($_POST[$field])) {
-                    $form_values[$field] = '';
-                    continue;
-                }
-
-                $value = wp_unslash($_POST[$field]);
-
-                switch ($field) {
-                    case 'guest_email':
-                        $form_values[$field] = sanitize_email($value);
-                        break;
-                    case 'door_code':
-                        $form_values[$field] = GMS_Database::sanitizeDoorCode($value);
-                        break;
-                    case 'checkin_date':
-                    case 'checkout_date':
-                        $form_values[$field] = $this->format_datetime_for_input($value);
-                        break;
-                    default:
-                        $form_values[$field] = sanitize_text_field($value);
-                        break;
-                }
-            }
-
-            if (empty($form_values['guest_name'])) {
-                $errors[] = __('Guest name is required.', 'guest-management-system');
-            }
-
-            if ($form_values['guest_email'] !== '' && !is_email($form_values['guest_email'])) {
-                $errors[] = __('Please enter a valid email address.', 'guest-management-system');
-            }
-
-            if ($form_values['door_code'] !== '' && !preg_match('/^\d{4}$/', $form_values['door_code'])) {
-                $errors[] = __('Door code must be a 4-digit number.', 'guest-management-system');
-            }
-
-            $allowed_statuses = array_keys($status_options);
-            if (!in_array($form_values['status'], $allowed_statuses, true)) {
-                $form_values['status'] = 'pending';
-            }
-
-            if (empty($errors)) {
-                $normalized_name = trim(sanitize_text_field($form_values['guest_name']));
-                $normalized_email = sanitize_email($form_values['guest_email']);
-                $normalized_phone = $form_values['guest_phone'];
-
-                if (function_exists('gms_sanitize_phone')) {
-                    $normalized_phone = gms_sanitize_phone($normalized_phone);
-                } else {
-                    $normalized_phone = sanitize_text_field($normalized_phone);
-                }
-
-                $form_values['guest_name'] = $normalized_name;
-                $form_values['guest_email'] = $normalized_email;
-                $form_values['guest_phone'] = $normalized_phone;
-
-                $guest_record_id = GMS_Database::upsert_guest(array(
-                    'name' => $form_values['guest_name'],
-                    'email' => $form_values['guest_email'],
-                    'phone' => $form_values['guest_phone'],
-                ), array(
-                    'force_user_creation' => !empty($form_values['guest_email']) && is_email($form_values['guest_email']),
-                ));
-
-                if ($guest_record_id <= 0) {
-                    $errors[] = __('Unable to save guest details. Please try again.', 'guest-management-system');
-                } else {
-                    $guest_id = GMS_Database::ensure_guest_user($guest_record_id, array(
-                        'full_name' => $form_values['guest_name'],
-                        'email' => $form_values['guest_email'],
-                        'phone' => $form_values['guest_phone'],
-                    ), !empty($form_values['guest_email']) && is_email($form_values['guest_email']));
-
-                    $update_data = array(
-                        'guest_id' => $guest_id,
-                        'guest_record_id' => $guest_record_id,
-                        'guest_name' => $form_values['guest_name'],
-                        'guest_email' => $form_values['guest_email'],
-                        'guest_phone' => $form_values['guest_phone'],
-                        'property_name' => $form_values['property_name'],
-                        'property_id' => $form_values['property_id'],
-                        'booking_reference' => $form_values['booking_reference'],
-                        'door_code' => $form_values['door_code'],
-                        'checkin_date' => $this->format_datetime_for_database($form_values['checkin_date']),
-                        'checkout_date' => $this->format_datetime_for_database($form_values['checkout_date']),
-                        'status' => $form_values['status'],
-                    );
-
-                    $updated = GMS_Database::updateReservation($reservation_id, $update_data);
-
-                    if ($updated) {
-                        $door_code_changed = ($form_values['door_code'] !== $original_door_code);
-
-                        if ($door_code_changed && $form_values['door_code'] !== '') {
-                            $reservation_for_sms = GMS_Database::getReservationById($reservation_id);
-                            if ($reservation_for_sms) {
-                                $sms_handler = new GMS_SMS_Handler();
-                                $sms_handler->sendDoorCodeSMS($reservation_for_sms, $form_values['door_code']);
-                            }
-                        }
-
-                        $original_door_code = $form_values['door_code'];
-
-                        $redirect_url = add_query_arg(
-                            array(
-                                'page' => 'guest-management-reservations',
-                                'action' => 'edit',
-                                'reservation_id' => $reservation_id,
-
-                                'gms_reservation_updated' => 1,
-                            ),
-                            admin_url('admin.php')
-                        );
-
-
-                        $redirected = false;
-
-                        if (!headers_sent()) {
-                            $redirected = wp_safe_redirect($redirect_url);
-                        }
-
-                        if ($redirected) {
-                            exit;
-                        }
-
-                        $success_notice = sprintf(
-                            /* translators: 1: opening anchor tag, 2: closing anchor tag */
-                            __('Reservation updated successfully. %1$sReturn to Reservations%2$s.', 'guest-management-system'),
-                            '<a href="' . esc_url($list_url) . '">',
-                            '</a>'
+            if (in_array($action, array('send_portal_link', 'send_door_code_bundle', 'send_welcome_sequence', 'refresh_platform_reservation'), true)) {
+                if ($posted_id !== $reservation_id) {
+                    if ($action === 'refresh_platform_reservation') {
+                        $platform_refresh_feedback = array(
+                            'type' => 'error',
+                            'messages' => array(__('Invalid reservation request. Please refresh and try again.', 'guest-management-system')),
                         );
                     } else {
-                        $errors[] = __('Unable to update reservation. Please try again.', 'guest-management-system');
+                        $step_feedback_key = $action === 'send_portal_link' ? 'portal' : ($action === 'send_door_code_bundle' ? 'door_code' : 'welcome');
+                        $step_feedback[$step_feedback_key] = array(
+                            'type' => 'error',
+                            'messages' => array(__('Invalid reservation request. Please refresh and try again.', 'guest-management-system')),
+                        );
+                    }
+                } else {
+                    $manual_action_processed = true;
+
+                    switch ($action) {
+                        case 'send_portal_link':
+                            check_admin_referer('gms_send_portal_link_' . $reservation_id);
+                            $step_feedback['portal'] = $this->trigger_portal_link_delivery($reservation_id);
+                            break;
+
+                        case 'send_door_code_bundle':
+                            check_admin_referer('gms_send_door_code_' . $reservation_id);
+                            $step_feedback['door_code'] = $this->trigger_door_code_delivery($reservation_id);
+                            break;
+
+                        case 'send_welcome_sequence':
+                            check_admin_referer('gms_send_welcome_' . $reservation_id);
+                            $step_feedback['welcome'] = $this->trigger_welcome_delivery($reservation_id);
+                            break;
+                        case 'refresh_platform_reservation':
+                            check_admin_referer('gms_refresh_platform_' . $reservation_id);
+                            $platform_refresh_feedback = $this->refresh_reservation_from_platform($reservation);
+                            break;
+                    }
+                }
+            }
+
+            if (!$manual_action_processed) {
+                check_admin_referer('gms_edit_reservation_' . $reservation_id);
+
+                if ($posted_id !== $reservation_id) {
+                    $errors[] = __('Invalid reservation request. Please try again.', 'guest-management-system');
+                }
+
+                $fields = array_keys($form_values);
+
+                foreach ($fields as $field) {
+                    $value = isset($_POST[$field]) ? wp_unslash($_POST[$field]) : '';
+
+                    switch ($field) {
+                        case 'guest_email':
+                            $form_values[$field] = sanitize_email($value);
+                            break;
+                        case 'door_code':
+                            $form_values[$field] = GMS_Database::sanitizeDoorCode($value);
+                            break;
+                        case 'checkin_date':
+                        case 'checkout_date':
+                            $form_values[$field] = $this->format_datetime_for_input($value);
+                            break;
+                        default:
+                            $form_values[$field] = sanitize_text_field($value);
+                            break;
+                    }
+                }
+
+                if (empty($form_values['guest_name'])) {
+                    $errors[] = __('Guest name is required.', 'guest-management-system');
+                }
+
+                if ($form_values['guest_email'] !== '' && !is_email($form_values['guest_email'])) {
+                    $errors[] = __('Please enter a valid email address.', 'guest-management-system');
+                }
+
+                if ($form_values['door_code'] !== '' && !preg_match('/^\d{4}$/', $form_values['door_code'])) {
+                    $errors[] = __('Door code must be a 4-digit number.', 'guest-management-system');
+                }
+
+                $allowed_statuses = array_keys($status_options);
+                if (!in_array($form_values['status'], $allowed_statuses, true)) {
+                    $form_values['status'] = 'pending';
+                }
+
+                if (empty($errors)) {
+                    $normalized_name = trim(sanitize_text_field($form_values['guest_name']));
+                    $normalized_email = sanitize_email($form_values['guest_email']);
+                    $normalized_phone = $form_values['guest_phone'];
+
+                    if (function_exists('gms_sanitize_phone')) {
+                        $normalized_phone = gms_sanitize_phone($normalized_phone);
+                    } else {
+                        $normalized_phone = sanitize_text_field($normalized_phone);
+                    }
+
+                    $form_values['guest_name'] = $normalized_name;
+                    $form_values['guest_email'] = $normalized_email;
+                    $form_values['guest_phone'] = $normalized_phone;
+
+                    $guest_record_id = GMS_Database::upsert_guest(array(
+                        'name' => $form_values['guest_name'],
+                        'email' => $form_values['guest_email'],
+                        'phone' => $form_values['guest_phone'],
+                    ), array(
+                        'force_user_creation' => !empty($form_values['guest_email']) && is_email($form_values['guest_email']),
+                    ));
+
+                    if ($guest_record_id <= 0) {
+                        $errors[] = __('Unable to save guest details. Please try again.', 'guest-management-system');
+                    } else {
+                        $guest_id = GMS_Database::ensure_guest_user($guest_record_id, array(
+                            'full_name' => $form_values['guest_name'],
+                            'email' => $form_values['guest_email'],
+                            'phone' => $form_values['guest_phone'],
+                        ), !empty($form_values['guest_email']) && is_email($form_values['guest_email']));
+
+                        $update_data = array(
+                            'guest_id' => $guest_id,
+                            'guest_record_id' => $guest_record_id,
+                            'guest_name' => $form_values['guest_name'],
+                            'guest_email' => $form_values['guest_email'],
+                            'guest_phone' => $form_values['guest_phone'],
+                            'property_name' => $form_values['property_name'],
+                            'property_id' => $form_values['property_id'],
+                            'booking_reference' => $form_values['booking_reference'],
+                            'door_code' => $form_values['door_code'],
+                            'checkin_date' => $this->format_datetime_for_database($form_values['checkin_date']),
+                            'checkout_date' => $this->format_datetime_for_database($form_values['checkout_date']),
+                            'status' => $form_values['status'],
+                        );
+
+                        $updated = GMS_Database::updateReservation($reservation_id, $update_data);
+
+                        if ($updated) {
+                            $door_code_changed = ($form_values['door_code'] !== $original_door_code);
+
+                            if ($door_code_changed && $form_values['door_code'] !== '') {
+                                $reservation_for_notifications = GMS_Database::getReservationById($reservation_id);
+
+                                if ($reservation_for_notifications) {
+                                    $sms_handler = new GMS_SMS_Handler();
+                                    $sms_handler->sendDoorCodeSMS($reservation_for_notifications, $form_values['door_code']);
+
+                                    $email_handler = new GMS_Email_Handler();
+                                    $email_handler->sendDoorCodeEmail($reservation_for_notifications, $form_values['door_code']);
+
+                                    $this->log_portal_door_code_update(
+                                        $reservation_id,
+                                        intval($reservation_for_notifications['guest_id'] ?? 0),
+                                        $form_values['door_code']
+                                    );
+                                }
+                            }
+
+                            $reservation = GMS_Database::getReservationById($reservation_id);
+                            if ($reservation) {
+                                $form_values = $this->map_reservation_to_form_values($reservation);
+                                $original_door_code = isset($reservation['door_code']) ? (string) $reservation['door_code'] : '';
+                            }
+
+                            $redirect_url = add_query_arg(
+                                array(
+                                    'page' => 'guest-management-reservations',
+                                    'action' => 'edit',
+                                    'reservation_id' => $reservation_id,
+                                    'gms_reservation_updated' => 1,
+                                ),
+                                admin_url('admin.php')
+                            );
+
+                            $redirected = false;
+
+                            if (!headers_sent()) {
+                                $redirected = wp_safe_redirect($redirect_url);
+                            }
+
+                            if ($redirected) {
+                                exit;
+                            }
+
+                            $success_notice = sprintf(
+                                /* translators: 1: opening anchor tag, 2: closing anchor tag */
+                                __('Reservation updated successfully. %1$sReturn to Reservations%2$s.', 'guest-management-system'),
+                                '<a href="' . esc_url($list_url) . '">',
+                                '</a>'
+                            );
+                        } else {
+                            $errors[] = __('Unable to update reservation. Please try again.', 'guest-management-system');
+                        }
                     }
                 }
             }
         }
 
+        if ($manual_action_processed) {
+            $reservation = GMS_Database::getReservationById($reservation_id);
+            if ($reservation) {
+                $form_values = $this->map_reservation_to_form_values($reservation);
+                $original_door_code = isset($reservation['door_code']) ? (string) $reservation['door_code'] : '';
+            }
+        }
+
+        $communications = GMS_Database::getCommunicationsForReservation($reservation_id, array(
+            'limit' => 150,
+            'order' => 'DESC',
+        ));
+
+        $day_in_seconds = defined('DAY_IN_SECONDS') ? DAY_IN_SECONDS : 86400;
+        $hour_in_seconds = defined('HOUR_IN_SECONDS') ? HOUR_IN_SECONDS : 3600;
+
+        $checkin_timestamp = isset($reservation['checkin_date']) && $reservation['checkin_date'] !== ''
+            ? strtotime($reservation['checkin_date'])
+            : 0;
+
+        $checkout_timestamp = isset($reservation['checkout_date']) && $reservation['checkout_date'] !== ''
+            ? strtotime($reservation['checkout_date'])
+            : 0;
+
+        $portal_schedule_timestamp = $checkin_timestamp ? $checkin_timestamp - (14 * $day_in_seconds) : 0;
+        $door_code_schedule_timestamp = $checkin_timestamp ? $checkin_timestamp - (7 * $day_in_seconds) : 0;
+        $welcome_schedule_timestamp = $checkin_timestamp ? $checkin_timestamp - (2 * $hour_in_seconds) : 0;
+
+        $portal_logs = $this->filter_communications_by_context($communications, array('portal_link_sequence'));
+        $door_code_logs = $this->filter_communications_by_context($communications, array('door_code_sequence'), array('portal_update'));
+        $welcome_logs = $this->filter_communications_by_context($communications, array('welcome_sequence'));
+
+        $now = current_time('timestamp');
+
+        $portal_status = $this->determine_step_status($portal_logs, $portal_schedule_timestamp, $now);
+        $door_code_status = $this->determine_step_status($door_code_logs, $door_code_schedule_timestamp, $now);
+        $welcome_status = $this->determine_step_status($welcome_logs, $welcome_schedule_timestamp, $now);
+
+        $portal_status_meta = $this->get_step_status_meta($portal_status);
+        $door_code_status_meta = $this->get_step_status_meta($door_code_status);
+        $welcome_status_meta = $this->get_step_status_meta($welcome_status);
+
+        $portal_schedule_text = $this->format_schedule_description($checkin_timestamp, $portal_schedule_timestamp, __('14 days before check-in', 'guest-management-system'), $now);
+        $door_code_schedule_text = $this->format_schedule_description($checkin_timestamp, $door_code_schedule_timestamp, __('7 days before check-in', 'guest-management-system'), $now);
+        $welcome_schedule_text = $this->format_schedule_description($checkin_timestamp, $welcome_schedule_timestamp, __('2 hours before check-in', 'guest-management-system'), $now);
+
+        $checkin_countdown_text = '';
+        if ($checkin_timestamp) {
+            if ($checkin_timestamp > $now) {
+                $diff = $checkin_timestamp - $now;
+                if ($diff >= $day_in_seconds) {
+                    $days_remaining = (int) ceil($diff / $day_in_seconds);
+                    $checkin_countdown_text = sprintf(
+                        _n('%s day until check-in', '%s days until check-in', $days_remaining, 'guest-management-system'),
+                        number_format_i18n($days_remaining)
+                    );
+                } else {
+                    $hours_remaining = max(1, (int) ceil($diff / $hour_in_seconds));
+                    $checkin_countdown_text = sprintf(
+                        _n('%s hour until check-in', '%s hours until check-in', $hours_remaining, 'guest-management-system'),
+                        number_format_i18n($hours_remaining)
+                    );
+                }
+            } else {
+                if ($checkout_timestamp && $checkout_timestamp > $now) {
+                    $checkin_countdown_text = __('Guest is currently checked in.', 'guest-management-system');
+                } else {
+                    $checkin_countdown_text = __('Stay has ended.', 'guest-management-system');
+                }
+            }
+        }
+
+        $portal_last_sent = !empty($portal_logs) ? $this->format_admin_datetime($portal_logs[0]['sent_at'] ?? '') : '';
+        $door_code_last_sent = !empty($door_code_logs) ? $this->format_admin_datetime($door_code_logs[0]['sent_at'] ?? '') : '';
+        $welcome_last_sent = !empty($welcome_logs) ? $this->format_admin_datetime($welcome_logs[0]['sent_at'] ?? '') : '';
+
+        $portal_url = gms_get_portal_url($reservation_id);
+        $checkin_display = $this->format_admin_datetime($reservation['checkin_date'] ?? '');
+        $checkout_display = $this->format_admin_datetime($reservation['checkout_date'] ?? '');
+        $status_label = isset($status_options[$form_values['status']]) ? $status_options[$form_values['status']] : ucfirst($form_values['status']);
+
+        $platform_key = $this->normalize_platform_key($reservation['platform'] ?? '');
+        $platform_label = $this->describe_platform_label($platform_key);
+        $platform_credentials_ready = $this->platform_credentials_ready($platform_key);
+        $platform_meta = $this->extract_platform_sync_snapshot($reservation, $platform_key);
+        $platform_button_label = $platform_label !== '' ? $platform_label : __('Platform', 'guest-management-system');
+
         $cancel_url = $list_url;
 
-
         ?>
-        <div class="wrap">
+        <div class="wrap gms-reservation-detail">
             <h1 class="wp-heading-inline"><?php esc_html_e('Edit Reservation', 'guest-management-system'); ?></h1>
             <a href="<?php echo esc_url($cancel_url); ?>" class="page-title-action"><?php esc_html_e('Back to Reservations', 'guest-management-system'); ?></a>
             <hr class="wp-header-end">
@@ -2584,7 +2802,6 @@ class GMS_Admin {
                     <p><?php esc_html_e('Reservation updated successfully.', 'guest-management-system'); ?></p>
                 </div>
             <?php endif; ?>
-
 
             <?php if ($success_notice) : ?>
                 <div class="notice notice-success is-dismissible">
@@ -2602,69 +2819,1178 @@ class GMS_Admin {
                 </div>
             <?php endif; ?>
 
-            <form method="post">
-                <?php wp_nonce_field('gms_edit_reservation_' . $reservation_id); ?>
-                <input type="hidden" name="reservation_id" value="<?php echo esc_attr($reservation_id); ?>">
-                <table class="form-table" role="presentation">
-                    <tbody>
-                        <tr>
-                            <th scope="row"><label for="gms_guest_name_edit"><?php esc_html_e('Guest Name', 'guest-management-system'); ?></label></th>
-                            <td><input name="guest_name" type="text" id="gms_guest_name_edit" value="<?php echo esc_attr($form_values['guest_name']); ?>" class="regular-text" required></td>
-                        </tr>
-                        <tr>
-                            <th scope="row"><label for="gms_guest_email_edit"><?php esc_html_e('Guest Email', 'guest-management-system'); ?></label></th>
-                            <td><input name="guest_email" type="email" id="gms_guest_email_edit" value="<?php echo esc_attr($form_values['guest_email']); ?>" class="regular-text"></td>
-                        </tr>
-                        <tr>
-                            <th scope="row"><label for="gms_guest_phone_edit"><?php esc_html_e('Guest Phone', 'guest-management-system'); ?></label></th>
-                            <td><input name="guest_phone" type="text" id="gms_guest_phone_edit" value="<?php echo esc_attr($form_values['guest_phone']); ?>" class="regular-text"></td>
-                        </tr>
-                        <tr>
-                            <th scope="row"><label for="gms_property_name_edit"><?php esc_html_e('Property Name', 'guest-management-system'); ?></label></th>
-                            <td><input name="property_name" type="text" id="gms_property_name_edit" value="<?php echo esc_attr($form_values['property_name']); ?>" class="regular-text"></td>
-                        </tr>
-                        <tr>
-                            <th scope="row"><label for="gms_property_id_edit"><?php esc_html_e('Property ID', 'guest-management-system'); ?></label></th>
-                            <td><input name="property_id" type="text" id="gms_property_id_edit" value="<?php echo esc_attr($form_values['property_id']); ?>" class="regular-text"></td>
-                        </tr>
-                        <tr>
-                            <th scope="row"><label for="gms_booking_reference_edit"><?php esc_html_e('Booking Reference', 'guest-management-system'); ?></label></th>
-                            <td><input name="booking_reference" type="text" id="gms_booking_reference_edit" value="<?php echo esc_attr($form_values['booking_reference']); ?>" class="regular-text"></td>
-                        </tr>
-                        <tr>
-                            <th scope="row"><label for="gms_door_code_edit"><?php esc_html_e('Door Code', 'guest-management-system'); ?></label></th>
-                            <td>
-                                <input name="door_code" type="text" id="gms_door_code_edit" value="<?php echo esc_attr($form_values['door_code']); ?>" class="regular-text" maxlength="4" pattern="\d{4}" inputmode="numeric">
-                                <p class="description"><?php esc_html_e('Provide the 4-digit entry code for the guest.', 'guest-management-system'); ?></p>
-                            </td>
-                        </tr>
-                        <tr>
-                            <th scope="row"><label for="gms_checkin_date_edit"><?php esc_html_e('Check-in Date', 'guest-management-system'); ?></label></th>
-                            <td><input name="checkin_date" type="datetime-local" id="gms_checkin_date_edit" value="<?php echo esc_attr($form_values['checkin_date']); ?>" class="regular-text"></td>
-                        </tr>
-                        <tr>
-                            <th scope="row"><label for="gms_checkout_date_edit"><?php esc_html_e('Check-out Date', 'guest-management-system'); ?></label></th>
-                            <td><input name="checkout_date" type="datetime-local" id="gms_checkout_date_edit" value="<?php echo esc_attr($form_values['checkout_date']); ?>" class="regular-text"></td>
-                        </tr>
-                        <tr>
-                            <th scope="row"><label for="gms_status_edit"><?php esc_html_e('Status', 'guest-management-system'); ?></label></th>
-                            <td>
-                                <select name="status" id="gms_status_edit">
-                                    <?php
-                                    foreach ($status_options as $status_key => $status_label) :
-                                        ?>
-                                        <option value="<?php echo esc_attr($status_key); ?>"<?php selected($form_values['status'], $status_key); ?>><?php echo esc_html($status_label); ?></option>
-                                    <?php endforeach; ?>
-                                </select>
-                            </td>
-                        </tr>
-                    </tbody>
-                </table>
+            <div class="gms-reservation-hero">
+                <div class="gms-reservation-hero__intro">
+                    <p class="gms-reservation-hero__eyebrow"><?php esc_html_e('Guest journey automation', 'guest-management-system'); ?></p>
+                    <h2 class="gms-reservation-hero__headline"><?php esc_html_e('Reservation snapshot', 'guest-management-system'); ?></h2>
+                    <p class="gms-reservation-hero__copy"><?php esc_html_e('Review the stay at a glance and keep each milestone on schedule.', 'guest-management-system'); ?></p>
+                    <?php if ($checkin_countdown_text !== '') : ?>
+                        <span class="gms-reservation-hero__countdown"><?php echo esc_html($checkin_countdown_text); ?></span>
+                    <?php endif; ?>
+                </div>
+                <div class="gms-reservation-hero__cards">
+                    <div class="gms-reservation-overview">
+                        <div class="gms-reservation-overview__item">
+                            <span class="gms-reservation-overview__label"><?php esc_html_e('Guest', 'guest-management-system'); ?></span>
+                            <span class="gms-reservation-overview__value"><?php echo esc_html($form_values['guest_name'] !== '' ? $form_values['guest_name'] : __('Unknown Guest', 'guest-management-system')); ?></span>
+                            <?php if ($form_values['guest_email'] !== '') : ?>
+                                <span class="gms-reservation-overview__meta"><?php echo esc_html($form_values['guest_email']); ?></span>
+                            <?php endif; ?>
+                            <?php if ($form_values['guest_phone'] !== '') : ?>
+                                <span class="gms-reservation-overview__meta"><?php echo esc_html($form_values['guest_phone']); ?></span>
+                            <?php endif; ?>
+                        </div>
+                        <div class="gms-reservation-overview__item">
+                            <span class="gms-reservation-overview__label"><?php esc_html_e('Property', 'guest-management-system'); ?></span>
+                            <span class="gms-reservation-overview__value"><?php echo esc_html($form_values['property_name'] !== '' ? $form_values['property_name'] : __('Not set', 'guest-management-system')); ?></span>
+                            <?php if ($form_values['booking_reference'] !== '') : ?>
+                                <span class="gms-reservation-overview__meta"><?php printf(esc_html__('Booking Ref: %s', 'guest-management-system'), esc_html($form_values['booking_reference'])); ?></span>
+                            <?php endif; ?>
+                        </div>
+                        <div class="gms-reservation-overview__item">
+                            <span class="gms-reservation-overview__label"><?php esc_html_e('Stay', 'guest-management-system'); ?></span>
+                            <span class="gms-reservation-overview__value"><?php echo esc_html($checkin_display !== '' ? $checkin_display : __('Check-in not scheduled', 'guest-management-system')); ?></span>
+                            <?php if ($checkout_display !== '') : ?>
+                                <span class="gms-reservation-overview__meta"><?php echo esc_html(sprintf(__('Check-out: %s', 'guest-management-system'), $checkout_display)); ?></span>
+                            <?php endif; ?>
+                        </div>
+                        <div class="gms-reservation-overview__item">
+                            <span class="gms-reservation-overview__label"><?php esc_html_e('Status', 'guest-management-system'); ?></span>
+                            <span class="gms-reservation-overview__badge"><?php echo esc_html($status_label); ?></span>
+                            <?php if ($portal_url) : ?>
+                                <a class="gms-reservation-overview__link" href="<?php echo esc_url($portal_url); ?>" target="_blank" rel="noopener noreferrer"><?php esc_html_e('Open guest portal', 'guest-management-system'); ?></a>
+                            <?php else : ?>
+                                <span class="gms-reservation-overview__meta"><?php esc_html_e('Portal link will appear after activation.', 'guest-management-system'); ?></span>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+                </div>
+            </div>
 
-                <?php submit_button(__('Update Reservation', 'guest-management-system')); ?>
-            </form>
+            <div class="gms-reservation-detail__grid">
+                <div class="gms-reservation-detail__timeline">
+                    <section class="gms-reservation-step gms-reservation-step--<?php echo esc_attr($portal_status); ?>">
+                        <div class="gms-reservation-step__header">
+                            <div>
+                                <h2><?php esc_html_e('Guest Portal Invitation', 'guest-management-system'); ?></h2>
+                                <p><?php esc_html_e('Send the secure guest portal link 14 days before arrival so the guest can complete their tasks.', 'guest-management-system'); ?></p>
+                            </div>
+                            <div class="gms-reservation-step__meta">
+                                <span class="gms-status-badge <?php echo esc_attr($portal_status_meta['class']); ?>"><?php echo esc_html($portal_status_meta['label']); ?></span>
+                                <span class="gms-reservation-step__schedule"><?php echo esc_html($portal_schedule_text); ?></span>
+                                <?php if ($portal_last_sent !== '') : ?>
+                                    <span class="gms-reservation-step__timestamp"><?php printf(esc_html__('Last activity: %s', 'guest-management-system'), esc_html($portal_last_sent)); ?></span>
+                                <?php endif; ?>
+                            </div>
+                        </div>
+
+                        <div class="gms-reservation-step__layout">
+                            <div class="gms-reservation-step__actions">
+                                <?php if (!empty($step_feedback['portal']['messages'])) : ?>
+                                    <div class="gms-step-feedback <?php echo esc_attr($this->map_feedback_class($step_feedback['portal']['type'])); ?>">
+                                        <ul>
+                                            <?php foreach ($step_feedback['portal']['messages'] as $message) : ?>
+                                                <li><?php echo esc_html($message); ?></li>
+                                            <?php endforeach; ?>
+                                        </ul>
+                                    </div>
+                                <?php endif; ?>
+
+                                <form method="post" class="gms-reservation-step__form">
+                                    <?php wp_nonce_field('gms_send_portal_link_' . $reservation_id); ?>
+                                    <input type="hidden" name="gms_action" value="send_portal_link">
+                                    <input type="hidden" name="reservation_id" value="<?php echo esc_attr($reservation_id); ?>">
+                                    <button type="submit" class="button button-primary"><?php esc_html_e('Send Portal Link Now', 'guest-management-system'); ?></button>
+                                    <span class="gms-reservation-step__hint"><?php esc_html_e('Delivers email/SMS when contact info is available and posts to connected OTA inboxes.', 'guest-management-system'); ?></span>
+                                </form>
+                            </div>
+                            <div class="gms-reservation-step__history">
+                                <h3 class="gms-reservation-step__history-title"><?php esc_html_e('Portal link activity', 'guest-management-system'); ?></h3>
+                                <?php $this->render_step_timeline($portal_logs); ?>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="gms-reservation-step gms-reservation-step--<?php echo esc_attr($door_code_status); ?>">
+                        <div class="gms-reservation-step__header">
+                            <div>
+                                <h2><?php esc_html_e('Access Code Delivery', 'guest-management-system'); ?></h2>
+                                <p><?php esc_html_e('Share the door code and sync it to the portal 7 days before check-in.', 'guest-management-system'); ?></p>
+                            </div>
+                            <div class="gms-reservation-step__meta">
+                                <span class="gms-status-badge <?php echo esc_attr($door_code_status_meta['class']); ?>"><?php echo esc_html($door_code_status_meta['label']); ?></span>
+                                <span class="gms-reservation-step__schedule"><?php echo esc_html($door_code_schedule_text); ?></span>
+                                <?php if ($door_code_last_sent !== '') : ?>
+                                    <span class="gms-reservation-step__timestamp"><?php printf(esc_html__('Last activity: %s', 'guest-management-system'), esc_html($door_code_last_sent)); ?></span>
+                                <?php endif; ?>
+                            </div>
+                        </div>
+
+                        <div class="gms-reservation-step__layout">
+                            <div class="gms-reservation-step__actions">
+                                <?php if (!empty($step_feedback['door_code']['messages'])) : ?>
+                                    <div class="gms-step-feedback <?php echo esc_attr($this->map_feedback_class($step_feedback['door_code']['type'])); ?>">
+                                        <ul>
+                                            <?php foreach ($step_feedback['door_code']['messages'] as $message) : ?>
+                                                <li><?php echo esc_html($message); ?></li>
+                                            <?php endforeach; ?>
+                                        </ul>
+                                    </div>
+                                <?php endif; ?>
+
+                                <form method="post" class="gms-reservation-step__form">
+                                    <?php wp_nonce_field('gms_send_door_code_' . $reservation_id); ?>
+                                    <input type="hidden" name="gms_action" value="send_door_code_bundle">
+                                    <input type="hidden" name="reservation_id" value="<?php echo esc_attr($reservation_id); ?>">
+                                    <button type="submit" class="button button-primary"><?php esc_html_e('Send Door Code Package', 'guest-management-system'); ?></button>
+                                    <span class="gms-reservation-step__hint"><?php esc_html_e('Sends email, SMS, records a portal update, and posts to OTA inboxes when configured.', 'guest-management-system'); ?></span>
+                                </form>
+                            </div>
+                            <div class="gms-reservation-step__history">
+                                <h3 class="gms-reservation-step__history-title"><?php esc_html_e('Access package activity', 'guest-management-system'); ?></h3>
+                                <?php $this->render_step_timeline($door_code_logs); ?>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="gms-reservation-step gms-reservation-step--<?php echo esc_attr($welcome_status); ?>">
+                        <div class="gms-reservation-step__header">
+                            <div>
+                                <h2><?php esc_html_e('Welcome Touchpoint', 'guest-management-system'); ?></h2>
+                                <p><?php esc_html_e('Send a warm welcome message two hours before arrival to confirm everything is ready.', 'guest-management-system'); ?></p>
+                            </div>
+                            <div class="gms-reservation-step__meta">
+                                <span class="gms-status-badge <?php echo esc_attr($welcome_status_meta['class']); ?>"><?php echo esc_html($welcome_status_meta['label']); ?></span>
+                                <span class="gms-reservation-step__schedule"><?php echo esc_html($welcome_schedule_text); ?></span>
+                                <?php if ($welcome_last_sent !== '') : ?>
+                                    <span class="gms-reservation-step__timestamp"><?php printf(esc_html__('Last activity: %s', 'guest-management-system'), esc_html($welcome_last_sent)); ?></span>
+                                <?php endif; ?>
+                            </div>
+                        </div>
+
+                        <div class="gms-reservation-step__layout">
+                            <div class="gms-reservation-step__actions">
+                                <?php if (!empty($step_feedback['welcome']['messages'])) : ?>
+                                    <div class="gms-step-feedback <?php echo esc_attr($this->map_feedback_class($step_feedback['welcome']['type'])); ?>">
+                                        <ul>
+                                            <?php foreach ($step_feedback['welcome']['messages'] as $message) : ?>
+                                                <li><?php echo esc_html($message); ?></li>
+                                            <?php endforeach; ?>
+                                        </ul>
+                                    </div>
+                                <?php endif; ?>
+
+                                <form method="post" class="gms-reservation-step__form">
+                                    <?php wp_nonce_field('gms_send_welcome_' . $reservation_id); ?>
+                                    <input type="hidden" name="gms_action" value="send_welcome_sequence">
+                                    <input type="hidden" name="reservation_id" value="<?php echo esc_attr($reservation_id); ?>">
+                                    <button type="submit" class="button button-primary"><?php esc_html_e('Send Welcome Message', 'guest-management-system'); ?></button>
+                                    <span class="gms-reservation-step__hint"><?php esc_html_e('Delivers email/SMS greetings and posts to OTA inboxes when configured.', 'guest-management-system'); ?></span>
+                                </form>
+                            </div>
+                            <div class="gms-reservation-step__history">
+                                <h3 class="gms-reservation-step__history-title"><?php esc_html_e('Welcome message activity', 'guest-management-system'); ?></h3>
+                                <?php $this->render_step_timeline($welcome_logs); ?>
+                            </div>
+                        </div>
+                    </section>
+                </div>
+
+                <div class="gms-reservation-detail__form gms-reservation-detail__sidebar">
+                    <div class="gms-panel gms-platform-panel">
+                        <h2><?php esc_html_e('Platform Reservation', 'guest-management-system'); ?></h2>
+                        <p><?php esc_html_e('Stay aligned with Airbnb, VRBO, and Booking.com by keeping this reservation in sync.', 'guest-management-system'); ?></p>
+
+                        <div class="gms-platform-sync__summary">
+                            <div class="gms-platform-sync__summary-item">
+                                <span class="gms-platform-sync__label"><?php esc_html_e('Platform', 'guest-management-system'); ?></span>
+                                <span class="gms-platform-sync__value"><?php echo $platform_label !== '' ? esc_html($platform_label) : esc_html__('Not set', 'guest-management-system'); ?></span>
+                            </div>
+                            <div class="gms-platform-sync__summary-item">
+                                <span class="gms-platform-sync__label"><?php esc_html_e('Booking Reference', 'guest-management-system'); ?></span>
+                                <span class="gms-platform-sync__value<?php echo $form_values['booking_reference'] === '' ? ' gms-platform-sync__value--muted' : ''; ?>"><?php echo $form_values['booking_reference'] !== '' ? esc_html($form_values['booking_reference']) : esc_html__('Not provided', 'guest-management-system'); ?></span>
+                            </div>
+                            <div class="gms-platform-sync__summary-item">
+                                <span class="gms-platform-sync__label"><?php esc_html_e('Connection', 'guest-management-system'); ?></span>
+                                <span class="gms-platform-sync__value<?php echo $platform_credentials_ready ? '' : ' gms-platform-sync__value--muted'; ?>"><?php echo $platform_credentials_ready ? esc_html__('Connected', 'guest-management-system') : esc_html__('Credentials missing', 'guest-management-system'); ?></span>
+                            </div>
+                            <div class="gms-platform-sync__summary-item">
+                                <span class="gms-platform-sync__label"><?php esc_html_e('Last Synced', 'guest-management-system'); ?></span>
+                                <?php
+                                $last_synced_display = !empty($platform_meta['last_synced']) ? $this->format_admin_datetime($platform_meta['last_synced']) : '';
+                                ?>
+                                <span class="gms-platform-sync__value<?php echo $last_synced_display === '' ? ' gms-platform-sync__value--muted' : ''; ?>"><?php echo $last_synced_display !== '' ? esc_html($last_synced_display) : esc_html__('Not yet synced', 'guest-management-system'); ?></span>
+                            </div>
+                        </div>
+
+                        <?php if (!empty($platform_meta['snapshot'])) : ?>
+                            <ul class="gms-platform-sync__snapshot-list">
+                                <?php if (!empty($platform_meta['snapshot']['status'])) : ?>
+                                    <li><?php printf(esc_html__('Latest status: %s', 'guest-management-system'), esc_html(ucwords(str_replace('_', ' ', $platform_meta['snapshot']['status'])))); ?></li>
+                                <?php elseif (!empty($platform_meta['snapshot']['status_raw'])) : ?>
+                                    <li><?php printf(esc_html__('Latest status: %s', 'guest-management-system'), esc_html($platform_meta['snapshot']['status_raw'])); ?></li>
+                                <?php endif; ?>
+                                <?php if (!empty($platform_meta['snapshot']['checkin_date'])) : ?>
+                                    <li><?php printf(esc_html__('Check-in synced: %s', 'guest-management-system'), esc_html($this->format_admin_datetime($platform_meta['snapshot']['checkin_date']))); ?></li>
+                                <?php endif; ?>
+                                <?php if (!empty($platform_meta['snapshot']['checkout_date'])) : ?>
+                                    <li><?php printf(esc_html__('Check-out synced: %s', 'guest-management-system'), esc_html($this->format_admin_datetime($platform_meta['snapshot']['checkout_date']))); ?></li>
+                                <?php endif; ?>
+                            </ul>
+                        <?php endif; ?>
+
+                        <?php if (!empty($platform_refresh_feedback['messages'])) : ?>
+                            <div class="gms-step-feedback <?php echo esc_attr($this->map_feedback_class($platform_refresh_feedback['type'])); ?>">
+                                <ul>
+                                    <?php foreach ($platform_refresh_feedback['messages'] as $message) : ?>
+                                        <li><?php echo esc_html($message); ?></li>
+                                    <?php endforeach; ?>
+                                </ul>
+                            </div>
+                        <?php endif; ?>
+
+                        <?php if ($platform_key !== '' && $form_values['booking_reference'] !== '' && $platform_credentials_ready) : ?>
+                            <form method="post" class="gms-platform-sync__form">
+                                <?php wp_nonce_field('gms_refresh_platform_' . $reservation_id); ?>
+                                <input type="hidden" name="gms_action" value="refresh_platform_reservation">
+                                <input type="hidden" name="reservation_id" value="<?php echo esc_attr($reservation_id); ?>">
+                                <button type="submit" class="button button-secondary"><?php printf(esc_html__('Refresh from %s', 'guest-management-system'), esc_html($platform_button_label)); ?></button>
+                                <span class="gms-platform-sync__hint"><?php esc_html_e('Pull the latest guest and stay details from the connected platform.', 'guest-management-system'); ?></span>
+                            </form>
+                        <?php else : ?>
+                            <p class="gms-platform-sync__hint"><?php esc_html_e('Add a platform, booking reference, and credentials to enable one-click sync.', 'guest-management-system'); ?></p>
+                        <?php endif; ?>
+                    </div>
+                    <div class="gms-panel">
+                        <h2><?php esc_html_e('Reservation Details', 'guest-management-system'); ?></h2>
+                        <form method="post" class="gms-reservation-form">
+                            <?php wp_nonce_field('gms_edit_reservation_' . $reservation_id); ?>
+                            <input type="hidden" name="gms_action" value="">
+                            <input type="hidden" name="reservation_id" value="<?php echo esc_attr($reservation_id); ?>">
+                            <div class="gms-reservation-form__grid">
+                                <div class="gms-reservation-form__field">
+                                    <label for="gms_guest_name_edit"><?php esc_html_e('Guest Name', 'guest-management-system'); ?></label>
+                                    <input name="guest_name" type="text" id="gms_guest_name_edit" value="<?php echo esc_attr($form_values['guest_name']); ?>" required>
+                                </div>
+                                <div class="gms-reservation-form__field">
+                                    <label for="gms_guest_email_edit"><?php esc_html_e('Guest Email', 'guest-management-system'); ?></label>
+                                    <input name="guest_email" type="email" id="gms_guest_email_edit" value="<?php echo esc_attr($form_values['guest_email']); ?>">
+                                </div>
+                                <div class="gms-reservation-form__field">
+                                    <label for="gms_guest_phone_edit"><?php esc_html_e('Guest Phone', 'guest-management-system'); ?></label>
+                                    <input name="guest_phone" type="text" id="gms_guest_phone_edit" value="<?php echo esc_attr($form_values['guest_phone']); ?>">
+                                </div>
+                                <div class="gms-reservation-form__field">
+                                    <label for="gms_property_name_edit"><?php esc_html_e('Property Name', 'guest-management-system'); ?></label>
+                                    <input name="property_name" type="text" id="gms_property_name_edit" value="<?php echo esc_attr($form_values['property_name']); ?>">
+                                </div>
+                                <div class="gms-reservation-form__field">
+                                    <label for="gms_property_id_edit"><?php esc_html_e('Property ID', 'guest-management-system'); ?></label>
+                                    <input name="property_id" type="text" id="gms_property_id_edit" value="<?php echo esc_attr($form_values['property_id']); ?>">
+                                </div>
+                                <div class="gms-reservation-form__field">
+                                    <label for="gms_booking_reference_edit"><?php esc_html_e('Booking Reference', 'guest-management-system'); ?></label>
+                                    <input name="booking_reference" type="text" id="gms_booking_reference_edit" value="<?php echo esc_attr($form_values['booking_reference']); ?>">
+                                </div>
+                                <div class="gms-reservation-form__field">
+                                    <label for="gms_door_code_edit"><?php esc_html_e('Door Code', 'guest-management-system'); ?></label>
+                                    <input name="door_code" type="text" id="gms_door_code_edit" value="<?php echo esc_attr($form_values['door_code']); ?>" maxlength="4" pattern="\d{4}" inputmode="numeric">
+                                    <p class="description"><?php esc_html_e('Provide the 4-digit entry code for the guest.', 'guest-management-system'); ?></p>
+                                </div>
+                                <div class="gms-reservation-form__field">
+                                    <label for="gms_checkin_date_edit"><?php esc_html_e('Check-in Date', 'guest-management-system'); ?></label>
+                                    <input name="checkin_date" type="datetime-local" id="gms_checkin_date_edit" value="<?php echo esc_attr($form_values['checkin_date']); ?>">
+                                </div>
+                                <div class="gms-reservation-form__field">
+                                    <label for="gms_checkout_date_edit"><?php esc_html_e('Check-out Date', 'guest-management-system'); ?></label>
+                                    <input name="checkout_date" type="datetime-local" id="gms_checkout_date_edit" value="<?php echo esc_attr($form_values['checkout_date']); ?>">
+                                </div>
+                                <div class="gms-reservation-form__field">
+                                    <label for="gms_status_edit"><?php esc_html_e('Status', 'guest-management-system'); ?></label>
+                                    <select name="status" id="gms_status_edit">
+                                        <?php foreach ($status_options as $status_key => $status_text) : ?>
+                                            <option value="<?php echo esc_attr($status_key); ?>"<?php selected($form_values['status'], $status_key); ?>><?php echo esc_html($status_text); ?></option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                </div>
+                            </div>
+                            <?php submit_button(__('Update Reservation', 'guest-management-system')); ?>
+                        </form>
+                    </div>
+                </div>
+            </div>
         </div>
         <?php
+    }
+
+    private function map_reservation_to_form_values($reservation) {
+        return array(
+            'guest_name' => isset($reservation['guest_name']) ? $reservation['guest_name'] : '',
+            'guest_email' => isset($reservation['guest_email']) ? $reservation['guest_email'] : '',
+            'guest_phone' => isset($reservation['guest_phone']) ? $reservation['guest_phone'] : '',
+            'property_name' => isset($reservation['property_name']) ? $reservation['property_name'] : '',
+            'property_id' => isset($reservation['property_id']) ? $reservation['property_id'] : '',
+            'booking_reference' => isset($reservation['booking_reference']) ? $reservation['booking_reference'] : '',
+            'door_code' => isset($reservation['door_code']) ? GMS_Database::sanitizeDoorCode($reservation['door_code']) : '',
+            'checkin_date' => $this->format_datetime_for_input(isset($reservation['checkin_date']) ? $reservation['checkin_date'] : ''),
+            'checkout_date' => $this->format_datetime_for_input(isset($reservation['checkout_date']) ? $reservation['checkout_date'] : ''),
+            'status' => isset($reservation['status']) ? $reservation['status'] : 'pending',
+        );
+    }
+
+    private function filter_communications_by_context($communications, $contexts, $include_types = array()) {
+        $filtered = array();
+
+        if (empty($communications) || !is_array($communications)) {
+            return $filtered;
+        }
+
+        $contexts = array_filter(array_map('sanitize_key', (array) $contexts));
+        $include_types = array_filter(array_map('sanitize_key', (array) $include_types));
+
+        foreach ($communications as $communication) {
+            if (!is_array($communication)) {
+                continue;
+            }
+
+            $context_value = '';
+            if (isset($communication['response_data']) && is_array($communication['response_data']) && isset($communication['response_data']['context'])) {
+                $context_value = sanitize_key($communication['response_data']['context']);
+            }
+
+            $type_value = isset($communication['communication_type']) ? sanitize_key($communication['communication_type']) : '';
+
+            $matches_context = (!empty($contexts) && $context_value !== '' && in_array($context_value, $contexts, true));
+
+            if (!$matches_context && !empty($include_types)) {
+                $matches_context = ($type_value !== '' && in_array($type_value, $include_types, true));
+            }
+
+            if ($matches_context) {
+                $filtered[] = $communication;
+            }
+        }
+
+        usort($filtered, function ($a, $b) {
+            $a_time = isset($a['sent_at']) ? strtotime($a['sent_at']) : 0;
+            $b_time = isset($b['sent_at']) ? strtotime($b['sent_at']) : 0;
+
+            if ($a_time === $b_time) {
+                $a_id = isset($a['id']) ? intval($a['id']) : 0;
+                $b_id = isset($b['id']) ? intval($b['id']) : 0;
+                return $b_id <=> $a_id;
+            }
+
+            return $b_time <=> $a_time;
+        });
+
+        return $filtered;
+    }
+
+    private function determine_step_status($logs, $scheduled_timestamp, $now) {
+        if (!empty($logs)) {
+            return 'complete';
+        }
+
+        if (empty($scheduled_timestamp)) {
+            return 'upcoming';
+        }
+
+        if ($scheduled_timestamp <= $now) {
+            return 'due';
+        }
+
+        return 'upcoming';
+    }
+
+    private function get_step_status_meta($status) {
+        switch ($status) {
+            case 'complete':
+                return array(
+                    'label' => __('Completed', 'guest-management-system'),
+                    'class' => 'is-complete',
+                );
+            case 'due':
+                return array(
+                    'label' => __('Action recommended', 'guest-management-system'),
+                    'class' => 'is-due',
+                );
+            default:
+                return array(
+                    'label' => __('Scheduled', 'guest-management-system'),
+                    'class' => 'is-upcoming',
+                );
+        }
+    }
+
+    private function format_schedule_description($checkin_timestamp, $target_timestamp, $window_label, $now) {
+        if (empty($checkin_timestamp)) {
+            return __('Add a check-in date to calculate this automation.', 'guest-management-system');
+        }
+
+        if (empty($target_timestamp)) {
+            return sprintf(__('Scheduled %s.', 'guest-management-system'), $window_label);
+        }
+
+        $formatted_target = $this->format_timestamp_for_admin($target_timestamp);
+
+        if ($target_timestamp <= $now) {
+            return sprintf(__('Would have sent on %1$s (%2$s). Ready whenever you are.', 'guest-management-system'), $formatted_target, $window_label);
+        }
+
+        return sprintf(__('Scheduled for %1$s (%2$s).', 'guest-management-system'), $formatted_target, $window_label);
+    }
+
+    private function format_admin_datetime($datetime) {
+        if (empty($datetime) || $datetime === '0000-00-00 00:00:00') {
+            return '';
+        }
+
+        $timestamp = strtotime($datetime);
+        if ($timestamp === false) {
+            return '';
+        }
+
+        return $this->format_timestamp_for_admin($timestamp);
+    }
+
+    private function format_timestamp_for_admin($timestamp) {
+        if (empty($timestamp)) {
+            return '';
+        }
+
+        $format = get_option('date_format', 'M j, Y') . ' ' . get_option('time_format', 'g:i a');
+
+        return wp_date($format, $timestamp);
+    }
+
+    private function render_step_timeline($logs) {
+        if (empty($logs)) {
+            echo '<p class="gms-reservation-step__empty">' . esc_html__('No activity recorded yet for this step.', 'guest-management-system') . '</p>';
+            return;
+        }
+
+        echo '<ul class="gms-reservation-timeline">';
+        foreach ($logs as $log) {
+            if (!is_array($log)) {
+                continue;
+            }
+
+            $type_label = $this->describe_communication_type($log);
+            $timestamp = $this->format_admin_datetime($log['sent_at'] ?? '');
+
+            $summary_parts = array();
+
+            $recipient = isset($log['recipient']) ? trim((string) $log['recipient']) : '';
+            if ($recipient !== '') {
+                $summary_parts[] = array(
+                    'text' => __('Recipient: %s', 'guest-management-system'),
+                    'value' => $recipient,
+                );
+            }
+
+            $status = isset($log['delivery_status']) ? trim((string) $log['delivery_status']) : '';
+            if ($status !== '') {
+                $status_label = ucwords(str_replace('_', ' ', $status));
+                $summary_parts[] = array(
+                    'text' => __('Status: %s', 'guest-management-system'),
+                    'value' => $status_label,
+                );
+            }
+
+            $subject = isset($log['subject']) ? trim((string) $log['subject']) : '';
+            $message = isset($log['message']) ? trim(wp_strip_all_tags((string) $log['message'])) : '';
+
+            if ($subject !== '') {
+                $summary_parts[] = array(
+                    'text' => __('Subject: %s', 'guest-management-system'),
+                    'value' => $subject,
+                );
+            } elseif ($message !== '') {
+                $summary_parts[] = array(
+                    'text' => __('Message: %s', 'guest-management-system'),
+                    'value' => wp_trim_words($message, 16, '…'),
+                );
+            }
+
+            $response_data = isset($log['response_data']) && is_array($log['response_data']) ? $log['response_data'] : array();
+            if (isset($response_data['door_code'])) {
+                $door_code = GMS_Database::sanitizeDoorCode($response_data['door_code']);
+                if ($door_code !== '') {
+                    $summary_parts[] = array(
+                        'text' => __('Door code %s', 'guest-management-system'),
+                        'value' => $door_code,
+                    );
+                }
+            }
+
+            if (isset($response_data['platform'])) {
+                $platform_key = sanitize_key($response_data['platform']);
+                $platform_label = '';
+
+                if ($platform_key !== '' && function_exists('gms_get_platform_display')) {
+                    $platform_lookup = str_replace('_', '.', $platform_key);
+                    $platform_info = gms_get_platform_display($platform_lookup);
+                    if (is_array($platform_info) && isset($platform_info['name'])) {
+                        $platform_label = $platform_info['name'];
+                    }
+                }
+
+                if ($platform_label === '' && $platform_key !== '') {
+                    $platform_label = ucwords(str_replace('_', ' ', $platform_key));
+                }
+
+                if ($platform_label !== '') {
+                    $summary_parts[] = array(
+                        'text' => __('Platform: %s', 'guest-management-system'),
+                        'value' => $platform_label,
+                    );
+                }
+            }
+
+            if (isset($response_data['thread_id'])) {
+                $thread_id = trim((string) $response_data['thread_id']);
+                if ($thread_id !== '') {
+                    $summary_parts[] = array(
+                        'text' => __('Thread: %s', 'guest-management-system'),
+                        'value' => $thread_id,
+                    );
+                }
+            }
+
+            $provider_reference = isset($log['provider_reference']) ? trim((string) $log['provider_reference']) : '';
+            if ($provider_reference !== '') {
+                $summary_parts[] = array(
+                    'text' => __('Reference: %s', 'guest-management-system'),
+                    'value' => $provider_reference,
+                );
+            }
+
+            echo '<li class="gms-reservation-timeline__item">';
+            echo '<div class="gms-reservation-timeline__type">' . esc_html($type_label) . '</div>';
+            if ($timestamp !== '') {
+                echo '<div class="gms-reservation-timeline__timestamp">' . esc_html($timestamp) . '</div>';
+            }
+
+            if (!empty($summary_parts)) {
+                $formatted_parts = array();
+
+                foreach ($summary_parts as $part) {
+                    if (!is_array($part) || !isset($part['text'])) {
+                        continue;
+                    }
+
+                    $value = isset($part['value']) ? $part['value'] : '';
+                    $formatted_parts[] = sprintf($part['text'], esc_html($value));
+                }
+
+                if (!empty($formatted_parts)) {
+                    echo '<div class="gms-reservation-timeline__summary">' . implode(' <span class="gms-reservation-timeline__separator">&middot;</span> ', $formatted_parts) . '</div>';
+                }
+            }
+
+            echo '</li>';
+        }
+        echo '</ul>';
+    }
+
+    private function describe_communication_type($entry) {
+        $type = isset($entry['communication_type']) ? sanitize_key($entry['communication_type']) : '';
+        $channel = isset($entry['channel']) ? sanitize_key($entry['channel']) : '';
+
+        if ($type === 'sms' || $channel === 'sms') {
+            return __('SMS', 'guest-management-system');
+        }
+
+        if ($type === 'portal_update' || $channel === 'portal') {
+            return __('Portal Update', 'guest-management-system');
+        }
+
+        if ($type === 'whatsapp' || $channel === 'whatsapp') {
+            return __('WhatsApp', 'guest-management-system');
+        }
+
+        $platform_channels = array(
+            'airbnb' => __('Airbnb Message', 'guest-management-system'),
+            'vrbo' => __('VRBO Message', 'guest-management-system'),
+            'booking_com' => __('Booking.com Message', 'guest-management-system'),
+            'bookingcom' => __('Booking.com Message', 'guest-management-system'),
+        );
+
+        if (isset($platform_channels[$channel])) {
+            return $platform_channels[$channel];
+        }
+
+        if ($type === 'platform_message') {
+            return __('OTA Message', 'guest-management-system');
+        }
+
+        return __('Email', 'guest-management-system');
+    }
+
+    private function map_feedback_class($type) {
+        switch ($type) {
+            case 'success':
+                return 'is-success';
+            case 'warning':
+                return 'is-warning';
+            case 'error':
+                return 'is-error';
+            default:
+                return '';
+        }
+    }
+
+    private function resolve_feedback_type($successes, $attempts) {
+        if ($successes <= 0) {
+            return 'error';
+        }
+
+        if ($successes >= $attempts) {
+            return 'success';
+        }
+
+        return 'warning';
+    }
+
+    private function trigger_portal_link_delivery($reservation_id) {
+        $reservation = GMS_Database::getReservationById($reservation_id);
+
+        if (!$reservation) {
+            return array(
+                'type' => 'error',
+                'messages' => array(__('Unable to load reservation details. Please try again.', 'guest-management-system')),
+            );
+        }
+
+        $messages = array();
+        $successes = 0;
+        $attempts = 0;
+
+        $guest_email = isset($reservation['guest_email']) ? sanitize_email($reservation['guest_email']) : '';
+        if ($guest_email !== '' && is_email($guest_email)) {
+            $attempts++;
+            $email_handler = new GMS_Email_Handler();
+            $email_sent = $email_handler->sendReservationApprovedEmail($reservation);
+            if ($email_sent) {
+                $successes++;
+                $messages[] = __('Portal invitation email sent successfully.', 'guest-management-system');
+            } else {
+                $messages[] = __('Portal invitation email failed to send.', 'guest-management-system');
+            }
+        } else {
+            $messages[] = __('Portal email skipped—add a valid guest email to send automatically.', 'guest-management-system');
+        }
+
+        $guest_phone = isset($reservation['guest_phone']) ? $reservation['guest_phone'] : '';
+        if ($guest_phone !== '') {
+            $attempts++;
+            $sms_handler = new GMS_SMS_Handler();
+            $sms_sent = $sms_handler->sendReservationApprovedSMS($reservation);
+            if ($sms_sent) {
+                $successes++;
+                $messages[] = __('Portal SMS sent successfully.', 'guest-management-system');
+            } else {
+                $messages[] = __('Portal SMS failed to send.', 'guest-management-system');
+            }
+        } else {
+            $messages[] = __('Portal SMS skipped—add a guest phone number to enable SMS delivery.', 'guest-management-system');
+        }
+
+        if (class_exists('GMS_OTA_Messaging_Handler')) {
+            $ota_handler = new GMS_OTA_Messaging_Handler();
+            $ota_result = $ota_handler->sendPortalInvitation($reservation);
+
+            if (!empty($ota_result['message'])) {
+                $messages[] = $ota_result['message'];
+            }
+
+            if (isset($ota_result['status']) && $ota_result['status'] !== 'skipped') {
+                $attempts++;
+                if (!empty($ota_result['success'])) {
+                    $successes++;
+                }
+            }
+        }
+
+        $type = $this->resolve_feedback_type($successes, max($attempts, 1));
+
+        return array(
+            'type' => $type,
+            'messages' => $messages,
+        );
+    }
+
+    private function trigger_door_code_delivery($reservation_id) {
+        $reservation = GMS_Database::getReservationById($reservation_id);
+
+        if (!$reservation) {
+            return array(
+                'type' => 'error',
+                'messages' => array(__('Unable to load reservation details. Please try again.', 'guest-management-system')),
+            );
+        }
+
+        $door_code = GMS_Database::sanitizeDoorCode($reservation['door_code'] ?? '');
+        if ($door_code === '') {
+            return array(
+                'type' => 'error',
+                'messages' => array(__('Add a 4-digit door code before sending the access package.', 'guest-management-system')),
+            );
+        }
+
+        $messages = array();
+        $successes = 0;
+        $attempts = 0;
+
+        $guest_email = isset($reservation['guest_email']) ? sanitize_email($reservation['guest_email']) : '';
+        if ($guest_email !== '' && is_email($guest_email)) {
+            $attempts++;
+            $email_handler = new GMS_Email_Handler();
+            $email_sent = $email_handler->sendDoorCodeEmail($reservation, $door_code);
+            if ($email_sent) {
+                $successes++;
+                $messages[] = __('Door code email sent successfully.', 'guest-management-system');
+            } else {
+                $messages[] = __('Door code email failed to send.', 'guest-management-system');
+            }
+        } else {
+            $messages[] = __('Door code email skipped—add a valid guest email to enable delivery.', 'guest-management-system');
+        }
+
+        $guest_phone = isset($reservation['guest_phone']) ? $reservation['guest_phone'] : '';
+        if ($guest_phone !== '') {
+            $attempts++;
+            $sms_handler = new GMS_SMS_Handler();
+            $sms_sent = $sms_handler->sendDoorCodeSMS($reservation, $door_code);
+            if ($sms_sent) {
+                $successes++;
+                $messages[] = __('Door code SMS sent successfully.', 'guest-management-system');
+            } else {
+                $messages[] = __('Door code SMS failed to send.', 'guest-management-system');
+            }
+        } else {
+            $messages[] = __('Door code SMS skipped—add a guest phone number to enable SMS delivery.', 'guest-management-system');
+        }
+
+        if (class_exists('GMS_OTA_Messaging_Handler')) {
+            $ota_handler = new GMS_OTA_Messaging_Handler();
+            $ota_result = $ota_handler->sendDoorCodeMessage($reservation, $door_code);
+
+            if (!empty($ota_result['message'])) {
+                $messages[] = $ota_result['message'];
+            }
+
+            if (isset($ota_result['status']) && $ota_result['status'] !== 'skipped') {
+                $attempts++;
+                if (!empty($ota_result['success'])) {
+                    $successes++;
+                }
+            }
+        }
+
+        $attempts++;
+        $portal_logged = $this->log_portal_door_code_update($reservation_id, intval($reservation['guest_id'] ?? 0), $door_code);
+        if ($portal_logged) {
+            $successes++;
+            $messages[] = __('Guest portal updated with the latest door code.', 'guest-management-system');
+        } else {
+            $messages[] = __('Unable to record a portal update. Check the activity log.', 'guest-management-system');
+        }
+
+        $type = $this->resolve_feedback_type($successes, $attempts);
+
+        return array(
+            'type' => $type,
+            'messages' => $messages,
+        );
+    }
+
+    private function trigger_welcome_delivery($reservation_id) {
+        $reservation = GMS_Database::getReservationById($reservation_id);
+
+        if (!$reservation) {
+            return array(
+                'type' => 'error',
+                'messages' => array(__('Unable to load reservation details. Please try again.', 'guest-management-system')),
+            );
+        }
+
+        $messages = array();
+        $successes = 0;
+        $attempts = 0;
+
+        $guest_email = isset($reservation['guest_email']) ? sanitize_email($reservation['guest_email']) : '';
+        if ($guest_email !== '' && is_email($guest_email)) {
+            $attempts++;
+            $email_handler = new GMS_Email_Handler();
+            $email_sent = $email_handler->sendWelcomeEmail($reservation);
+            if ($email_sent) {
+                $successes++;
+                $messages[] = __('Welcome email sent successfully.', 'guest-management-system');
+            } else {
+                $messages[] = __('Welcome email failed to send.', 'guest-management-system');
+            }
+        } else {
+            $messages[] = __('Welcome email skipped—add a valid guest email to enable delivery.', 'guest-management-system');
+        }
+
+        $guest_phone = isset($reservation['guest_phone']) ? $reservation['guest_phone'] : '';
+        if ($guest_phone !== '') {
+            $attempts++;
+            $sms_handler = new GMS_SMS_Handler();
+            $sms_sent = $sms_handler->sendWelcomeSMS($reservation);
+            if ($sms_sent) {
+                $successes++;
+                $messages[] = __('Welcome SMS sent successfully.', 'guest-management-system');
+            } else {
+                $messages[] = __('Welcome SMS failed to send.', 'guest-management-system');
+            }
+        } else {
+            $messages[] = __('Welcome SMS skipped—add a guest phone number to enable SMS delivery.', 'guest-management-system');
+        }
+
+        if (class_exists('GMS_OTA_Messaging_Handler')) {
+            $ota_handler = new GMS_OTA_Messaging_Handler();
+            $ota_result = $ota_handler->sendWelcomeMessage($reservation);
+
+            if (!empty($ota_result['message'])) {
+                $messages[] = $ota_result['message'];
+            }
+
+            if (isset($ota_result['status']) && $ota_result['status'] !== 'skipped') {
+                $attempts++;
+                if (!empty($ota_result['success'])) {
+                    $successes++;
+                }
+            }
+        }
+
+        $type = $this->resolve_feedback_type($successes, max($attempts, 1));
+
+        return array(
+            'type' => $type,
+            'messages' => $messages,
+        );
+    }
+
+    private function log_portal_door_code_update($reservation_id, $guest_id, $door_code) {
+        $sanitized_code = GMS_Database::sanitizeDoorCode($door_code);
+
+        if ($sanitized_code === '') {
+            return 0;
+        }
+
+        return GMS_Database::logCommunication(array(
+            'reservation_id' => intval($reservation_id),
+            'guest_id' => intval($guest_id),
+            'type' => 'portal_update',
+            'channel' => 'portal',
+            'message' => sprintf(__('Door code %s synced to the guest portal.', 'guest-management-system'), $sanitized_code),
+            'status' => 'completed',
+            'response_data' => array(
+                'context' => 'door_code_sequence',
+                'door_code' => $sanitized_code,
+            ),
+            'sent_at' => current_time('mysql'),
+        ));
+    }
+
+    private function handle_platform_sync_request() {
+        if (!current_user_can('manage_options')) {
+            return;
+        }
+
+        check_admin_referer('gms_sync_platform_reservations');
+
+        $platform = isset($_POST['gms_sync_platform']) ? sanitize_key(wp_unslash($_POST['gms_sync_platform'])) : 'all';
+        $since_raw = isset($_POST['gms_sync_since']) ? wp_unslash($_POST['gms_sync_since']) : '';
+        $limit = isset($_POST['gms_sync_limit']) ? absint(wp_unslash($_POST['gms_sync_limit'])) : 0;
+
+        $args = array();
+
+        if ($since_raw !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $since_raw)) {
+            $args['since'] = $since_raw;
+        }
+
+        if ($limit > 0) {
+            $args['limit'] = $limit;
+        }
+
+        if (!class_exists('GMS_OTA_Reservation_Sync')) {
+            $result = array(
+                'success' => false,
+                'created' => 0,
+                'updated' => 0,
+                'synced' => 0,
+                'skipped' => 0,
+                'errors' => array(__('OTA reservation sync handler is not available.', 'guest-management-system')),
+                'messages' => array(),
+            );
+        } else {
+            $handler = new GMS_OTA_Reservation_Sync();
+            if ($platform === '' || $platform === 'all') {
+                $result = $handler->import_all_platforms($args);
+                $platform = 'all';
+            } else {
+                $result = $handler->import_platform_reservations($platform, $args);
+            }
+        }
+
+        set_transient($this->get_user_notice_key('platform_sync'), array(
+            'platform' => $platform,
+            'result' => $result,
+        ), MINUTE_IN_SECONDS * 10);
+
+        $redirect_url = add_query_arg(array('page' => 'guest-management-reservations'), admin_url('admin.php'));
+        wp_safe_redirect($redirect_url);
+        exit;
+    }
+
+    private function consume_platform_sync_notice() {
+        $notice_key = $this->get_user_notice_key('platform_sync');
+        $notice = get_transient($notice_key);
+
+        if ($notice !== false) {
+            delete_transient($notice_key);
+        }
+
+        return $notice;
+    }
+
+    private function render_platform_sync_notice($notice) {
+        if (!is_array($notice)) {
+            return;
+        }
+
+        $result = isset($notice['result']) && is_array($notice['result']) ? $notice['result'] : array();
+        $platform = $this->normalize_platform_key($notice['platform'] ?? '');
+
+        $label = $platform === 'all' || $platform === ''
+            ? __('All Platforms', 'guest-management-system')
+            : $this->describe_platform_label($platform);
+
+        if ($label === '') {
+            $label = __('Selected Platform', 'guest-management-system');
+        }
+
+        $created = intval($result['created'] ?? 0);
+        $updated = intval($result['updated'] ?? 0);
+        $synced = intval($result['synced'] ?? 0);
+        $skipped = intval($result['skipped'] ?? 0);
+        $errors = isset($result['errors']) ? array_filter(array_map('trim', (array) $result['errors'])) : array();
+        $messages = isset($result['messages']) ? array_filter(array_map('trim', (array) $result['messages'])) : array();
+
+        $success = !empty($result['success']);
+        $notice_class = $success ? 'notice-success' : 'notice-warning';
+
+        echo '<div class="notice ' . esc_attr($notice_class) . ' is-dismissible">';
+        echo '<p>';
+
+        if ($success) {
+            printf(
+                esc_html__('Synced reservations from %1$s. %2$d created, %3$d updated, %4$d already current.', 'guest-management-system'),
+                esc_html($label),
+                $created,
+                $updated,
+                $synced
+            );
+
+            if ($skipped > 0) {
+                echo ' ';
+                printf(
+                    esc_html(_n('%d record skipped.', '%d records skipped.', $skipped, 'guest-management-system')),
+                    $skipped
+                );
+            }
+        } else {
+            if (!empty($errors)) {
+                esc_html_e('Unable to complete the platform sync.', 'guest-management-system');
+            } else {
+                printf(
+                    esc_html__('No reservations were returned from %s.', 'guest-management-system'),
+                    esc_html($label)
+                );
+            }
+        }
+
+        echo '</p>';
+
+        if (!empty($messages)) {
+            echo '<ul class="gms-platform-sync__notice-list">';
+            foreach ($messages as $message) {
+                echo '<li>' . esc_html($message) . '</li>';
+            }
+            echo '</ul>';
+        }
+
+        if (!empty($errors)) {
+            echo '<ul class="gms-platform-sync__notice-errors">';
+            foreach ($errors as $error) {
+                echo '<li>' . esc_html($error) . '</li>';
+            }
+            echo '</ul>';
+        }
+
+        echo '</div>';
+    }
+
+    private function get_user_notice_key($suffix) {
+        $suffix = sanitize_key($suffix);
+        $user_id = get_current_user_id();
+
+        if (!$user_id) {
+            $user_id = 0;
+        }
+
+        return sprintf('gms_%s_notice_%d', $suffix, $user_id);
+    }
+
+    private function normalize_platform_key($platform) {
+        $platform = strtolower(trim((string) $platform));
+
+        if ($platform === '') {
+            return '';
+        }
+
+        $platform = str_replace(array('.', ' ', '-'), '_', $platform);
+
+        if ($platform === 'bookingcom') {
+            $platform = 'booking_com';
+        }
+
+        return $platform;
+    }
+
+    private function describe_platform_label($platform_key) {
+        $platform_key = $this->normalize_platform_key($platform_key);
+
+        if ($platform_key === '') {
+            return '';
+        }
+
+        if (class_exists('GMS_OTA_Reservation_Sync')) {
+            $sync = new GMS_OTA_Reservation_Sync();
+            $config = $sync->get_platform_config();
+        } else {
+            $config = apply_filters('gms_ota_reservation_config', array());
+        }
+
+        if (isset($config[$platform_key]['label'])) {
+            return wp_strip_all_tags((string) $config[$platform_key]['label']);
+        }
+
+        return ucwords(str_replace('_', ' ', $platform_key));
+    }
+
+    private function platform_credentials_ready($platform_key) {
+        $platform_key = $this->normalize_platform_key($platform_key);
+
+        if ($platform_key === '') {
+            return false;
+        }
+
+        if (class_exists('GMS_OTA_Reservation_Sync')) {
+            $sync = new GMS_OTA_Reservation_Sync();
+            $config = $sync->get_platform_config();
+        } else {
+            $config = apply_filters('gms_ota_reservation_config', array());
+        }
+
+        if (!isset($config[$platform_key]['option'])) {
+            return false;
+        }
+
+        $token = trim((string) get_option($config[$platform_key]['option'], ''));
+
+        return $token !== '';
+    }
+
+    private function extract_platform_sync_snapshot($reservation, $platform_key) {
+        $platform_key = $this->normalize_platform_key($platform_key);
+        $webhook = isset($reservation['webhook_data']) && is_array($reservation['webhook_data']) ? $reservation['webhook_data'] : array();
+        $sync_data = array();
+
+        if (isset($webhook['ota_sync']) && is_array($webhook['ota_sync']) && isset($webhook['ota_sync'][$platform_key]) && is_array($webhook['ota_sync'][$platform_key])) {
+            $sync_data = $webhook['ota_sync'][$platform_key];
+        }
+
+        $snapshot = isset($sync_data['snapshot']) && is_array($sync_data['snapshot']) ? $sync_data['snapshot'] : array();
+        $synced_fields = isset($sync_data['synced_fields']) ? array_filter(array_map('sanitize_key', (array) $sync_data['synced_fields'])) : array();
+        $last_synced = isset($sync_data['last_synced']) ? trim((string) $sync_data['last_synced']) : '';
+
+        return array(
+            'snapshot' => $snapshot,
+            'synced_fields' => $synced_fields,
+            'last_synced' => $last_synced,
+        );
+    }
+
+    private function refresh_reservation_from_platform($reservation) {
+        if (!is_array($reservation) || empty($reservation)) {
+            return array(
+                'type' => 'error',
+                'messages' => array(__('Unable to load reservation details. Please try again.', 'guest-management-system')),
+            );
+        }
+
+        $platform_key = $this->normalize_platform_key($reservation['platform'] ?? '');
+        if ($platform_key === '') {
+            return array(
+                'type' => 'error',
+                'messages' => array(__('Set the reservation platform before refreshing.', 'guest-management-system')),
+            );
+        }
+
+        $booking_reference = sanitize_text_field($reservation['booking_reference'] ?? '');
+        if ($booking_reference === '') {
+            return array(
+                'type' => 'error',
+                'messages' => array(__('Add the platform booking reference before refreshing.', 'guest-management-system')),
+            );
+        }
+
+        if (!$this->platform_credentials_ready($platform_key)) {
+            return array(
+                'type' => 'error',
+                'messages' => array(__('Add the platform credentials in settings to sync reservation details.', 'guest-management-system')),
+            );
+        }
+
+        if (!class_exists('GMS_OTA_Reservation_Sync')) {
+            return array(
+                'type' => 'error',
+                'messages' => array(__('OTA reservation sync handler is not available.', 'guest-management-system')),
+            );
+        }
+
+        $handler = new GMS_OTA_Reservation_Sync();
+        $result = $handler->sync_reservation($reservation);
+
+        $messages = array();
+
+        if (!empty($result['message'])) {
+            $messages[] = $result['message'];
+        }
+
+        if (!empty($result['errors'])) {
+            $messages = array_merge($messages, array_filter(array_map('trim', (array) $result['errors'])));
+        }
+
+        if (empty($messages)) {
+            if (!empty($result['success'])) {
+                $messages[] = __('Reservation is already up to date with the platform.', 'guest-management-system');
+            } else {
+                $messages[] = __('Platform sync failed. Review the connection settings and try again.', 'guest-management-system');
+            }
+        }
+
+        $type = !empty($result['success']) ? 'success' : 'error';
+
+        return array(
+            'type' => $type,
+            'messages' => $messages,
+        );
     }
 
     protected function render_missing_reservation_notice() {

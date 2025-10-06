@@ -81,6 +81,8 @@ class GuestManagementSystem {
             'class-guest-portal.php',
             'class-email-handler.php',
             'class-sms-handler.php',
+            'class-ota-reservation-sync.php',
+            'class-ota-messaging-handler.php',
             'class-stripe-integration.php',
             'class-ajax-handler.php',
             'class-agreement-handler.php', // Load the new agreement handler class
@@ -120,6 +122,9 @@ class GuestManagementSystem {
             'gms_voipms_user' => '',
             'gms_voipms_pass' => '',
             'gms_voipms_did' => '',
+            'gms_airbnb_access_token' => '',
+            'gms_vrbo_access_token' => '',
+            'gms_booking_access_token' => '',
             'gms_email_from' => get_option('admin_email'),
             'gms_email_from_name' => get_option('blogname'),
             'gms_agreement_template' => $this->getDefaultAgreementTemplate(),
