@@ -1262,6 +1262,30 @@ class GMS_Database {
         return self::formatReservationRow($row);
     }
 
+    public static function getReservationByPlatformReference($platform, $booking_reference) {
+        global $wpdb;
+
+        $platform = sanitize_text_field($platform);
+        $booking_reference = sanitize_text_field($booking_reference);
+
+        if ($platform === '' || $booking_reference === '') {
+            return null;
+        }
+
+        $table_name = $wpdb->prefix . 'gms_reservations';
+
+        $row = $wpdb->get_row(
+            $wpdb->prepare(
+                "SELECT * FROM $table_name WHERE platform = %s AND booking_reference = %s LIMIT 1",
+                $platform,
+                $booking_reference
+            ),
+            ARRAY_A
+        );
+
+        return $row ? self::formatReservationRow($row) : null;
+    }
+
     public static function updateReservation($reservation_id, $data) {
         global $wpdb;
         $table_name = $wpdb->prefix . 'gms_reservations';

@@ -335,6 +335,24 @@
             });
         });
 
+        $(document).on('click', '.gms-copy-trigger', function(e) {
+            e.preventDefault();
+
+            var $trigger = $(this);
+            var value = $trigger.data('copy-value');
+
+            if (!value) {
+                return;
+            }
+
+            var successMessage = $trigger.data('copy-success') || getString('copySuccess', 'Copied to clipboard.');
+            var errorMessage = $trigger.data('copy-error') || getString('copyError', 'Unable to copy.');
+
+            copyTextToClipboard(value).done(function(success) {
+                showCopyFeedback($trigger, success ? successMessage : errorMessage, !success);
+            });
+        });
+
         $(document).on('click', '.gms-reservation-toggle', function(e) {
             e.preventDefault();
 
