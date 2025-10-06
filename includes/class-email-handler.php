@@ -63,7 +63,10 @@ class GMS_Email_Handler {
             'subject' => $subject,
             'message' => $message,
             'status' => $result ? 'sent' : 'failed',
-            'response_data' => array('result' => $result)
+            'response_data' => array(
+                'result' => $result,
+                'context' => 'welcome_sequence',
+            ),
         ));
         
         return $result;
@@ -115,7 +118,80 @@ class GMS_Email_Handler {
             'subject' => $subject,
             'message' => $message,
             'status' => $result ? 'sent' : 'failed',
-            'response_data' => array('result' => $result)
+            'response_data' => array(
+                'result' => $result,
+                'context' => 'portal_link_sequence',
+            ),
+        ));
+
+        return $result;
+    }
+
+    public function sendDoorCodeEmail($reservation, $door_code = '') {
+        $sanitized_code = GMS_Database::sanitizeDoorCode($door_code !== '' ? $door_code : ($reservation['door_code'] ?? ''));
+
+        if ($sanitized_code === '') {
+            return false;
+        }
+
+        $recipient = isset($reservation['guest_email']) ? sanitize_email($reservation['guest_email']) : '';
+
+        if ($recipient === '' || !is_email($recipient)) {
+            return false;
+        }
+
+        $template = get_option('gms_door_code_email_template');
+        if (empty($template)) {
+            $template = "Hi {guest_name},\n\nYour door code for {property_name} is {door_code}. It will be active at {checkin_date} from {checkin_time}.\n\nIf you need anything during your stay, reply to this email.\n\n{company_name}";
+        }
+
+        $checkin_date_raw = isset($reservation['checkin_date']) ? $reservation['checkin_date'] : '';
+        $checkout_date_raw = isset($reservation['checkout_date']) ? $reservation['checkout_date'] : '';
+
+        $portal_token = isset($reservation['portal_token']) ? sanitize_text_field($reservation['portal_token']) : '';
+        $portal_url = gms_build_portal_url($portal_token);
+        if ($portal_url === false) {
+            $portal_url = '';
+        }
+
+        $replacements = array(
+            '{guest_name}' => $reservation['guest_name'] ?? '',
+            '{property_name}' => $reservation['property_name'] ?? '',
+            '{door_code}' => $sanitized_code,
+            '{portal_link}' => $portal_url,
+            '{booking_reference}' => $reservation['booking_reference'] ?? '',
+            '{checkin_date}' => $checkin_date_raw ? date('l, F j, Y', strtotime($checkin_date_raw)) : '',
+            '{checkout_date}' => $checkout_date_raw ? date('l, F j, Y', strtotime($checkout_date_raw)) : '',
+            '{checkin_time}' => $checkin_date_raw ? date('g:i A', strtotime($checkin_date_raw)) : '',
+            '{checkout_time}' => $checkout_date_raw ? date('g:i A', strtotime($checkout_date_raw)) : '',
+            '{company_name}' => get_option('gms_company_name', get_option('blogname')),
+        );
+
+        $subject = sprintf(
+            /* translators: %s: property name */
+            __('Your Door Code for %s', 'guest-management-system'),
+            $reservation['property_name'] ?? ''
+        );
+
+        $message = str_replace(array_keys($replacements), array_values($replacements), $template);
+        $html_message = $this->wrapInEmailTemplate($message, $reservation);
+        $headers = array('Content-Type: text/html; charset=UTF-8');
+
+        $result = wp_mail($recipient, $subject, $html_message, $headers);
+
+        GMS_Database::logCommunication(array(
+            'reservation_id' => intval($reservation['id'] ?? 0),
+            'guest_id' => intval($reservation['guest_id'] ?? 0),
+            'type' => 'email',
+            'recipient' => $recipient,
+            'subject' => $subject,
+            'message' => $message,
+            'status' => $result ? 'sent' : 'failed',
+            'response_data' => array(
+                'result' => $result,
+                'context' => 'door_code_sequence',
+                'door_code' => $sanitized_code,
+            ),
         ));
 
         return $result;

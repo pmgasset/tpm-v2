@@ -81,6 +81,8 @@ class GuestManagementSystem {
             'class-guest-portal.php',
             'class-email-handler.php',
             'class-sms-handler.php',
+            'class-ota-reservation-sync.php',
+            'class-ota-messaging-handler.php',
             'class-stripe-integration.php',
             'class-ajax-handler.php',
             'class-agreement-handler.php', // Load the new agreement handler class
@@ -120,6 +122,9 @@ class GuestManagementSystem {
             'gms_voipms_user' => '',
             'gms_voipms_pass' => '',
             'gms_voipms_did' => '',
+            'gms_airbnb_access_token' => '',
+            'gms_vrbo_access_token' => '',
+            'gms_booking_access_token' => '',
             'gms_email_from' => get_option('admin_email'),
             'gms_email_from_name' => get_option('blogname'),
             'gms_agreement_template' => $this->getDefaultAgreementTemplate(),
@@ -237,8 +242,16 @@ class GuestManagementSystem {
             return;
         }
 
-        wp_enqueue_script('gms-admin', GMS_PLUGIN_URL . 'assets/js/admin.js', ['jquery'], GMS_VERSION, true);
-        wp_enqueue_style('gms-admin', GMS_PLUGIN_URL . 'assets/css/admin.css', [], GMS_VERSION);
+        $asset_base_path = plugin_dir_path(__FILE__);
+
+        $admin_script_path = $asset_base_path . 'assets/js/admin.js';
+        $admin_style_path  = $asset_base_path . 'assets/css/admin.css';
+
+        $admin_script_version = file_exists($admin_script_path) ? filemtime($admin_script_path) : GMS_VERSION;
+        $admin_style_version  = file_exists($admin_style_path) ? filemtime($admin_style_path) : GMS_VERSION;
+
+        wp_enqueue_script('gms-admin', GMS_PLUGIN_URL . 'assets/js/admin.js', ['jquery'], $admin_script_version, true);
+        wp_enqueue_style('gms-admin', GMS_PLUGIN_URL . 'assets/css/admin.css', [], $admin_style_version);
         wp_enqueue_media(); // For handling media uploads in settings (e.g., logo)
 
         $is_messaging_screen = $hook === 'guest-management_page_guest-management-communications';
