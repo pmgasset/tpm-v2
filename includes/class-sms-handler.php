@@ -686,7 +686,10 @@ class GMS_SMS_Handler implements GMS_Messaging_Channel_Interface {
             'recipient' => $phone_validation['sanitized'],
             'message' => $message,
             'status' => $result ? 'sent' : 'failed',
-            'response_data' => array('result' => $result)
+            'response_data' => array(
+                'result' => $result,
+                'context' => 'welcome_sequence',
+            ),
         ));
 
         return $result;
@@ -742,7 +745,10 @@ class GMS_SMS_Handler implements GMS_Messaging_Channel_Interface {
             'recipient' => $phone_validation['sanitized'],
             'message' => $message,
             'status' => $result ? 'sent' : 'failed',
-            'response_data' => array('result' => $result)
+            'response_data' => array(
+                'result' => $result,
+                'context' => 'portal_link_sequence',
+            ),
         ));
 
         return $result;
@@ -794,7 +800,11 @@ class GMS_SMS_Handler implements GMS_Messaging_Channel_Interface {
             'recipient' => $phone_validation['sanitized'],
             'message' => $message,
             'status' => $result ? 'sent' : 'failed',
-            'response_data' => array('result' => $result, 'door_code' => $sanitized_code)
+            'response_data' => array(
+                'result' => $result,
+                'context' => 'door_code_sequence',
+                'door_code' => $sanitized_code,
+            ),
         ));
 
         return $result;
