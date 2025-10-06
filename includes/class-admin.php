@@ -2734,6 +2734,12 @@ class GMS_Admin {
         $door_code_logs = $this->filter_communications_by_context($communications, array('door_code_sequence'), array('portal_update'));
         $welcome_logs = $this->filter_communications_by_context($communications, array('welcome_sequence'));
 
+        $activity_total = is_array($communications) ? count($communications) : 0;
+        $activity_logs = $activity_total > 0 ? array_slice($communications, 0, 30) : array();
+        $latest_activity_display = ($activity_total > 0 && isset($communications[0]['sent_at']))
+            ? $this->format_admin_datetime($communications[0]['sent_at'])
+            : '';
+
         $now = current_time('timestamp');
 
         $portal_status = $this->determine_step_status($portal_logs, $portal_schedule_timestamp, $now);
@@ -2779,6 +2785,7 @@ class GMS_Admin {
         $welcome_last_sent = !empty($welcome_logs) ? $this->format_admin_datetime($welcome_logs[0]['sent_at'] ?? '') : '';
 
         $portal_url = gms_get_portal_url($reservation_id);
+        $door_code_display = $form_values['door_code'] !== '' ? $form_values['door_code'] : '';
         $checkin_display = $this->format_admin_datetime($reservation['checkin_date'] ?? '');
         $checkout_display = $this->format_admin_datetime($reservation['checkout_date'] ?? '');
         $status_label = isset($status_options[$form_values['status']]) ? $status_options[$form_values['status']] : ucfirst($form_values['status']);
@@ -2867,13 +2874,67 @@ class GMS_Admin {
                 </div>
             </div>
 
+            <div class="gms-reservation-toolbar" role="navigation" aria-label="<?php esc_attr_e('Reservation workflow shortcuts', 'guest-management-system'); ?>">
+                <div class="gms-reservation-toolbar__nav">
+                    <a class="gms-reservation-toolbar__step gms-reservation-toolbar__step--<?php echo esc_attr($portal_status); ?>" href="#gms-step-portal" aria-label="<?php echo esc_attr(sprintf(__('Jump to portal invitation step. Status: %s.', 'guest-management-system'), $portal_status_meta['label'])); ?>">
+                        <span class="gms-reservation-toolbar__step-index" aria-hidden="true">1</span>
+                        <span class="gms-reservation-toolbar__step-content">
+                            <span class="gms-reservation-toolbar__step-label"><?php esc_html_e('Portal Invite', 'guest-management-system'); ?></span>
+                            <span class="gms-reservation-toolbar__step-status"><?php echo esc_html($portal_status_meta['label']); ?></span>
+                        </span>
+                    </a>
+                    <a class="gms-reservation-toolbar__step gms-reservation-toolbar__step--<?php echo esc_attr($door_code_status); ?>" href="#gms-step-door-code" aria-label="<?php echo esc_attr(sprintf(__('Jump to door code delivery step. Status: %s.', 'guest-management-system'), $door_code_status_meta['label'])); ?>">
+                        <span class="gms-reservation-toolbar__step-index" aria-hidden="true">2</span>
+                        <span class="gms-reservation-toolbar__step-content">
+                            <span class="gms-reservation-toolbar__step-label"><?php esc_html_e('Door Code', 'guest-management-system'); ?></span>
+                            <span class="gms-reservation-toolbar__step-status"><?php echo esc_html($door_code_status_meta['label']); ?></span>
+                        </span>
+                    </a>
+                    <a class="gms-reservation-toolbar__step gms-reservation-toolbar__step--<?php echo esc_attr($welcome_status); ?>" href="#gms-step-welcome" aria-label="<?php echo esc_attr(sprintf(__('Jump to welcome touchpoint step. Status: %s.', 'guest-management-system'), $welcome_status_meta['label'])); ?>">
+                        <span class="gms-reservation-toolbar__step-index" aria-hidden="true">3</span>
+                        <span class="gms-reservation-toolbar__step-content">
+                            <span class="gms-reservation-toolbar__step-label"><?php esc_html_e('Welcome Touchpoint', 'guest-management-system'); ?></span>
+                            <span class="gms-reservation-toolbar__step-status"><?php echo esc_html($welcome_status_meta['label']); ?></span>
+                        </span>
+                    </a>
+                </div>
+                <div class="gms-reservation-toolbar__meta">
+                    <?php if ($checkin_display !== '') : ?>
+                        <span class="gms-reservation-toolbar__pill">
+                            <span class="gms-reservation-toolbar__pill-label"><?php esc_html_e('Check-in', 'guest-management-system'); ?></span>
+                            <span class="gms-reservation-toolbar__pill-value"><?php echo esc_html($checkin_display); ?></span>
+                        </span>
+                    <?php endif; ?>
+                    <?php if ($checkout_display !== '') : ?>
+                        <span class="gms-reservation-toolbar__pill">
+                            <span class="gms-reservation-toolbar__pill-label"><?php esc_html_e('Check-out', 'guest-management-system'); ?></span>
+                            <span class="gms-reservation-toolbar__pill-value"><?php echo esc_html($checkout_display); ?></span>
+                        </span>
+                    <?php endif; ?>
+                    <?php if ($door_code_display !== '') : ?>
+                        <button type="button" class="gms-reservation-toolbar__pill gms-reservation-toolbar__pill--interactive gms-copy-trigger" data-copy-value="<?php echo esc_attr($door_code_display); ?>" data-copy-success="<?php esc_attr_e('Door code copied to clipboard.', 'guest-management-system'); ?>" data-copy-error="<?php esc_attr_e('Unable to copy door code.', 'guest-management-system'); ?>">
+                            <span class="gms-reservation-toolbar__pill-label"><?php esc_html_e('Door Code', 'guest-management-system'); ?></span>
+                            <span class="gms-reservation-toolbar__pill-value"><?php echo esc_html($door_code_display); ?></span>
+                        </button>
+                    <?php endif; ?>
+                    <?php if ($portal_url) : ?>
+                        <a class="gms-reservation-toolbar__pill gms-reservation-toolbar__pill--action gms-open-portal" href="<?php echo esc_url($portal_url); ?>" target="_blank" rel="noopener noreferrer" data-copy-url="<?php echo esc_attr($portal_url); ?>"><?php esc_html_e('Open Guest Portal', 'guest-management-system'); ?></a>
+                    <?php endif; ?>
+                </div>
+            </div>
+
             <div class="gms-reservation-detail__grid">
                 <div class="gms-reservation-detail__timeline">
-                    <section class="gms-reservation-step gms-reservation-step--<?php echo esc_attr($portal_status); ?>">
+                    <section id="gms-step-portal" class="gms-reservation-step gms-reservation-step--<?php echo esc_attr($portal_status); ?>">
                         <div class="gms-reservation-step__header">
-                            <div>
-                                <h2><?php esc_html_e('Guest Portal Invitation', 'guest-management-system'); ?></h2>
-                                <p><?php esc_html_e('Send the secure guest portal link 14 days before arrival so the guest can complete their tasks.', 'guest-management-system'); ?></p>
+                            <div class="gms-reservation-step__title">
+                                <span class="gms-reservation-step__icon" aria-hidden="true">
+                                    <span class="gms-reservation-step__number">1</span>
+                                </span>
+                                <div>
+                                    <h2><?php esc_html_e('Guest Portal Invitation', 'guest-management-system'); ?></h2>
+                                    <p><?php esc_html_e('Send the secure guest portal link 14 days before arrival so the guest can complete their tasks.', 'guest-management-system'); ?></p>
+                                </div>
                             </div>
                             <div class="gms-reservation-step__meta">
                                 <span class="gms-status-badge <?php echo esc_attr($portal_status_meta['class']); ?>"><?php echo esc_html($portal_status_meta['label']); ?></span>
@@ -2911,11 +2972,16 @@ class GMS_Admin {
                         </div>
                     </section>
 
-                    <section class="gms-reservation-step gms-reservation-step--<?php echo esc_attr($door_code_status); ?>">
+                    <section id="gms-step-door-code" class="gms-reservation-step gms-reservation-step--<?php echo esc_attr($door_code_status); ?>">
                         <div class="gms-reservation-step__header">
-                            <div>
-                                <h2><?php esc_html_e('Access Code Delivery', 'guest-management-system'); ?></h2>
-                                <p><?php esc_html_e('Share the door code and sync it to the portal 7 days before check-in.', 'guest-management-system'); ?></p>
+                            <div class="gms-reservation-step__title">
+                                <span class="gms-reservation-step__icon" aria-hidden="true">
+                                    <span class="gms-reservation-step__number">2</span>
+                                </span>
+                                <div>
+                                    <h2><?php esc_html_e('Access Code Delivery', 'guest-management-system'); ?></h2>
+                                    <p><?php esc_html_e('Share the door code and sync it to the portal 7 days before check-in.', 'guest-management-system'); ?></p>
+                                </div>
                             </div>
                             <div class="gms-reservation-step__meta">
                                 <span class="gms-status-badge <?php echo esc_attr($door_code_status_meta['class']); ?>"><?php echo esc_html($door_code_status_meta['label']); ?></span>
@@ -2953,11 +3019,16 @@ class GMS_Admin {
                         </div>
                     </section>
 
-                    <section class="gms-reservation-step gms-reservation-step--<?php echo esc_attr($welcome_status); ?>">
+                    <section id="gms-step-welcome" class="gms-reservation-step gms-reservation-step--<?php echo esc_attr($welcome_status); ?>">
                         <div class="gms-reservation-step__header">
-                            <div>
-                                <h2><?php esc_html_e('Welcome Touchpoint', 'guest-management-system'); ?></h2>
-                                <p><?php esc_html_e('Send a warm welcome message two hours before arrival to confirm everything is ready.', 'guest-management-system'); ?></p>
+                            <div class="gms-reservation-step__title">
+                                <span class="gms-reservation-step__icon" aria-hidden="true">
+                                    <span class="gms-reservation-step__number">3</span>
+                                </span>
+                                <div>
+                                    <h2><?php esc_html_e('Welcome Touchpoint', 'guest-management-system'); ?></h2>
+                                    <p><?php esc_html_e('Send a warm welcome message two hours before arrival to confirm everything is ready.', 'guest-management-system'); ?></p>
+                                </div>
                             </div>
                             <div class="gms-reservation-step__meta">
                                 <span class="gms-status-badge <?php echo esc_attr($welcome_status_meta['class']); ?>"><?php echo esc_html($welcome_status_meta['label']); ?></span>
@@ -2997,6 +3068,56 @@ class GMS_Admin {
                 </div>
 
                 <div class="gms-reservation-detail__form gms-reservation-detail__sidebar">
+                    <div class="gms-panel gms-contact-panel">
+                        <div class="gms-contact-panel__header">
+                            <h2><?php esc_html_e('Guest Directory', 'guest-management-system'); ?></h2>
+                            <?php if ($portal_url) : ?>
+                                <a class="button button-secondary gms-open-portal" href="<?php echo esc_url($portal_url); ?>" target="_blank" rel="noopener noreferrer" data-copy-url="<?php echo esc_attr($portal_url); ?>"><?php esc_html_e('Launch Portal', 'guest-management-system'); ?></a>
+                            <?php endif; ?>
+                        </div>
+                        <p class="gms-contact-panel__intro"><?php esc_html_e('Reach guests instantly and keep reservation essentials handy.', 'guest-management-system'); ?></p>
+                        <dl class="gms-contact-panel__list">
+                            <div class="gms-contact-panel__item">
+                                <dt><?php esc_html_e('Guest', 'guest-management-system'); ?></dt>
+                                <dd><?php echo esc_html($form_values['guest_name'] !== '' ? $form_values['guest_name'] : __('Unknown Guest', 'guest-management-system')); ?></dd>
+                            </div>
+                            <div class="gms-contact-panel__item">
+                                <dt><?php esc_html_e('Email', 'guest-management-system'); ?></dt>
+                                <dd><?php echo $form_values['guest_email'] !== '' ? esc_html($form_values['guest_email']) : '<span class="gms-contact-panel__muted">' . esc_html__('Not provided', 'guest-management-system') . '</span>'; ?></dd>
+                            </div>
+                            <div class="gms-contact-panel__item">
+                                <dt><?php esc_html_e('Phone', 'guest-management-system'); ?></dt>
+                                <dd><?php echo $form_values['guest_phone'] !== '' ? esc_html($form_values['guest_phone']) : '<span class="gms-contact-panel__muted">' . esc_html__('Not provided', 'guest-management-system') . '</span>'; ?></dd>
+                            </div>
+                            <div class="gms-contact-panel__item">
+                                <dt><?php esc_html_e('Property', 'guest-management-system'); ?></dt>
+                                <dd><?php echo esc_html($form_values['property_name'] !== '' ? $form_values['property_name'] : __('Not set', 'guest-management-system')); ?></dd>
+                            </div>
+                            <div class="gms-contact-panel__item">
+                                <dt><?php esc_html_e('Status', 'guest-management-system'); ?></dt>
+                                <dd><span class="gms-contact-panel__badge"><?php echo esc_html($status_label); ?></span></dd>
+                            </div>
+                            <?php if ($door_code_display !== '') : ?>
+                                <div class="gms-contact-panel__item">
+                                    <dt><?php esc_html_e('Door Code', 'guest-management-system'); ?></dt>
+                                    <dd><?php echo esc_html($door_code_display); ?></dd>
+                                </div>
+                            <?php endif; ?>
+                            <?php if ($checkin_display !== '' || $checkout_display !== '') : ?>
+                                <div class="gms-contact-panel__item">
+                                    <dt><?php esc_html_e('Stay Window', 'guest-management-system'); ?></dt>
+                                    <dd>
+                                        <?php if ($checkin_display !== '') : ?>
+                                            <span class="gms-contact-panel__meta"><?php printf(esc_html__('Check-in: %s', 'guest-management-system'), esc_html($checkin_display)); ?></span>
+                                        <?php endif; ?>
+                                        <?php if ($checkout_display !== '') : ?>
+                                            <span class="gms-contact-panel__meta"><?php printf(esc_html__('Check-out: %s', 'guest-management-system'), esc_html($checkout_display)); ?></span>
+                                        <?php endif; ?>
+                                    </dd>
+                                </div>
+                            <?php endif; ?>
+                        </dl>
+                    </div>
                     <div class="gms-panel gms-platform-panel">
                         <h2><?php esc_html_e('Platform Reservation', 'guest-management-system'); ?></h2>
                         <p><?php esc_html_e('Stay aligned with Airbnb, VRBO, and Booking.com by keeping this reservation in sync.', 'guest-management-system'); ?></p>
@@ -3116,6 +3237,24 @@ class GMS_Admin {
                             </div>
                             <?php submit_button(__('Update Reservation', 'guest-management-system')); ?>
                         </form>
+                    </div>
+                </div>
+                <div class="gms-reservation-detail__activity">
+                    <div class="gms-panel gms-activity-panel">
+                        <div class="gms-activity-panel__header">
+                            <h2><?php esc_html_e('Communication Feed', 'guest-management-system'); ?></h2>
+                            <?php if ($activity_total > 0) : ?>
+                                <span class="gms-activity-panel__count"><?php printf(esc_html__('%d logged', 'guest-management-system'), absint($activity_total)); ?></span>
+                            <?php endif; ?>
+                        </div>
+                        <p class="gms-activity-panel__intro"><?php esc_html_e('Most recent messages across email, SMS, OTA, and portal updates.', 'guest-management-system'); ?></p>
+                        <?php if ($latest_activity_display !== '') : ?>
+                            <p class="gms-activity-panel__meta"><?php printf(esc_html__('Last logged: %s', 'guest-management-system'), esc_html($latest_activity_display)); ?></p>
+                        <?php endif; ?>
+                        <?php $this->render_activity_timeline($activity_logs); ?>
+                        <?php if ($activity_total > count($activity_logs)) : ?>
+                            <p class="gms-activity-panel__hint"><?php esc_html_e('Showing the 30 most recent communications. View older activity in the messaging history.', 'guest-management-system'); ?></p>
+                        <?php endif; ?>
                     </div>
                 </div>
             </div>
@@ -3265,12 +3404,27 @@ class GMS_Admin {
     }
 
     private function render_step_timeline($logs) {
+        $this->render_timeline($logs, __('No activity recorded yet for this step.', 'guest-management-system'), 'step');
+    }
+
+    private function render_activity_timeline($logs) {
+        $this->render_timeline($logs, __('No communications logged yet for this reservation.', 'guest-management-system'), 'activity');
+    }
+
+    private function render_timeline($logs, $empty_message, $context = 'step') {
+        $empty_class = $context === 'activity' ? 'gms-reservation-activity__empty' : 'gms-reservation-step__empty';
+
         if (empty($logs)) {
-            echo '<p class="gms-reservation-step__empty">' . esc_html__('No activity recorded yet for this step.', 'guest-management-system') . '</p>';
+            echo '<p class="' . esc_attr($empty_class) . '">' . esc_html($empty_message) . '</p>';
             return;
         }
 
-        echo '<ul class="gms-reservation-timeline">';
+        $classes = array('gms-reservation-timeline');
+        if ($context !== '') {
+            $classes[] = 'gms-reservation-timeline--' . sanitize_html_class($context);
+        }
+
+        echo '<ul class="' . esc_attr(implode(' ', $classes)) . '">';
         foreach ($logs as $log) {
             if (!is_array($log)) {
                 continue;
