@@ -550,6 +550,98 @@
     font-size: 18px;
 }
 
+.gms-reservations-sync {
+    margin-bottom: 24px;
+}
+
+.gms-reservations-sync__form {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    align-items: flex-end;
+}
+
+.gms-reservations-sync__field {
+    display: flex;
+    flex-direction: column;
+    min-width: 200px;
+    gap: 4px;
+}
+
+.gms-reservations-sync__field label {
+    font-weight: 600;
+}
+
+.gms-reservations-sync__actions {
+    margin-left: auto;
+}
+
+.gms-platform-sync__summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 8px 16px;
+    margin: 16px 0;
+}
+
+.gms-platform-sync__summary-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.gms-platform-sync__label {
+    font-size: 12px;
+    color: #50575e;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.gms-platform-sync__value {
+    font-size: 14px;
+    font-weight: 600;
+    color: #1d2327;
+}
+
+.gms-platform-sync__value--muted {
+    color: #8c8f94;
+    font-weight: 500;
+}
+
+.gms-platform-sync__form {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 12px;
+}
+
+.gms-platform-sync__hint {
+    margin: 0;
+    font-size: 12px;
+    color: #50575e;
+}
+
+.gms-platform-sync__snapshot-list {
+    margin: 0;
+    padding-left: 18px;
+    font-size: 12px;
+    color: #50575e;
+}
+
+.gms-platform-sync__snapshot-list li {
+    margin: 4px 0;
+}
+
+.gms-platform-sync__notice-list,
+.gms-platform-sync__notice-errors {
+    margin: 8px 0 0;
+    padding-left: 18px;
+    font-size: 12px;
+}
+
+.gms-platform-sync__notice-errors {
+    color: #b32d2e;
+}
+
 .gms-reservation-detail__form {
     display: flex;
     flex-direction: column;
@@ -567,6 +659,22 @@
     }
 
     .gms-reservation-step__meta {
+        align-items: flex-start;
+    }
+}
+
+@media screen and (max-width: 782px) {
+    .gms-reservations-sync__form {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .gms-reservations-sync__actions {
+        margin-left: 0;
+    }
+
+    .gms-platform-sync__form {
+        flex-direction: column;
         align-items: flex-start;
     }
 }
