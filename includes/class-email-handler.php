@@ -44,22 +44,28 @@ class GMS_Email_Handler {
             '{company_name}' => get_option('gms_company_name', get_option('blogname'))
         );
         
+        $recipient = isset($reservation['guest_email']) ? sanitize_email($reservation['guest_email']) : '';
+        if ($recipient === '' || !is_email($recipient)) {
+            error_log('GMS: Invalid guest email provided for reservation ' . intval($reservation['id'] ?? 0));
+            return false;
+        }
+
         $message = str_replace(array_keys($replacements), array_values($replacements), $template);
-        
+
         // Create HTML email
         $html_message = $this->wrapInEmailTemplate($message, $reservation);
-        
+
         // Set headers for HTML email
         $headers = array('Content-Type: text/html; charset=UTF-8');
-        
-        $result = wp_mail($reservation['guest_email'], $subject, $html_message, $headers);
-        
+
+        $result = wp_mail($recipient, $subject, $html_message, $headers);
+
         // Log communication
         GMS_Database::logCommunication(array(
             'reservation_id' => $reservation['id'],
             'guest_id' => $reservation['guest_id'],
             'type' => 'email',
-            'recipient' => $reservation['guest_email'],
+            'recipient' => $recipient,
             'subject' => $subject,
             'message' => $message,
             'status' => $result ? 'sent' : 'failed',
@@ -102,19 +108,25 @@ class GMS_Email_Handler {
             '{company_name}' => get_option('gms_company_name', get_option('blogname')),
         );
 
+        $recipient = isset($reservation['guest_email']) ? sanitize_email($reservation['guest_email']) : '';
+        if ($recipient === '' || !is_email($recipient)) {
+            error_log('GMS: Invalid guest email provided for reservation ' . intval($reservation['id'] ?? 0));
+            return false;
+        }
+
         $message = str_replace(array_keys($replacements), array_values($replacements), $template);
 
         $html_message = $this->wrapInEmailTemplate($message, $reservation);
 
         $headers = array('Content-Type: text/html; charset=UTF-8');
 
-        $result = wp_mail($reservation['guest_email'], $subject, $html_message, $headers);
+        $result = wp_mail($recipient, $subject, $html_message, $headers);
 
         GMS_Database::logCommunication(array(
             'reservation_id' => $reservation['id'],
             'guest_id' => $reservation['guest_id'],
             'type' => 'email',
-            'recipient' => $reservation['guest_email'],
+            'recipient' => $recipient,
             'subject' => $subject,
             'message' => $message,
             'status' => $result ? 'sent' : 'failed',
@@ -201,10 +213,15 @@ class GMS_Email_Handler {
         if (empty($headers)) {
             $headers = array('Content-Type: text/html; charset=UTF-8');
         }
-        
+
+        $recipient = sanitize_email($to);
+        if ($recipient === '' || !is_email($recipient)) {
+            return false;
+        }
+
         $html_message = $this->wrapInEmailTemplate($message);
-        
-        return wp_mail($to, $subject, $html_message, $headers);
+
+        return wp_mail($recipient, $subject, $html_message, $headers);
     }
     
     public function sendReminderEmail($reservation) {
@@ -225,25 +242,31 @@ class GMS_Email_Handler {
         $message .= "We look forward to hosting you!\n\n";
         $message .= get_option('gms_company_name', get_option('blogname'));
         
+        $recipient = isset($reservation['guest_email']) ? sanitize_email($reservation['guest_email']) : '';
+        if ($recipient === '' || !is_email($recipient)) {
+            error_log('GMS: Invalid guest email provided for reservation ' . intval($reservation['id'] ?? 0));
+            return false;
+        }
+
         $html_message = $this->wrapInEmailTemplate($message, $reservation);
-        
+
         $headers = array('Content-Type: text/html; charset=UTF-8');
-        
-        $result = wp_mail($reservation['guest_email'], $subject, $html_message, $headers);
-        
+
+        $result = wp_mail($recipient, $subject, $html_message, $headers);
+
         GMS_Database::logCommunication(array(
             'reservation_id' => $reservation['id'],
             'guest_id' => $reservation['guest_id'],
             'type' => 'email',
-            'recipient' => $reservation['guest_email'],
+            'recipient' => $recipient,
             'subject' => $subject,
             'message' => $message,
             'status' => $result ? 'sent' : 'failed'
         ));
-        
+
         return $result;
     }
-    
+
     public function sendCompletionEmail($reservation) {
         $subject = 'Check-in Complete - Welcome to ' . $reservation['property_name'];
         
@@ -259,22 +282,28 @@ class GMS_Email_Handler {
         $message .= "We look forward to hosting you!\n\n";
         $message .= get_option('gms_company_name', get_option('blogname'));
         
+        $recipient = isset($reservation['guest_email']) ? sanitize_email($reservation['guest_email']) : '';
+        if ($recipient === '' || !is_email($recipient)) {
+            error_log('GMS: Invalid guest email provided for reservation ' . intval($reservation['id'] ?? 0));
+            return false;
+        }
+
         $html_message = $this->wrapInEmailTemplate($message, $reservation);
-        
+
         $headers = array('Content-Type: text/html; charset=UTF-8');
-        
-        $result = wp_mail($reservation['guest_email'], $subject, $html_message, $headers);
-        
+
+        $result = wp_mail($recipient, $subject, $html_message, $headers);
+
         GMS_Database::logCommunication(array(
             'reservation_id' => $reservation['id'],
             'guest_id' => $reservation['guest_id'],
             'type' => 'email',
-            'recipient' => $reservation['guest_email'],
+            'recipient' => $recipient,
             'subject' => $subject,
             'message' => $message,
             'status' => $result ? 'sent' : 'failed'
         ));
-        
+
         return $result;
     }
     
