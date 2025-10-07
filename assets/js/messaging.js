@@ -743,6 +743,11 @@
             state.templateChannel = '';
             state.templateSearchTerm = '';
             state.templatesLoading = false;
+            if (state.pendingMessages && typeof state.pendingMessages.clear === 'function') {
+                state.pendingMessages.clear();
+            }
+            textarea.value = '';
+            sendButton.disabled = true;
             if (templateSearchTimer) {
                 window.clearTimeout(templateSearchTimer);
                 templateSearchTimer = null;
