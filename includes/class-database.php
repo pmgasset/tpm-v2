@@ -463,7 +463,7 @@ class GMS_Database {
         do {
             $rows = $wpdb->get_results(
                 $wpdb->prepare(
-                    "SELECT id, reservation_id, guest_id, channel, from_number_e164, to_number_e164, thread_key FROM {$table_name} WHERE thread_key = '' OR thread_key IS NULL LIMIT %d",
+                    "SELECT id, reservation_id, guest_id, channel, from_number_e164, to_number_e164, thread_key, recipient, provider_reference FROM {$table_name} WHERE thread_key = '' OR thread_key IS NULL LIMIT %d",
                     $batch_size
                 ),
                 ARRAY_A
@@ -481,6 +481,18 @@ class GMS_Database {
                     (string) $row['from_number_e164'],
                     (string) $row['to_number_e164']
                 );
+
+                if ($thread_key === '') {
+                    $thread_key = self::deriveThreadKeyFallback(
+                        sanitize_key($row['channel']),
+                        intval($row['reservation_id']),
+                        intval($row['guest_id']),
+                        (string) $row['from_number_e164'],
+                        (string) $row['to_number_e164'],
+                        (string) $row['recipient'],
+                        (string) $row['provider_reference']
+                    );
+                }
 
                 if ($thread_key === '') {
                     continue;
@@ -1669,12 +1681,25 @@ class GMS_Database {
         $from_number_e164 = $channel === 'sms' ? self::normalizePhoneNumber($from_number) : '';
         $to_number_e164 = $channel === 'sms' ? self::normalizePhoneNumber($to_number) : '';
 
+        $raw_external_id = $data['external_id'] !== '' ? $data['external_id'] : $data['provider_reference'];
+        $external_id = sanitize_text_field($raw_external_id);
+
         $thread_key = sanitize_text_field($data['thread_key']);
         if ($thread_key === '') {
             $thread_key = self::generateThreadKey($channel, $reservation_id, $guest_id, $from_number_e164, $to_number_e164);
         }
 
-        $external_id = sanitize_text_field($data['external_id'] !== '' ? $data['external_id'] : $data['provider_reference']);
+        if ($thread_key === '') {
+            $thread_key = self::deriveThreadKeyFallback(
+                $channel,
+                $reservation_id,
+                $guest_id,
+                $from_number_e164,
+                $to_number_e164,
+                isset($data['recipient']) ? $data['recipient'] : '',
+                $external_id !== '' ? $external_id : sanitize_text_field($raw_external_id)
+            );
+        }
 
         $read_at = self::sanitizeNullableDateTime($data['read_at']);
         $sent_at = $data['sent_at'] !== '' ? self::sanitizeDateTime($data['sent_at']) : current_time('mysql');
@@ -2527,6 +2552,82 @@ class GMS_Database {
         }
 
         return implode('|', $parts);
+    }
+
+    private static function deriveThreadKeyFallback($channel, $reservation_id, $guest_id, $from_number_e164, $to_number_e164, $recipient = '', $external_id = '') {
+        $parts = array();
+
+        $channel = sanitize_key($channel);
+        if ($channel !== '') {
+            $parts[] = 'channel:' . $channel;
+        }
+
+        $reservation_id = intval($reservation_id);
+        if ($reservation_id > 0) {
+            $parts[] = 'reservation:' . $reservation_id;
+        }
+
+        $guest_id = intval($guest_id);
+        if ($guest_id > 0) {
+            $parts[] = 'guest:' . $guest_id;
+        }
+
+        $numbers = array();
+        foreach (array($from_number_e164, $to_number_e164) as $number) {
+            $normalized = self::normalizePhoneNumber($number);
+            if ($normalized !== '') {
+                $numbers[] = $normalized;
+            }
+        }
+
+        $numbers = array_values(array_unique(array_filter($numbers)));
+        if (!empty($numbers)) {
+            sort($numbers);
+            $parts[] = 'party:' . implode(',', $numbers);
+        }
+
+        $recipient_fingerprint = self::fingerprintThreadRecipient($channel, $recipient);
+        if ($recipient_fingerprint !== '') {
+            $parts[] = 'recipient:' . $recipient_fingerprint;
+        }
+
+        $external_id = sanitize_text_field($external_id);
+        if ($external_id !== '') {
+            $parts[] = 'ext:' . md5($external_id);
+        }
+
+        if (empty($parts)) {
+            $parts[] = 'thread:' . md5(uniqid('gms', true));
+        }
+
+        return implode('|', $parts);
+    }
+
+    private static function fingerprintThreadRecipient($channel, $recipient) {
+        if ($recipient === '') {
+            return '';
+        }
+
+        $channel = sanitize_key($channel);
+
+        if ($channel === 'sms') {
+            $normalized = self::normalizePhoneNumber($recipient);
+            return $normalized !== '' ? $normalized : '';
+        }
+
+        if ($channel === 'email') {
+            $email = sanitize_email($recipient);
+            if ($email === '' || !is_email($email)) {
+                return '';
+            }
+
+            return md5(strtolower($email));
+        }
+
+        $recipient = sanitize_text_field($recipient);
+        $recipient = trim(strtolower($recipient));
+
+        return $recipient !== '' ? md5($recipient) : '';
     }
 
     public static function getUserIP() {
