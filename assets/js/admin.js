@@ -426,16 +426,21 @@
         });
 
         $(document).on('submit', '.gms-reservation-form', function(e) {
-            e.preventDefault();
-
             var $form = $(this);
+            var $editorRow = $form.closest('tr.gms-reservation-editor');
+
+            if (!$editorRow.length) {
+                return;
+            }
+
             var reservationId = parseInt($form.data('reservation-id'), 10);
 
             if (!reservationId) {
                 return;
             }
 
-            var $editorRow = $form.closest('tr.gms-reservation-editor');
+            e.preventDefault();
+
             var $row = $editorRow.prev('tr');
             var $submitButton = $form.find('button[type="submit"]');
             var originalSubmitText = $submitButton.text();
