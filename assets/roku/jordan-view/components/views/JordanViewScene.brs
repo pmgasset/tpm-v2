@@ -221,7 +221,12 @@ sub renderReservation(reservation as dynamic)
     endpoint = ""
     if type(actions) = "roAssociativeArray" then
         if actions.LookupCI("canCheckout") <> invalid then
-            showCheckout = actions.canCheckout = true
+            canCheckout = actions.canCheckout
+            if type(canCheckout) = "Boolean" then
+                showCheckout = canCheckout
+            else if type(canCheckout) = "String" then
+                showCheckout = LCase(canCheckout) = "true"
+            end if
         end if
         if actions.LookupCI("checkoutEndpoint") <> invalid then
             endpoint = actions.checkoutEndpoint
@@ -359,7 +364,17 @@ sub onDashboardFailed()
         if errorInfo.LookupCI("message") <> invalid and type(errorInfo.message) = "String" then
             message = errorInfo.message
         else if errorInfo.LookupCI("status") <> invalid then
-            message = message + " (" + errorInfo.status.ToStr() + ")"
+            statusValue = errorInfo.status
+            statusText = ""
+            if type(statusValue) = "Integer" or type(statusValue) = "LongInteger" or type(statusValue) = "Float" or type(statusValue) = "Double" then
+                statusText = Str(statusValue)
+                statusText = statusText.Trim()
+            else if type(statusValue) = "String" then
+                statusText = statusValue
+            end if
+            if Len(statusText) > 0 then
+                message = message + " (" + statusText + ")"
+            end if
         end if
     end if
 
@@ -426,7 +441,17 @@ sub onCheckoutFailed()
         if errorInfo.LookupCI("message") <> invalid and type(errorInfo.message) = "String" then
             message = errorInfo.message
         else if errorInfo.LookupCI("status") <> invalid then
-            message = message + " (" + errorInfo.status.ToStr() + ")"
+            statusValue = errorInfo.status
+            statusText = ""
+            if type(statusValue) = "Integer" or type(statusValue) = "LongInteger" or type(statusValue) = "Float" or type(statusValue) = "Double" then
+                statusText = Str(statusValue)
+                statusText = statusText.Trim()
+            else if type(statusValue) = "String" then
+                statusText = statusValue
+            end if
+            if Len(statusText) > 0 then
+                message = message + " (" + statusText + ")"
+            end if
         end if
     end if
 

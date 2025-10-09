@@ -1,6 +1,6 @@
-function init()
+sub init()
     m.top.functionName = "execute"
-end function
+end sub
 
 sub execute()
     uri = m.top.uri
