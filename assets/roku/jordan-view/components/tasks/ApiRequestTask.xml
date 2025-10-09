@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component name="ApiRequestTask" extends="Task">
+    <interface>
+        <field id="uri" type="string" />
+        <field id="method" type="string" default="GET" />
+        <field id="token" type="string" />
+        <field id="body" type="string" />
+        <field id="status" type="integer" alwaysNotify="true" />
+        <field id="response" type="assocarray" alwaysNotify="true" />
+        <field id="responseText" type="string" alwaysNotify="true" />
+        <field id="error" type="assocarray" alwaysNotify="true" />
+    </interface>
+    <script type="text/brightscript" uri="pkg:/components/tasks/ApiRequestTask.brs" />
+</component>

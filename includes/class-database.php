@@ -1274,6 +1274,84 @@ class GMS_Database {
         return self::formatReservationRow($row);
     }
 
+    public static function getActiveReservationForProperty($args = array()) {
+        global $wpdb;
+
+        $defaults = array(
+            'property_id'   => '',
+            'property_name' => '',
+        );
+
+        $args = wp_parse_args($args, $defaults);
+
+        $table_name = $wpdb->prefix . 'gms_reservations';
+        $now = current_time('mysql');
+
+        $where = array(
+            "checkin_date <> '0000-00-00 00:00:00'",
+            "checkout_date <> '0000-00-00 00:00:00'",
+            'checkin_date <= %s',
+            'checkout_date >= %s',
+            "status NOT IN ('cancelled', 'completed')",
+        );
+
+        $params = array($now, $now);
+
+        if ($args['property_id'] !== '') {
+            $where[] = 'property_id = %s';
+            $params[] = sanitize_text_field($args['property_id']);
+        }
+
+        if ($args['property_name'] !== '') {
+            $where[] = 'property_name = %s';
+            $params[] = sanitize_text_field($args['property_name']);
+        }
+
+        $sql = "SELECT * FROM {$table_name} WHERE " . implode(' AND ', $where) . ' ORDER BY checkin_date DESC LIMIT 1';
+
+        $row = $wpdb->get_row($wpdb->prepare($sql, $params), ARRAY_A);
+
+        return self::formatReservationRow($row);
+    }
+
+    public static function getUpcomingReservationForProperty($args = array()) {
+        global $wpdb;
+
+        $defaults = array(
+            'property_id'   => '',
+            'property_name' => '',
+        );
+
+        $args = wp_parse_args($args, $defaults);
+
+        $table_name = $wpdb->prefix . 'gms_reservations';
+        $now = current_time('mysql');
+
+        $where = array(
+            "checkin_date <> '0000-00-00 00:00:00'",
+            "status NOT IN ('cancelled')",
+            'checkin_date >= %s',
+        );
+
+        $params = array($now);
+
+        if ($args['property_id'] !== '') {
+            $where[] = 'property_id = %s';
+            $params[] = sanitize_text_field($args['property_id']);
+        }
+
+        if ($args['property_name'] !== '') {
+            $where[] = 'property_name = %s';
+            $params[] = sanitize_text_field($args['property_name']);
+        }
+
+        $sql = "SELECT * FROM {$table_name} WHERE " . implode(' AND ', $where) . ' ORDER BY checkin_date ASC LIMIT 1';
+
+        $row = $wpdb->get_row($wpdb->prepare($sql, $params), ARRAY_A);
+
+        return self::formatReservationRow($row);
+    }
+
     public static function getReservationByPlatformReference($platform, $booking_reference) {
         global $wpdb;
 
