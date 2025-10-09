@@ -5,7 +5,6 @@ sub main()
     port = CreateObject("roMessagePort")
     screen.SetMessagePort(port)
 
-    dofile("pkg:/source/AppConfig.brs")
     config = GetAppConfig()
 
     print "[JordanView] Loaded configuration"
