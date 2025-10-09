@@ -1216,7 +1216,11 @@ class GMS_Admin {
                 'description' => __('Used for posting messages to Booking.com guest conversations.', 'guest-management-system'),
             ),
             'gms_bitly_token' => array('label' => __('Bitly Access Token', 'guest-management-system')),
-            'gms_webhook_token' => array('label' => __('Webhook Shared Secret', 'guest-management-system'))
+            'gms_webhook_token' => array('label' => __('Webhook Shared Secret', 'guest-management-system')),
+            'gms_roku_api_token' => array(
+                'label' => __('Roku API Token', 'guest-management-system'),
+                'description' => __('Authenticate the Jordan View Roku app by sending this token in the X-Roku-Token header.', 'guest-management-system'),
+            ),
         );
 
         foreach ($integration_options as $option => $meta) {
@@ -1245,6 +1249,23 @@ class GMS_Admin {
                 )
             );
         }
+
+        register_setting('gms_settings_integrations', 'gms_roku_media_tag_prefix', array(
+            'sanitize_callback' => array($this, 'sanitize_text')
+        ));
+
+        add_settings_field(
+            'gms_roku_media_tag_prefix',
+            __('Roku Gallery Tag Prefix', 'guest-management-system'),
+            array($this, 'render_text_field'),
+            'gms_settings_integrations',
+            'gms_integrations_section',
+            array(
+                'option_name' => 'gms_roku_media_tag_prefix',
+                'placeholder' => __('roku', 'guest-management-system'),
+                'description' => __('Media library tag prefix applied to property-specific artwork for the Roku app.', 'guest-management-system'),
+            )
+        );
 
         // Branding tab - appearance
         register_setting('gms_settings_branding', 'gms_company_name', array(
