@@ -291,7 +291,7 @@ sub renderMedia(media as dynamic)
 
     for each item in media
         if type(item) <> "roAssociativeArray" then
-            continue
+            continue for
         end if
 
         node = row.CreateChild("ContentNode")
