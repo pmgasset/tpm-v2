@@ -53,6 +53,7 @@ class GuestManagementSystem {
         new GMS_Email_Handler();
         new GMS_SMS_Handler();
         new GMS_Stripe_Integration();
+        new GMS_Roku_Integration();
         new GMS_Agreement_Handler(); // Initialize the new agreement handler
         new GMS_AJAX_Handler();
 
@@ -83,6 +84,7 @@ class GuestManagementSystem {
             'class-sms-handler.php',
             'class-ota-reservation-sync.php',
             'class-ota-messaging-handler.php',
+            'class-roku-integration.php',
             'class-stripe-integration.php',
             'class-ajax-handler.php',
             'class-agreement-handler.php', // Load the new agreement handler class
@@ -131,7 +133,9 @@ class GuestManagementSystem {
             'gms_email_template' => $this->getDefaultEmailTemplate(),
             'gms_sms_template' => $this->getDefaultSMSTemplate(),
             'gms_approved_email_template' => $this->getDefaultApprovedEmailTemplate(),
-            'gms_approved_sms_template' => $this->getDefaultApprovedSMSTemplate()
+            'gms_approved_sms_template' => $this->getDefaultApprovedSMSTemplate(),
+            'gms_roku_api_token' => wp_generate_password(32, false, false),
+            'gms_roku_media_tag_prefix' => 'roku'
         );
         
         foreach ($default_options as $key => $value) {

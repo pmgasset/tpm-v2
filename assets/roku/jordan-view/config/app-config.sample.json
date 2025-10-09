@@ -1,0 +1,8 @@
+{
+  "apiBaseUrl": "https://example.com/wp-json/gms/v1",
+  "rokuToken": "YOUR_ROKU_TOKEN",
+  "propertyId": "",
+  "propertyName": "",
+  "mediaTag": "",
+  "title": "Jordan View"
+}
