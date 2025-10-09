@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component name="JordanViewScene" extends="Scene">
+    <interface>
+        <field id="config" type="assocarray" alwaysNotify="true" />
+    </interface>
+    <children>
+        <Rectangle id="background" color="0x10141CFF" width="1920" height="1080" />
+        <Poster id="hero" translation="[0,0]" width="1920" height="640" loadDisplayMode="scaleToFill" />
+        <Rectangle id="heroOverlay" translation="[0,0]" width="1920" height="640" color="0x10141CD0" />
+        <Group id="content" translation="[120,420]">
+            <Poster id="logo" translation="[0,-160]" width="260" height="120" loadDisplayMode="zoomToFill" visible="false" />
+            <Label id="title" translation="[0,0]" width="900" height="60" font="font:LargeBoldSystemFont" color="0xFFFFFFFF" text="Jordan View" />
+            <Label id="guestName" translation="[0,70]" width="1200" height="60" font="font:LargeSystemFont" color="0xFFFFFFFF" text="" />
+            <Label id="staySummary" translation="[0,130]" width="1200" height="50" font="font:MediumItalicSystemFont" color="0xD0FFFFFF" text="" />
+            <Label id="doorCodeLabel" translation="[0,210]" width="400" height="40" font="font:MediumBoldSystemFont" color="0xFFFFFFFF" text="Door Code" visible="false" />
+            <Label id="doorCode" translation="[0,260]" width="600" height="60" font="font:ExtraLargeSystemFont" color="0xFFFFFFFF" text="" visible="false" />
+            <Label id="bookingReference" translation="[0,340]" width="1200" height="40" font="font:MediumSystemFont" color="0xD0FFFFFF" text="" />
+            <Label id="upcoming" translation="[0,400]" width="1400" height="40" font="font:MediumSystemFont" color="0xB0FFFFFF" text="" />
+        </Group>
+        <RowList id="mediaRow" translation="[120,720]" itemSize="[360,202]" itemSpacing="[24,24]" numRows="1" focusRow="0" vertFocusAnimationStyle="fixedFocus" />
+        <Button id="checkoutButton" translation="[1500,860]" width="260" height="80" visible="false">
+            <Label text="Check Out" horizAlign="center" vertAlign="center" color="0xFFFFFFFF" />
+        </Button>
+        <Label id="status" translation="[120,960]" width="1680" height="40" font="font:SmallSystemFont" color="0x80FFFFFF" text="" />
+        <BusySpinner id="spinner" translation="[1740,40]" visible="false" />
+        <Label id="error" translation="[120,880]" width="1680" height="60" font="font:MediumBoldSystemFont" color="0xFF7A6BFF" text="" visible="false" />
+    </children>
+    <script type="text/brightscript" uri="pkg:/components/views/JordanViewScene.brs" />
+</component>
