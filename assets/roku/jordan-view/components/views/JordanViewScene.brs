@@ -1,4 +1,6 @@
 sub init()
+    print "[JordanView] Scene init"
+
     m.hero = m.top.findNode("hero")
     m.heroOverlay = m.top.findNode("heroOverlay")
     m.logo = m.top.findNode("logo")
@@ -16,6 +18,7 @@ sub init()
     m.checkoutButton = m.top.findNode("checkoutButton")
 
     m.mediaRow.visible = false
+    m.statusLabel.text = "Loading Jordan View experience…"
 
     m.checkoutButton.observeField("buttonSelected", "onCheckoutSelected")
 
@@ -38,9 +41,26 @@ end sub
 
 sub onConfigChanged()
     config = m.top.config
-    if type(config) <> "roAssociativeArray" then return
+    if type(config) <> "roAssociativeArray" then
+        print "[JordanView] onConfigChanged received invalid config"
+        return
+    end if
 
     m.currentConfig = config
+
+    propertyId = config.LookupCI("propertyId")
+    propertyName = config.LookupCI("propertyName")
+    print "[JordanView] Config updated"
+    if type(propertyId) = "String" and Len(propertyId) > 0 then
+        print "[JordanView]  • propertyId=" + propertyId
+    else
+        print "[JordanView]  • propertyId missing"
+    end if
+    if type(propertyName) = "String" and Len(propertyName) > 0 then
+        print "[JordanView]  • propertyName=" + propertyName
+    else
+        print "[JordanView]  • propertyName missing"
+    end if
 
     if config.LookupCI("title") <> invalid and type(config.title) = "String" then
         m.titleLabel.text = config.title
@@ -58,6 +78,7 @@ sub loadDashboard()
     if type(baseUrl) <> "String" or Len(baseUrl) = 0 then
         m.errorLabel.text = "Missing API base URL configuration."
         m.errorLabel.visible = true
+        print "[JordanView] loadDashboard aborted: missing apiBaseUrl"
         return
     end if
 
@@ -93,6 +114,13 @@ sub loadDashboard()
     m.statusLabel.text = "Refreshing Jordan View experience…"
     m.mediaRow.visible = false
 
+    print "[JordanView] loadDashboard requesting: " + uri
+    if Len(token) > 0 then
+        print "[JordanView] loadDashboard using Roku token"
+    else
+        print "[JordanView] loadDashboard without Roku token"
+    end if
+
     m.apiTask.uri = uri
     m.apiTask.method = "GET"
     m.apiTask.token = token
@@ -110,6 +138,7 @@ sub onDashboardLoaded()
     if type(data) <> "roAssociativeArray" then
         m.errorLabel.text = "Unexpected response from API."
         m.errorLabel.visible = true
+        print "[JordanView] onDashboardLoaded received unexpected payload type"
         return
     end if
 
@@ -121,11 +150,14 @@ sub onDashboardLoaded()
             m.errorLabel.text = "Unable to load guest information."
         end if
         m.errorLabel.visible = true
+        print "[JordanView] onDashboardLoaded reported failure: " + toLogString(message)
         return
     end if
 
     m.errorLabel.visible = false
     m.currentData = data
+
+    print "[JordanView] Dashboard payload received"
 
     if data.LookupCI("branding") <> invalid and type(data.branding) = "roAssociativeArray" then
         applyBranding(data.branding)
@@ -144,17 +176,22 @@ sub onDashboardLoaded()
 end sub
 
 sub applyBranding(branding as object)
+    print "[JordanView] Applying branding"
+
     logoUrl = branding.LookupCI("logoUrl")
     if type(logoUrl) = "String" and Len(logoUrl) > 0 then
         m.logo.uri = logoUrl
         m.logo.visible = true
+        print "[JordanView]  • logoUrl configured"
     else
         m.logo.visible = false
+        print "[JordanView]  • logoUrl missing"
     end if
 
     title = branding.LookupCI("title")
     if type(title) = "String" and Len(title) > 0 then
         m.titleLabel.text = title
+        print "[JordanView]  • title=" + title
     end if
 
     primaryColor = branding.LookupCI("primaryColor")
@@ -165,6 +202,7 @@ sub applyBranding(branding as object)
             if labelNode <> invalid then
                 labelNode.color = colorValue
             end if
+            print "[JordanView]  • checkout button color applied"
         end if
     end if
 end sub
@@ -179,14 +217,17 @@ sub renderReservation(reservation as dynamic)
         m.bookingReferenceLabel.text = ""
         m.checkoutButton.visible = false
         m.checkoutEndpoint = ""
+        print "[JordanView] No active reservation"
         return
     end if
 
     guest = reservation.LookupCI("guestName")
     if type(guest) = "String" and Len(guest) > 0 then
         m.guestNameLabel.text = guest
+        print "[JordanView] Rendering reservation for " + guest
     else
         m.guestNameLabel.text = "Welcome"
+        print "[JordanView] Rendering reservation with missing guest name"
     end if
 
     summary = reservation.LookupCI("staySummary")
@@ -237,8 +278,10 @@ sub renderReservation(reservation as dynamic)
     if showCheckout and Len(endpoint) > 0 then
         m.checkoutButton.visible = true
         m.checkoutButton.SetFocus(true)
+        print "[JordanView] Checkout available"
     else
         m.checkoutButton.visible = false
+        print "[JordanView] Checkout unavailable"
     end if
 
     statusLabel = reservation.LookupCI("statusLabel")
@@ -282,12 +325,18 @@ sub renderMedia(media as dynamic)
     if type(media) <> "roArray" or media.Count() = 0 then
         m.mediaRow.content = CreateObject("roSGNode", "ContentNode")
         m.mediaRow.visible = false
+        print "[JordanView] No media items available"
         return
     end if
 
     content = CreateObject("roSGNode", "ContentNode")
     row = content.CreateChild("ContentNode")
     row.title = "Jordan View"
+
+    itemCount = media.Count()
+    itemCountText = Str(itemCount)
+    itemCountText = itemCountText.Trim()
+    print "[JordanView] Rendering " + itemCountText + " media items"
 
     for each item in media
         if type(item) <> "roAssociativeArray" then
@@ -323,6 +372,7 @@ sub renderMedia(media as dynamic)
         heroUrl = heroCandidate.LookupCI("url")
         if type(heroUrl) = "String" and Len(heroUrl) > 0 and (mediaType = invalid or mediaType = "image") then
             m.hero.uri = heroUrl
+            print "[JordanView] Hero artwork set from media"
         end if
     end if
 end sub
@@ -343,6 +393,7 @@ sub updateHeroArtwork()
             mediaType = candidate.LookupCI("type")
             if type(heroUrl) = "String" and Len(heroUrl) > 0 and (mediaType = invalid or mediaType = "image") then
                 m.hero.uri = heroUrl
+                print "[JordanView] Hero artwork refreshed"
                 return
             end if
         end if
@@ -351,6 +402,7 @@ sub updateHeroArtwork()
     ' No media provided – fall back to logo if available
     if m.logo.visible and type(m.logo.uri) = "String" and Len(m.logo.uri) > 0 then
         m.hero.uri = m.logo.uri
+        print "[JordanView] Hero artwork fallback to logo"
     end if
 end sub
 
@@ -380,10 +432,13 @@ sub onDashboardFailed()
 
     m.errorLabel.text = message
     m.errorLabel.visible = true
+    print "[JordanView] Dashboard request failed: " + toLogString(message)
 end sub
 
 sub onCheckoutSelected()
     if m.checkoutEndpoint = "" or m.isCheckingOut then return
+
+    print "[JordanView] Checkout requested"
 
     token = ""
     if m.currentConfig <> invalid then
@@ -405,6 +460,7 @@ sub onCheckoutSelected()
     m.checkoutTask.token = token
     m.checkoutTask.body = "{}"
     m.checkoutTask.control = "run"
+    print "[JordanView] Checkout task started"
 end sub
 
 sub onCheckoutResponse()
@@ -424,6 +480,7 @@ sub onCheckoutResponse()
         if type(reservation) = "roAssociativeArray" then
             renderReservation(reservation)
         end if
+        print "[JordanView] Checkout response received"
     else
         m.statusLabel.text = "Guest checked out."
     end if
@@ -456,6 +513,7 @@ sub onCheckoutFailed()
     end if
 
     m.statusLabel.text = message
+    print "[JordanView] Checkout failed: " + toLogString(message)
 end sub
 
 function onKeyEvent(key as String, press as Boolean) as Boolean
@@ -527,4 +585,17 @@ function normalizeColor(colorString as String) as Integer
     end if
 
     return 0
+end function
+
+function toLogString(value as dynamic) as String
+    if type(value) = "String" then return value
+    if type(value) = "Invalid" then return "invalid"
+    if type(value) = "Boolean" then
+        if value then return "true" else return "false"
+    end if
+    if type(value) = "Integer" or type(value) = "LongInteger" or type(value) = "Float" or type(value) = "Double" then
+        strValue = Str(value)
+        return strValue.Trim()
+    end if
+    return "(complex value)"
 end function

@@ -50,6 +50,19 @@ assets/roku/jordan-view/
 3. Visit `http://<roku-ip-address>` in a browser, upload the package, and provide the Roku developer password.
 4. After installation, open **Jordan View**. Use the Roku *Options* button to refresh if you update reservations or media during testing.
 
+## Troubleshooting a Blank Screen
+
+If the channel launches to a blank screen, gather diagnostics directly from the Roku device:
+
+1. Open a terminal session and connect to the Roku debug console: `telnet <roku-ip-address> 8085`.
+2. Launch **Jordan View** again. The console now prints real-time statements from `main.brs`, `JordanViewScene.brs`, and `ApiRequestTask.brs` (for example, the requested dashboard URL and checkout status codes).
+3. Confirm that the configuration logs show the expected `apiBaseUrl`, `propertyId`, and `propertyName`. If the values are empty, revisit `config/app-config.json` or regenerate it from the WordPress admin download link.
+4. Verify that the `ApiRequestTask` completes with an HTTP `2xx` status. Non-`2xx` statuses indicate either network issues (ensure the Roku can reach WordPress) or authentication problems (double-check the Roku API token in **Guest Management → Settings → Integrations**).
+5. If the console stops before logging `Dashboard payload received`, compare your setup with Roku's [Hello World sample](https://github.com/rokudev/hello-world) to confirm that developer mode is active and that no residual `manifest` metadata is conflicting with the Jordan View bundle.
+6. When the API is reachable but the payload is empty, look at the WordPress debug log for PHP notices/errors emitted by `GMS_Roku_Integration`, then re-trigger the Roku refresh (*Options* button) to confirm the fix.
+
+Use the telnet console to capture screenshots or transcripts when escalating issues—those logs pinpoint whether the problem resides in configuration, transport, or the plugin's REST responses.
+
 ## API Overview
 
 | Endpoint | Method | Description |

@@ -6,6 +6,7 @@ sub execute()
     uri = m.top.uri
     if type(uri) <> "String" or Len(uri) = 0 then
         m.top.error = { message: "Missing request URI." }
+        print "[JordanView] ApiRequestTask aborted: missing URI"
         return
     end if
 
@@ -14,6 +15,8 @@ sub execute()
         method = "GET"
     end if
     method = UCase(method)
+
+    print "[JordanView] ApiRequestTask executing " + method + " " + uri
 
     transfer = CreateObject("roUrlTransfer")
     transfer.SetCertificatesFile("common:/certs/ca-bundle.crt")
@@ -26,6 +29,7 @@ sub execute()
     token = m.top.token
     if type(token) = "String" and Len(token) > 0 then
         transfer.AddHeader("X-Roku-Token", token)
+        print "[JordanView] ApiRequestTask authorized with Roku token"
     end if
 
     response = invalid
@@ -57,6 +61,10 @@ sub execute()
 
     status = transfer.GetResponseCode()
     m.top.status = status
+
+    statusText = Str(status)
+    statusText = statusText.Trim()
+    print "[JordanView] ApiRequestTask completed with status " + statusText
 
     if type(response) = "String" then
         m.top.responseText = response
