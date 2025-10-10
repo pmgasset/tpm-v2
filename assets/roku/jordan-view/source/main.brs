@@ -1,3 +1,5 @@
+Library "pkg:/source/AppConfig.brs"
+
 sub main()
     print "[JordanView] main() starting"
 
