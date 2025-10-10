@@ -6,7 +6,7 @@
         <field id="token" type="string" />
         <field id="body" type="string" />
         <field id="status" type="integer" alwaysNotify="true" />
-        <field id="response" type="assocarray" alwaysNotify="true" />
+        <field id="response" type="dynamic" alwaysNotify="true" />
         <field id="responseText" type="string" alwaysNotify="true" />
         <field id="error" type="assocarray" alwaysNotify="true" />
     </interface>

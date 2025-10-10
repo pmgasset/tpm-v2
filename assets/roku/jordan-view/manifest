@@ -12,4 +12,3 @@ major_version=1
 minor_version=0
 build_version=0
 ui_resolutions=hd,fhd
-bs_libs_required=pkg:/source/appconfig.brs
