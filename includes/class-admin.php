@@ -673,6 +673,7 @@ class GMS_Admin {
         add_action('wp_ajax_gms_refresh_stats', array($this, 'ajax_refresh_stats'));
         add_action('admin_post_gms_save_message_template', array($this, 'handle_save_message_template'));
         add_action('admin_post_gms_delete_message_template', array($this, 'handle_delete_message_template'));
+        add_action('admin_post_gms_housekeeper_ical', array($this, 'handle_housekeeper_ical_export'));
     }
 
     private function build_reservations_redirect_url() {
@@ -1768,6 +1769,15 @@ class GMS_Admin {
 
         add_submenu_page(
             'guest-management-dashboard',
+            'Housekeeper Schedule',
+            'Housekeeper',
+            'manage_options',
+            'guest-management-housekeeper',
+            [$this, 'render_housekeeper_page']
+        );
+
+        add_submenu_page(
+            'guest-management-dashboard',
             'Communications & Logs',
             'Communications/Logs',
             'manage_options',
@@ -1927,6 +1937,382 @@ class GMS_Admin {
         }
 
         wp_safe_redirect($redirect_url);
+        exit;
+    }
+
+    public function render_housekeeper_page() {
+        if (!current_user_can('manage_options')) {
+            return;
+        }
+
+        $reservations = $this->get_housekeeper_reservations();
+        $timezone = wp_timezone();
+        $current_timestamp = current_time('timestamp');
+        $default_month = wp_date('Y-m', $current_timestamp, $timezone);
+
+        $requested_month = isset($_GET['gms_housekeeper_month']) ? sanitize_text_field(wp_unslash($_GET['gms_housekeeper_month'])) : '';
+        if (!preg_match('/^\d{4}-\d{2}$/', $requested_month)) {
+            $requested_month = $default_month;
+        }
+
+        $initial_view = isset($_GET['housekeeper_view']) ? sanitize_key(wp_unslash($_GET['housekeeper_view'])) : 'list';
+        if (!in_array($initial_view, array('list', 'calendar'), true)) {
+            $initial_view = 'list';
+        }
+
+        try {
+            $month_start = new \DateTimeImmutable($requested_month . '-01 00:00:00', $timezone);
+        } catch (\Exception $exception) {
+            $month_start = new \DateTimeImmutable($default_month . '-01 00:00:00', $timezone);
+        }
+
+        $days_in_month = (int) $month_start->format('t');
+        $month_label = wp_date('F Y', $month_start->getTimestamp(), $timezone);
+
+        $prev_month_object = $month_start->modify('-1 month');
+        $next_month_object = $month_start->modify('+1 month');
+
+        $prev_month_value = $prev_month_object->format('Y-m');
+        $next_month_value = $next_month_object->format('Y-m');
+
+        $prev_month_label = wp_date('M Y', $prev_month_object->getTimestamp(), $timezone);
+        $next_month_label = wp_date('M Y', $next_month_object->getTimestamp(), $timezone);
+
+        $calendar_start = $month_start->modify('-' . (int) $month_start->format('w') . ' days');
+        $month_end = $month_start->modify('+' . ($days_in_month - 1) . ' days');
+        $calendar_end = $month_end->modify('+' . (6 - (int) $month_end->format('w')) . ' days');
+
+        $calendar_period = new \DatePeriod($calendar_start, new \DateInterval('P1D'), $calendar_end->modify('+1 day'));
+        $weeks = array();
+        $current_week = array();
+        $today = new \DateTimeImmutable('today', $timezone);
+
+        $weekday_labels = array();
+        for ($i = 0; $i < 7; $i++) {
+            $reference = $calendar_start->modify('+' . $i . ' days');
+            $weekday_labels[] = array(
+                'short' => wp_date('D', $reference->getTimestamp(), $timezone),
+                'long' => wp_date('l', $reference->getTimestamp(), $timezone),
+            );
+        }
+
+        foreach ($calendar_period as $day) {
+            $day_start = $day->setTime(0, 0);
+            $day_end = $day->setTime(23, 59, 59);
+            $day_timestamp = $day_start->getTimestamp();
+
+            $day_reservations = array();
+
+            foreach ($reservations as $reservation) {
+                if ($reservation['checkin_ts'] <= $day_end->getTimestamp() && $reservation['checkout_ts'] > $day_timestamp) {
+                    $day_reservations[] = array(
+                        'details' => $reservation,
+                        'arrives' => $reservation['checkin_day_ts'] === $day_timestamp,
+                        'departs' => $reservation['checkout_day_ts'] === $day_timestamp,
+                    );
+                }
+            }
+
+            $current_week[] = array(
+                'date' => $day,
+                'is_current_month' => $day->format('m') === $month_start->format('m'),
+                'is_today' => $day_start->format('Y-m-d') === $today->format('Y-m-d'),
+                'reservations' => $day_reservations,
+            );
+
+            if (count($current_week) === 7) {
+                $weeks[] = $current_week;
+                $current_week = array();
+            }
+        }
+
+        usort($reservations, function($a, $b) {
+            return $a['checkin_ts'] <=> $b['checkin_ts'];
+        });
+
+        $reservation_count = count($reservations);
+        $upcoming_week_cutoff = (new \DateTimeImmutable('today', $timezone))->modify('+7 days')->getTimestamp();
+        $upcoming_week_count = 0;
+        foreach ($reservations as $reservation) {
+            if ($reservation['checkin_ts'] < $upcoming_week_cutoff) {
+                $upcoming_week_count++;
+            }
+        }
+
+        $base_url = add_query_arg(array('page' => 'guest-management-housekeeper'), admin_url('admin.php'));
+        $prev_month_url = add_query_arg('gms_housekeeper_month', $prev_month_value, $base_url);
+        $next_month_url = add_query_arg('gms_housekeeper_month', $next_month_value, $base_url);
+
+        $ical_url = wp_nonce_url(admin_url('admin-post.php?action=gms_housekeeper_ical'), 'gms_housekeeper_ical');
+
+        $list_aria_hidden = $initial_view === 'list' ? 'false' : 'true';
+        $calendar_aria_hidden = $initial_view === 'calendar' ? 'false' : 'true';
+
+        $list_button_classes = 'button button-secondary' . ($initial_view === 'list' ? ' is-active' : '');
+        $calendar_button_classes = 'button button-secondary' . ($initial_view === 'calendar' ? ' is-active' : '');
+
+        ?>
+        <div class="wrap">
+            <h1><?php esc_html_e('Housekeeper Schedule', 'guest-management-system'); ?></h1>
+            <p class="description"><?php esc_html_e('Keep your cleaning team informed with a quick overview of upcoming stays and turn days.', 'guest-management-system'); ?></p>
+
+            <div class="gms-housekeeper" data-view="<?php echo esc_attr($initial_view); ?>">
+                <div class="gms-housekeeper__summary">
+                    <div class="gms-housekeeper__summary-item">
+                        <span class="gms-housekeeper__summary-value"><?php echo esc_html(number_format_i18n($reservation_count)); ?></span>
+                        <span class="gms-housekeeper__summary-label"><?php esc_html_e('Upcoming reservations', 'guest-management-system'); ?></span>
+                    </div>
+                    <div class="gms-housekeeper__summary-item">
+                        <span class="gms-housekeeper__summary-value"><?php echo esc_html(number_format_i18n($upcoming_week_count)); ?></span>
+                        <span class="gms-housekeeper__summary-label"><?php esc_html_e('Check-ins in the next 7 days', 'guest-management-system'); ?></span>
+                    </div>
+                </div>
+
+                <div class="gms-housekeeper__toolbar">
+                    <div class="gms-housekeeper__toolbar-group">
+                        <a class="button button-primary" href="<?php echo esc_url($ical_url); ?>"><?php esc_html_e('Download iCal', 'guest-management-system'); ?></a>
+                    </div>
+                    <div class="gms-housekeeper__view-toggle" role="group" aria-label="<?php esc_attr_e('Switch schedule view', 'guest-management-system'); ?>">
+                        <button type="button" class="<?php echo esc_attr($list_button_classes); ?>" data-view="list" aria-pressed="<?php echo $initial_view === 'list' ? 'true' : 'false'; ?>"><?php esc_html_e('List', 'guest-management-system'); ?></button>
+                        <button type="button" class="<?php echo esc_attr($calendar_button_classes); ?>" data-view="calendar" aria-pressed="<?php echo $initial_view === 'calendar' ? 'true' : 'false'; ?>"><?php esc_html_e('Calendar', 'guest-management-system'); ?></button>
+                    </div>
+                </div>
+
+                <div class="gms-housekeeper__list" aria-hidden="<?php echo esc_attr($list_aria_hidden); ?>">
+                    <?php if (empty($reservations)) : ?>
+                        <div class="gms-housekeeper__empty"><?php esc_html_e('There are no upcoming reservations that require cleaning.', 'guest-management-system'); ?></div>
+                    <?php else : ?>
+                        <?php foreach ($reservations as $reservation) : ?>
+                            <?php
+                            $status = $reservation['status'];
+                            $status_label = $status !== '' ? ucwords(str_replace('_', ' ', $status)) : '';
+                            $status_modifier = $status !== '' ? ' gms-housekeeper__status--' . sanitize_html_class($status) : '';
+                            $status_class = 'gms-housekeeper__status' . $status_modifier;
+                            ?>
+                            <article class="gms-housekeeper__card">
+                                <header class="gms-housekeeper__card-header">
+                                    <div class="gms-housekeeper__card-date">
+                                        <span class="gms-housekeeper__label"><?php esc_html_e('Check-in', 'guest-management-system'); ?></span>
+                                        <span class="gms-housekeeper__value"><?php echo esc_html($reservation['checkin_date_label']); ?></span>
+                                        <span class="gms-housekeeper__time"><?php echo esc_html($reservation['checkin_time_label']); ?></span>
+                                    </div>
+                                    <div class="gms-housekeeper__card-date">
+                                        <span class="gms-housekeeper__label"><?php esc_html_e('Check-out', 'guest-management-system'); ?></span>
+                                        <span class="gms-housekeeper__value"><?php echo esc_html($reservation['checkout_date_label']); ?></span>
+                                        <span class="gms-housekeeper__time"><?php echo esc_html($reservation['checkout_time_label']); ?></span>
+                                    </div>
+                                </header>
+
+                                <div class="gms-housekeeper__card-body">
+                                    <?php if ($reservation['property_name'] !== '') : ?>
+                                        <h2 class="gms-housekeeper__property"><?php echo esc_html($reservation['property_name']); ?></h2>
+                                    <?php endif; ?>
+                                    <?php if ($reservation['guest_name'] !== '') : ?>
+                                        <p class="gms-housekeeper__guest"><?php echo esc_html($reservation['guest_name']); ?></p>
+                                    <?php endif; ?>
+
+                                    <ul class="gms-housekeeper__details">
+                                        <li>
+                                            <span class="gms-housekeeper__details-label"><?php esc_html_e('Nights', 'guest-management-system'); ?></span>
+                                            <span class="gms-housekeeper__details-value"><?php echo esc_html(number_format_i18n($reservation['nights'])); ?></span>
+                                        </li>
+                                        <li>
+                                            <span class="gms-housekeeper__details-label"><?php esc_html_e('Status', 'guest-management-system'); ?></span>
+                                            <?php if ($status_label !== '') : ?>
+                                                <span class="<?php echo esc_attr($status_class); ?>"><?php echo esc_html($status_label); ?></span>
+                                            <?php else : ?>
+                                                <span class="gms-housekeeper__details-value"><?php esc_html_e('Unknown', 'guest-management-system'); ?></span>
+                                            <?php endif; ?>
+                                        </li>
+                                    </ul>
+                                </div>
+                            </article>
+                        <?php endforeach; ?>
+                    <?php endif; ?>
+                </div>
+
+                <div class="gms-housekeeper__calendar" aria-hidden="<?php echo esc_attr($calendar_aria_hidden); ?>">
+                    <div class="gms-housekeeper__calendar-toolbar">
+                        <a class="button button-secondary gms-housekeeper__calendar-nav" href="<?php echo esc_url($prev_month_url); ?>">
+                            <span aria-hidden="true">&lsaquo;</span>
+                            <span class="screen-reader-text"><?php echo esc_html(sprintf(__('View %s', 'guest-management-system'), $prev_month_label)); ?></span>
+                        </a>
+                        <strong class="gms-housekeeper__calendar-month"><?php echo esc_html($month_label); ?></strong>
+                        <a class="button button-secondary gms-housekeeper__calendar-nav" href="<?php echo esc_url($next_month_url); ?>">
+                            <span aria-hidden="true">&rsaquo;</span>
+                            <span class="screen-reader-text"><?php echo esc_html(sprintf(__('View %s', 'guest-management-system'), $next_month_label)); ?></span>
+                        </a>
+                    </div>
+
+                    <div class="gms-housekeeper__calendar-grid-wrapper">
+                        <div class="gms-housekeeper__week gms-housekeeper__week--labels" role="row">
+                            <?php foreach ($weekday_labels as $weekday_label) : ?>
+                                <div class="gms-housekeeper__weekday" role="columnheader" title="<?php echo esc_attr($weekday_label['long']); ?>">
+                                    <?php echo esc_html($weekday_label['short']); ?>
+                                </div>
+                            <?php endforeach; ?>
+                        </div>
+
+                        <?php foreach ($weeks as $week) : ?>
+                            <div class="gms-housekeeper__week" role="row">
+                                <?php foreach ($week as $day) : ?>
+                                    <?php
+                                    $day_classes = array('gms-housekeeper__day');
+                                    if (!$day['is_current_month']) {
+                                        $day_classes[] = 'gms-housekeeper__day--muted';
+                                    }
+                                    if ($day['is_today']) {
+                                        $day_classes[] = 'gms-housekeeper__day--today';
+                                    }
+                                    $day_class_attr = implode(' ', array_map('sanitize_html_class', $day_classes));
+
+                                    $reservation_total = count($day['reservations']);
+                                    $day_date_label = wp_date(get_option('date_format', 'F j, Y'), $day['date']->getTimestamp(), $timezone);
+                                    if ($reservation_total > 0) {
+                                        $aria_label = sprintf(_n('%1$s — %2$d reservation', '%1$s — %2$d reservations', $reservation_total, 'guest-management-system'), $day_date_label, $reservation_total);
+                                    } else {
+                                        $aria_label = sprintf(__('%s — No reservations', 'guest-management-system'), $day_date_label);
+                                    }
+                                    ?>
+                                    <div class="<?php echo esc_attr($day_class_attr); ?>" role="gridcell" aria-label="<?php echo esc_attr($aria_label); ?>">
+                                        <div class="gms-housekeeper__day-header">
+                                            <span class="gms-housekeeper__day-number"><?php echo esc_html($day['date']->format('j')); ?></span>
+                                            <?php if ($day['is_today']) : ?>
+                                                <span class="gms-housekeeper__today"><?php esc_html_e('Today', 'guest-management-system'); ?></span>
+                                            <?php endif; ?>
+                                        </div>
+
+                                        <?php if (!empty($day['reservations'])) : ?>
+                                            <ul class="gms-housekeeper__stays">
+                                                <?php foreach ($day['reservations'] as $entry) : ?>
+                                                    <?php
+                                                    $details = $entry['details'];
+                                                    $stay_classes = array('gms-housekeeper__stay');
+                                                    if ($entry['arrives']) {
+                                                        $stay_classes[] = 'gms-housekeeper__stay--arrival';
+                                                    }
+                                                    if ($entry['departs']) {
+                                                        $stay_classes[] = 'gms-housekeeper__stay--departure';
+                                                    }
+                                                    $stay_class_attr = implode(' ', array_map('sanitize_html_class', $stay_classes));
+
+                                                    $property_display = $details['property_name'] !== '' ? $details['property_name'] : __('Unassigned property', 'guest-management-system');
+
+                                                    $meta_parts = array();
+                                                    if ($entry['arrives'] && $entry['departs']) {
+                                                        $meta_parts[] = sprintf(__('Same-day turn (%1$s - %2$s)', 'guest-management-system'), $details['checkin_time_label'], $details['checkout_time_label']);
+                                                    } else {
+                                                        if ($entry['arrives']) {
+                                                            $meta_parts[] = sprintf(__('Arrival %s', 'guest-management-system'), $details['checkin_time_label']);
+                                                        }
+                                                        if ($entry['departs']) {
+                                                            $meta_parts[] = sprintf(__('Departure %s', 'guest-management-system'), $details['checkout_time_label']);
+                                                        }
+                                                    }
+                                                    if (empty($meta_parts)) {
+                                                        $meta_parts[] = __('Guest in residence', 'guest-management-system');
+                                                    }
+
+                                                    $status_note = '';
+                                                    if ($details['status'] !== '') {
+                                                        $status_note = ucwords(str_replace('_', ' ', $details['status']));
+                                                    }
+                                                    ?>
+                                                    <li class="<?php echo esc_attr($stay_class_attr); ?>">
+                                                        <span class="gms-housekeeper__stay-property"><?php echo esc_html($property_display); ?></span>
+                                                        <?php if ($details['guest_name'] !== '') : ?>
+                                                            <span class="gms-housekeeper__stay-guest"><?php echo esc_html($details['guest_name']); ?></span>
+                                                        <?php endif; ?>
+                                                        <span class="gms-housekeeper__stay-meta"><?php echo esc_html(implode(' • ', $meta_parts)); ?></span>
+                                                        <?php if ($status_note !== '') : ?>
+                                                            <span class="gms-housekeeper__stay-status"><?php echo esc_html($status_note); ?></span>
+                                                        <?php endif; ?>
+                                                    </li>
+                                                <?php endforeach; ?>
+                                            </ul>
+                                        <?php else : ?>
+                                            <div class="gms-housekeeper__day-empty"><?php esc_html_e('No stays', 'guest-management-system'); ?></div>
+                                        <?php endif; ?>
+                                    </div>
+                                <?php endforeach; ?>
+                            </div>
+                        <?php endforeach; ?>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <?php
+    }
+
+    public function handle_housekeeper_ical_export() {
+        if (!current_user_can('manage_options')) {
+            wp_die(__('You do not have permission to export this calendar.', 'guest-management-system'));
+        }
+
+        $nonce = isset($_GET['_wpnonce']) ? wp_unslash($_GET['_wpnonce']) : '';
+        if (!wp_verify_nonce($nonce, 'gms_housekeeper_ical')) {
+            wp_die(__('Invalid calendar export request.', 'guest-management-system'));
+        }
+
+        $reservations = $this->get_housekeeper_reservations();
+
+        if (!headers_sent()) {
+            nocache_headers();
+            header('Content-Type: text/calendar; charset=utf-8');
+            header('Content-Disposition: attachment; filename=housekeeping-schedule.ics');
+        }
+
+        $host = wp_parse_url(home_url(), PHP_URL_HOST);
+        if (empty($host)) {
+            $host = 'calendar.local';
+        }
+
+        $now = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
+
+        echo "BEGIN:VCALENDAR\r\n";
+        echo "VERSION:2.0\r\n";
+        echo "PRODID:-//Guest Management System//Housekeeper Calendar//EN\r\n";
+        echo "CALSCALE:GREGORIAN\r\n";
+        echo "METHOD:PUBLISH\r\n";
+
+        foreach ($reservations as $reservation) {
+            $reservation_id = isset($reservation['id']) ? (int) $reservation['id'] : 0;
+            $uid = 'gms-housekeeper-' . $reservation_id . '@' . $host;
+
+            $checkin_utc = $reservation['checkin']->setTimezone(new \DateTimeZone('UTC'))->format('Ymd\THis\Z');
+            $checkout_utc = $reservation['checkout']->setTimezone(new \DateTimeZone('UTC'))->format('Ymd\THis\Z');
+
+            $summary_parts = array_filter(array(
+                $reservation['property_name'],
+                $reservation['guest_name'] !== '' ? $reservation['guest_name'] : '',
+            ));
+            $summary = !empty($summary_parts) ? implode(' - ', $summary_parts) : __('Reservation', 'guest-management-system');
+
+            $description_lines = array(
+                sprintf(__('Check-in: %s', 'guest-management-system'), $reservation['checkin_datetime_label']),
+                sprintf(__('Check-out: %s', 'guest-management-system'), $reservation['checkout_datetime_label']),
+            );
+
+            if ($reservation['status'] !== '') {
+                $description_lines[] = sprintf(__('Status: %s', 'guest-management-system'), ucwords(str_replace('_', ' ', $reservation['status'])));
+            }
+
+            $description = implode("\n", $description_lines);
+
+            echo "BEGIN:VEVENT\r\n";
+            echo 'UID:' . $this->escape_ical_text($uid) . "\r\n";
+            echo 'DTSTAMP:' . $now->format('Ymd\THis\Z') . "\r\n";
+            echo 'DTSTART:' . $checkin_utc . "\r\n";
+            echo 'DTEND:' . $checkout_utc . "\r\n";
+            echo 'SUMMARY:' . $this->escape_ical_text($summary) . "\r\n";
+            if ($reservation['property_name'] !== '') {
+                echo 'LOCATION:' . $this->escape_ical_text($reservation['property_name']) . "\r\n";
+            }
+            echo 'DESCRIPTION:' . $this->escape_ical_text($description) . "\r\n";
+            echo "END:VEVENT\r\n";
+        }
+
+        echo "END:VCALENDAR\r\n";
         exit;
     }
 
@@ -3399,6 +3785,132 @@ class GMS_Admin {
         }
 
         return sprintf(__('Scheduled for %1$s (%2$s).', 'guest-management-system'), $formatted_target, $window_label);
+    }
+
+    private function get_housekeeper_reservations() {
+        $query_args = apply_filters('gms_housekeeper_reservations_query_args', array(
+            'per_page' => 500,
+            'page' => 1,
+            'orderby' => 'checkin_date',
+            'order' => 'ASC',
+        ));
+
+        $raw_reservations = GMS_Database::get_reservations($query_args);
+
+        $timezone = wp_timezone();
+        $today = new \DateTimeImmutable('today', $timezone);
+        $today_start = $today->getTimestamp();
+
+        $window_days = (int) apply_filters('gms_housekeeper_schedule_window', 180);
+        if ($window_days < 1) {
+            $window_days = 180;
+        }
+        $future_limit = $today->modify('+' . $window_days . ' days')->getTimestamp();
+
+        $excluded_statuses = apply_filters('gms_housekeeper_excluded_statuses', array('cancelled'));
+
+        $reservations = array();
+
+        foreach ($raw_reservations as $reservation) {
+            $status = isset($reservation['status']) ? sanitize_key($reservation['status']) : '';
+            if ($status !== '' && in_array($status, $excluded_statuses, true)) {
+                continue;
+            }
+
+            $checkin_dt = $this->create_wp_datetime($reservation['checkin_date'] ?? '');
+            if (!$checkin_dt) {
+                continue;
+            }
+
+            $checkout_dt = $this->create_wp_datetime($reservation['checkout_date'] ?? '');
+            if (!$checkout_dt || $checkout_dt <= $checkin_dt) {
+                $checkout_dt = $checkin_dt->modify('+1 day');
+            }
+
+            $checkin_ts = $checkin_dt->getTimestamp();
+            $checkout_ts = $checkout_dt->getTimestamp();
+
+            if ($checkout_ts < $today_start) {
+                continue;
+            }
+
+            if ($checkin_ts > $future_limit) {
+                continue;
+            }
+
+            $guest_name = isset($reservation['guest_name']) ? trim((string) $reservation['guest_name']) : '';
+            $property_name = isset($reservation['property_name']) ? trim((string) $reservation['property_name']) : '';
+
+            $checkin_day_ts = $checkin_dt->setTime(0, 0)->getTimestamp();
+            $checkout_day_ts = $checkout_dt->setTime(0, 0)->getTimestamp();
+            $nights = max(1, (int) $checkin_dt->diff($checkout_dt)->format('%a'));
+
+            $reservations[] = array(
+                'id' => isset($reservation['id']) ? absint($reservation['id']) : 0,
+                'guest_name' => $guest_name,
+                'property_name' => $property_name,
+                'status' => $status,
+                'checkin' => $checkin_dt,
+                'checkout' => $checkout_dt,
+                'checkin_ts' => $checkin_ts,
+                'checkout_ts' => $checkout_ts,
+                'checkin_day_ts' => $checkin_day_ts,
+                'checkout_day_ts' => $checkout_day_ts,
+                'checkin_date_label' => $this->format_housekeeper_datetime($checkin_dt, 'date'),
+                'checkout_date_label' => $this->format_housekeeper_datetime($checkout_dt, 'date'),
+                'checkin_time_label' => $this->format_housekeeper_datetime($checkin_dt, 'time'),
+                'checkout_time_label' => $this->format_housekeeper_datetime($checkout_dt, 'time'),
+                'checkin_datetime_label' => $this->format_housekeeper_datetime($checkin_dt, 'datetime'),
+                'checkout_datetime_label' => $this->format_housekeeper_datetime($checkout_dt, 'datetime'),
+                'nights' => $nights,
+            );
+        }
+
+        return apply_filters('gms_housekeeper_reservations', $reservations);
+    }
+
+    private function create_wp_datetime($datetime) {
+        if (empty($datetime) || $datetime === '0000-00-00 00:00:00') {
+            return null;
+        }
+
+        try {
+            return new \DateTimeImmutable($datetime, wp_timezone());
+        } catch (\Exception $exception) {
+            return null;
+        }
+    }
+
+    private function format_housekeeper_datetime(\DateTimeInterface $datetime, string $mode = 'datetime') {
+        $date_format = get_option('date_format', 'M j, Y');
+        $time_format = get_option('time_format', 'g:i a');
+
+        switch ($mode) {
+            case 'date':
+                $format = $date_format;
+                break;
+            case 'time':
+                $format = $time_format;
+                break;
+            default:
+                $format = $date_format . ' ' . $time_format;
+                break;
+        }
+
+        return wp_date($format, $datetime->getTimestamp(), wp_timezone());
+    }
+
+    private function escape_ical_text($text) {
+        $text = wp_strip_all_tags((string) $text);
+        $text = str_replace(array("\r\n", "\r"), "\n", $text);
+        $text = strtr($text, array(
+            '\\' => '\\\\',
+            ';' => '\\;',
+            ',' => '\\,',
+        ));
+        $text = str_replace("\n", '\\n', $text);
+
+        return trim($text);
     }
 
     private function format_admin_datetime($datetime) {

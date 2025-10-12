@@ -966,6 +966,60 @@
             }
         });
 
+        // Housekeeper schedule view toggle
+        var housekeeper = document.querySelector('.gms-housekeeper');
+        if (housekeeper) {
+            var toggleButtons = housekeeper.querySelectorAll('.gms-housekeeper__view-toggle button');
+            var storedView = null;
+
+            try {
+                storedView = window.localStorage.getItem('gmsHousekeeperView');
+            } catch (error) {
+                storedView = null;
+            }
+
+            if (storedView && storedView !== housekeeper.dataset.view) {
+                setHousekeeperView(storedView);
+            }
+
+            toggleButtons.forEach(function(button) {
+                button.addEventListener('click', function() {
+                    setHousekeeperView(button.getAttribute('data-view'));
+                });
+            });
+
+            function setHousekeeperView(view) {
+                if (view !== 'list' && view !== 'calendar') {
+                    view = 'list';
+                }
+
+                housekeeper.dataset.view = view;
+
+                toggleButtons.forEach(function(button) {
+                    var isActive = button.getAttribute('data-view') === view;
+                    button.classList.toggle('is-active', isActive);
+                    button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+                });
+
+                var listView = housekeeper.querySelector('.gms-housekeeper__list');
+                var calendarView = housekeeper.querySelector('.gms-housekeeper__calendar');
+
+                if (listView) {
+                    listView.setAttribute('aria-hidden', view === 'list' ? 'false' : 'true');
+                }
+
+                if (calendarView) {
+                    calendarView.setAttribute('aria-hidden', view === 'calendar' ? 'false' : 'true');
+                }
+
+                try {
+                    window.localStorage.setItem('gmsHousekeeperView', view);
+                } catch (error) {
+                    // Storage might be unavailable (private mode, etc.).
+                }
+            }
+        }
+
     });
 
 })(jQuery);
