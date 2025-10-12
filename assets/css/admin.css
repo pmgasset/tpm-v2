@@ -198,6 +198,409 @@
     font-size: 12px;
 }
 
+/* Housekeeper Schedule */
+.gms-housekeeper {
+    background: var(--gms-admin-soft-bg, #f8fafc);
+    border: 1px solid var(--gms-admin-border, rgba(148, 163, 184, 0.35));
+    border-radius: var(--gms-admin-radius, 14px);
+    margin-top: 20px;
+    padding: 24px;
+    display: grid;
+    gap: 24px;
+}
+
+.gms-housekeeper__summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 16px;
+}
+
+.gms-housekeeper__summary-item {
+    background: #ffffff;
+    border: 1px solid var(--gms-admin-border, rgba(148, 163, 184, 0.35));
+    border-radius: 14px;
+    padding: 16px;
+    text-align: center;
+    box-shadow: 0 16px 32px rgba(15, 23, 42, 0.08);
+}
+
+.gms-housekeeper__summary-value {
+    display: block;
+    font-size: 1.8rem;
+    font-weight: 600;
+    color: #111827;
+}
+
+.gms-housekeeper__summary-label {
+    display: block;
+    margin-top: 6px;
+    font-size: 0.82rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--gms-admin-muted, #4b5563);
+}
+
+.gms-housekeeper__toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+}
+
+.gms-housekeeper__toolbar-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+}
+
+.gms-housekeeper__view-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: #ffffff;
+    border: 1px solid var(--gms-admin-border, rgba(148, 163, 184, 0.35));
+    border-radius: 999px;
+    padding: 4px;
+}
+
+.gms-housekeeper__view-toggle .button {
+    border: none;
+    box-shadow: none;
+    background: transparent;
+    color: var(--gms-admin-muted, #4b5563);
+    border-radius: 999px;
+    padding: 6px 18px;
+    transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+.gms-housekeeper__view-toggle .button:hover {
+    background: var(--gms-admin-accent-soft, rgba(29, 78, 216, 0.12));
+    color: var(--gms-admin-accent, #1d4ed8);
+}
+
+.gms-housekeeper__view-toggle .button.is-active {
+    background: var(--gms-admin-accent, #1d4ed8);
+    color: #ffffff;
+}
+
+.gms-housekeeper__list[aria-hidden="true"],
+.gms-housekeeper__calendar[aria-hidden="true"] {
+    display: none;
+}
+
+.gms-housekeeper__list {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 20px;
+}
+
+.gms-housekeeper__card {
+    background: #ffffff;
+    border: 1px solid var(--gms-admin-border, rgba(148, 163, 184, 0.35));
+    border-radius: 16px;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    box-shadow: 0 18px 36px rgba(15, 23, 42, 0.1);
+}
+
+.gms-housekeeper__card-header {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 12px;
+}
+
+.gms-housekeeper__card-date {
+    background: var(--gms-admin-soft-bg, #f8fafc);
+    border-radius: 12px;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.gms-housekeeper__label {
+    font-size: 0.75rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--gms-admin-muted, #4b5563);
+}
+
+.gms-housekeeper__value {
+    font-weight: 600;
+    color: #111827;
+}
+
+.gms-housekeeper__time {
+    font-size: 0.85rem;
+    color: var(--gms-admin-muted, #4b5563);
+}
+
+.gms-housekeeper__property {
+    margin: 0;
+    font-size: 1.1rem;
+    color: #0f172a;
+}
+
+.gms-housekeeper__guest {
+    margin: 0;
+    color: #1f2937;
+    font-weight: 500;
+}
+
+.gms-housekeeper__details {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 14px;
+}
+
+.gms-housekeeper__details-label {
+    display: block;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--gms-admin-muted, #4b5563);
+    margin-bottom: 4px;
+}
+
+.gms-housekeeper__details-value {
+    font-weight: 600;
+    color: #111827;
+}
+
+.gms-housekeeper__status {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4px 12px;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.gms-housekeeper__status--approved,
+.gms-housekeeper__status--confirmed {
+    background: #dcfce7;
+    color: #047857;
+}
+
+.gms-housekeeper__status--pending,
+.gms-housekeeper__status--awaiting_signature,
+.gms-housekeeper__status--awaiting_id_verification {
+    background: #fef3c7;
+    color: #b45309;
+}
+
+.gms-housekeeper__status--completed {
+    background: #e0f2fe;
+    color: #075985;
+}
+
+.gms-housekeeper__status--cancelled {
+    background: #fee2e2;
+    color: #b91c1c;
+}
+
+.gms-housekeeper__status--in-progress {
+    background: #e0e7ff;
+    color: #3730a3;
+}
+
+.gms-housekeeper__calendar {
+    background: #ffffff;
+    border: 1px solid var(--gms-admin-border, rgba(148, 163, 184, 0.35));
+    border-radius: 16px;
+    padding: 20px;
+    display: grid;
+    gap: 16px;
+    box-shadow: 0 18px 36px rgba(15, 23, 42, 0.1);
+}
+
+.gms-housekeeper__calendar-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.gms-housekeeper__calendar-month {
+    font-size: 1.2rem;
+    color: #0f172a;
+}
+
+.gms-housekeeper__calendar-nav {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    line-height: 1;
+}
+
+.gms-housekeeper__calendar-grid-wrapper {
+    overflow-x: auto;
+    padding-bottom: 8px;
+}
+
+.gms-housekeeper__week {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(140px, 1fr));
+    gap: 12px;
+}
+
+.gms-housekeeper__week--labels {
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--gms-admin-muted, #4b5563);
+    font-weight: 600;
+}
+
+.gms-housekeeper__weekday {
+    text-align: center;
+}
+
+.gms-housekeeper__day {
+    background: var(--gms-admin-soft-bg, #f8fafc);
+    border-radius: 14px;
+    padding: 12px;
+    min-height: 140px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    border: 1px solid transparent;
+    transition: border-color 0.2s ease, background-color 0.2s ease;
+}
+
+.gms-housekeeper__day--muted {
+    opacity: 0.55;
+}
+
+.gms-housekeeper__day--today {
+    border-color: var(--gms-admin-accent, #1d4ed8);
+    background: rgba(29, 78, 216, 0.12);
+}
+
+.gms-housekeeper__day-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+}
+
+.gms-housekeeper__day-number {
+    font-weight: 700;
+    color: #0f172a;
+}
+
+.gms-housekeeper__today {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-weight: 600;
+    color: var(--gms-admin-accent, #1d4ed8);
+}
+
+.gms-housekeeper__day-empty {
+    margin-top: auto;
+    text-align: center;
+    font-size: 0.85rem;
+    color: var(--gms-admin-muted, #4b5563);
+}
+
+.gms-housekeeper__stays {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.gms-housekeeper__stay {
+    background: #ffffff;
+    border: 1px solid rgba(148, 163, 184, 0.35);
+    border-radius: 12px;
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    box-shadow: 0 10px 20px rgba(15, 23, 42, 0.08);
+}
+
+.gms-housekeeper__stay--arrival {
+    border-left: 4px solid var(--gms-admin-accent, #1d4ed8);
+}
+
+.gms-housekeeper__stay--departure {
+    border-left: 4px solid #0f766e;
+}
+
+.gms-housekeeper__stay--arrival.gms-housekeeper__stay--departure {
+    border-left-color: #b45309;
+}
+
+.gms-housekeeper__stay-property {
+    font-weight: 600;
+    color: #0f172a;
+}
+
+.gms-housekeeper__stay-guest {
+    font-size: 0.85rem;
+    color: #1f2937;
+}
+
+.gms-housekeeper__stay-meta {
+    font-size: 0.78rem;
+    color: var(--gms-admin-muted, #4b5563);
+}
+
+.gms-housekeeper__stay-status {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--gms-admin-accent, #1d4ed8);
+    font-weight: 600;
+}
+
+.gms-housekeeper__empty {
+    text-align: center;
+    padding: 36px 20px;
+    border: 1px dashed var(--gms-admin-border, rgba(148, 163, 184, 0.35));
+    border-radius: 14px;
+    color: var(--gms-admin-muted, #4b5563);
+    background: #ffffff;
+}
+
+@media (max-width: 782px) {
+    .gms-housekeeper {
+        padding: 18px;
+    }
+
+    .gms-housekeeper__toolbar {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .gms-housekeeper__view-toggle {
+        align-self: flex-start;
+    }
+
+    .gms-housekeeper__week {
+        grid-template-columns: repeat(7, minmax(110px, 1fr));
+    }
+}
+
 /* Loading Spinner */
 .spinner.is-active {
     display: inline-block;
