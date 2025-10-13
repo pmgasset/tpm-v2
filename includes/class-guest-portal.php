@@ -116,6 +116,37 @@ class GMS_Guest_Portal {
 
         $agreement_display = self::renderAgreementTemplate($reservation, $company_name, $agreement_template);
 
+        $custom_cards = GMS_Database::get_portal_cards($reservation['id']);
+
+        $host_text_number = sanitize_text_field(get_option('gms_voipms_did', ''));
+        $host_text_display = $host_text_number;
+        if ($host_text_display !== '' && function_exists('gms_format_phone')) {
+            $formatted_host_phone = gms_format_phone($host_text_display);
+            if (!empty($formatted_host_phone)) {
+                $host_text_display = $formatted_host_phone;
+            }
+        }
+        $host_text_link = '';
+        if ($host_text_number !== '') {
+            $link_number = preg_replace('/[^0-9+]/', '', $host_text_number);
+            if ($link_number !== '') {
+                if (strpos($link_number, '+') !== 0) {
+                    $link_number = '+' . ltrim($link_number, '+');
+                }
+                $host_text_link = 'sms:' . $link_number;
+            }
+        }
+
+        $checkin_timestamp = !empty($reservation['checkin_date']) ? strtotime($reservation['checkin_date']) : false;
+        $checkout_timestamp = !empty($reservation['checkout_date']) ? strtotime($reservation['checkout_date']) : false;
+
+        $checkin_date_display = $checkin_timestamp ? date('M j, Y', $checkin_timestamp) : '';
+        $checkin_time_display = $checkin_timestamp ? date('g:i A', $checkin_timestamp) : '';
+        $checkin_day_long = $checkin_timestamp ? date('l, F j', $checkin_timestamp) : '';
+
+        $checkout_date_display = $checkout_timestamp ? date('M j, Y', $checkout_timestamp) : '';
+        $checkout_time_display = $checkout_timestamp ? date('g:i A', $checkout_timestamp) : '';
+
         ?>
         <!DOCTYPE html>
         <html lang="en">
@@ -124,90 +155,326 @@ class GMS_Guest_Portal {
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <title>Guest Check-in Portal - <?php echo esc_html($company_name); ?></title>
             <style>
+                :root {
+                    --portal-primary: <?php echo esc_attr($primary_color); ?>;
+                    --portal-secondary: <?php echo esc_attr($secondary_color); ?>;
+                }
+
                 * {
                     margin: 0;
                     padding: 0;
                     box-sizing: border-box;
                 }
-                
+
                 body {
                     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
                     line-height: 1.6;
-                    color: #333;
-                    background: #f8f9fa;
+                    color: #0f172a;
+                    background: #edf2f7;
                 }
-                
+
                 .portal-container {
-                    max-width: 800px;
-                    margin: 0 auto;
-                    background: #fff;
+                    background: linear-gradient(155deg, rgba(255, 255, 255, 0.9), rgba(226, 232, 240, 0.6));
                     min-height: 100vh;
                 }
-                
+
                 .portal-header {
-                    background: <?php echo esc_attr($primary_color); ?>;
+                    background: linear-gradient(135deg, var(--portal-primary), var(--portal-secondary));
                     color: #fff;
-                    padding: 2rem 1.5rem;
                     text-align: center;
+                    padding: 3.5rem 1.5rem 6rem;
                 }
-                
+
                 .company-logo {
-                    max-width: 200px;
-                    margin-bottom: 1rem;
+                    max-width: 220px;
+                    margin: 0 auto 1.5rem;
+                    display: block;
                 }
-                
+
+                .portal-header h1 {
+                    font-size: 2.4rem;
+                    margin-bottom: 0.5rem;
+                    letter-spacing: -0.5px;
+                }
+
+                .portal-header p {
+                    font-size: 1.05rem;
+                    opacity: 0.85;
+                }
+
                 .portal-content {
-                    padding: 2rem 1.5rem;
+                    max-width: 960px;
+                    margin: -5rem auto 0;
+                    padding: 0 1.75rem 4rem;
+                    position: relative;
                 }
-                
-                .welcome-section {
+
+                .portal-hero {
+                    background: #fff;
+                    border-radius: 24px;
+                    padding: 2.75rem 2.5rem;
                     text-align: center;
+                    box-shadow: 0 24px 60px rgba(15, 23, 42, 0.12);
+                    border: 1px solid rgba(148, 163, 184, 0.2);
                     margin-bottom: 2rem;
-                    padding: 1.5rem;
-                    background: #f8f9fa;
-                    border-radius: 8px;
                 }
-                
+
+                .portal-hero__eyebrow {
+                    text-transform: uppercase;
+                    letter-spacing: 0.18em;
+                    font-size: 0.75rem;
+                    color: rgba(15, 23, 42, 0.55);
+                    margin-bottom: 1rem;
+                    font-weight: 600;
+                }
+
+                .portal-hero h2 {
+                    font-size: 2.15rem;
+                    margin-bottom: 0.75rem;
+                    color: #0f172a;
+                }
+
+                .portal-hero p {
+                    font-size: 1.05rem;
+                    color: #475569;
+                }
+
+                .portal-cards {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 1.75rem;
+                }
+
+                .portal-card {
+                    background: #fff;
+                    border-radius: 20px;
+                    border: 1px solid rgba(203, 213, 225, 0.7);
+                    box-shadow: 0 22px 55px rgba(15, 23, 42, 0.12);
+                    overflow: hidden;
+                }
+
+                .portal-card__header {
+                    display: flex;
+                    align-items: center;
+                    gap: 1.1rem;
+                    margin-bottom: 1.25rem;
+                }
+
+                .portal-card__icon {
+                    font-size: 2.2rem;
+                    line-height: 1;
+                }
+
+                .portal-card__title {
+                    font-size: 1.35rem;
+                    font-weight: 700;
+                    color: #0f172a;
+                }
+
+                .portal-card__subtitle {
+                    font-size: 0.95rem;
+                    color: #64748b;
+                    margin-top: 0.15rem;
+                }
+
+                .portal-card__body {
+                    padding: 0 2rem 2rem;
+                }
+
+                .portal-card--door {
+                    background: linear-gradient(140deg, var(--portal-primary), var(--portal-secondary));
+                    color: #fff;
+                    border: none;
+                    padding: 2.25rem 2.5rem;
+                    box-shadow: 0 26px 65px rgba(15, 23, 42, 0.25);
+                }
+
+                .portal-card--door .portal-card__title {
+                    color: #fff;
+                }
+
+                .portal-card--door .portal-card__subtitle {
+                    color: rgba(255, 255, 255, 0.75);
+                }
+
+                .portal-card--door .portal-card__body {
+                    padding: 0;
+                }
+
+                .door-code-display {
+                    font-size: 3rem;
+                    font-weight: 800;
+                    text-align: center;
+                    letter-spacing: 0.35rem;
+                    margin-bottom: 0.75rem;
+                    text-transform: uppercase;
+                }
+
+                .door-code-note {
+                    text-align: center;
+                    font-size: 0.95rem;
+                    color: rgba(255, 255, 255, 0.85);
+                }
+
+                .door-code-note--muted {
+                    color: rgba(255, 255, 255, 0.85);
+                }
+
+                .portal-accordion {
+                    padding: 0;
+                }
+
+                .portal-accordion summary {
+                    list-style: none;
+                    cursor: pointer;
+                    display: flex;
+                    align-items: center;
+                    gap: 1.1rem;
+                    padding: 1.6rem 2rem;
+                    font-weight: 600;
+                    color: #0f172a;
+                }
+
+                .portal-accordion summary::-webkit-details-marker {
+                    display: none;
+                }
+
+                .portal-card__chevron {
+                    margin-left: auto;
+                    font-size: 1.2rem;
+                    color: #94a3b8;
+                    transition: transform 0.25s ease;
+                }
+
+                .portal-accordion[open] .portal-card__chevron {
+                    transform: rotate(180deg);
+                }
+
                 .booking-details {
                     display: grid;
-                    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-                    gap: 1rem;
-                    margin-bottom: 2rem;
-                    padding: 1.5rem;
-                    background: #f8f9fa;
-                    border-radius: 8px;
+                    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+                    gap: 1.25rem;
                 }
-                
+
                 .detail-item {
-                    text-align: center;
+                    padding: 1.25rem 1.5rem;
+                    border-radius: 14px;
+                    background: #f8fafc;
+                    border: 1px solid rgba(226, 232, 240, 0.8);
                 }
-                
+
                 .detail-label {
-                    font-size: 0.9rem;
-                    color: #666;
-                    margin-bottom: 0.5rem;
+                    font-size: 0.8rem;
+                    text-transform: uppercase;
+                    letter-spacing: 0.14em;
+                    color: #64748b;
+                    margin-bottom: 0.4rem;
+                    font-weight: 700;
                 }
-                
+
                 .detail-value {
+                    font-size: 1.15rem;
                     font-weight: 600;
-                    font-size: 1.1rem;
+                    color: #0f172a;
                 }
-                
+
+                .progress-bar {
+                    width: 100%;
+                    background: rgba(148, 163, 184, 0.25);
+                    border-radius: 999px;
+                    height: 10px;
+                    margin-bottom: 1.25rem;
+                    overflow: hidden;
+                }
+
+                .progress-fill {
+                    height: 100%;
+                    width: 0;
+                    background: var(--portal-primary);
+                    border-radius: 999px;
+                    transition: width 0.4s ease;
+                }
+
                 .checklist {
-                    margin-bottom: 2rem;
+                    display: flex;
+                    flex-direction: column;
+                    gap: 1rem;
+                }
+
+                .checklist-item {
+                    display: flex;
+                    align-items: flex-start;
+                    gap: 1.1rem;
+                    border-radius: 16px;
+                    padding: 1.2rem 1.4rem;
+                    background: #f8fafc;
+                    border: 1px solid rgba(226, 232, 240, 0.9);
+                    transition: background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+                }
+
+                .checklist-item.completed {
+                    border-color: var(--portal-primary);
+                    background: rgba(59, 130, 246, 0.08);
+                    box-shadow: 0 10px 25px rgba(15, 23, 42, 0.08);
+                }
+
+                .checklist-icon {
+                    width: 44px;
+                    height: 44px;
+                    border-radius: 50%;
+                    background: rgba(148, 163, 184, 0.25);
+                    color: #475569;
+                    font-weight: 700;
+                    font-size: 1.1rem;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    flex-shrink: 0;
+                }
+
+                .checklist-item.completed .checklist-icon {
+                    background: var(--portal-primary);
+                    color: #fff;
+                }
+
+                .checklist-title {
+                    font-weight: 700;
+                    font-size: 1.05rem;
+                    color: #0f172a;
+                }
+
+                .checklist-description {
+                    color: #64748b;
+                    font-size: 0.95rem;
+                    margin-top: 0.25rem;
+                }
+
+                .contact-summary {
+                    background: #f8fafc;
+                    border: 1px solid rgba(226, 232, 240, 0.9);
+                    border-radius: 14px;
+                    padding: 1.2rem 1.5rem;
+                    margin-bottom: 1rem;
+                }
+
+                .contact-summary ul {
+                    list-style: none;
+                }
+
+                .contact-summary li {
+                    margin-bottom: 0.5rem;
+                    color: #475569;
+                }
+
+                .text-muted {
+                    color: #64748b;
                 }
 
                 .form-grid {
                     display: grid;
                     grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-                    gap: 1rem;
-                    margin-bottom: 1rem;
-                }
-
-                .form-group {
-                    display: flex;
-                    flex-direction: column;
-                    text-align: left;
+                    gap: 1.25rem;
+                    margin-bottom: 1.5rem;
                 }
 
                 .form-group label {
@@ -216,484 +483,544 @@ class GMS_Guest_Portal {
                 }
 
                 .form-group input {
-                    padding: 0.75rem;
-                    border: 1px solid #ccc;
-                    border-radius: 4px;
+                    padding: 0.85rem 1rem;
+                    border-radius: 10px;
+                    border: 1px solid rgba(148, 163, 184, 0.6);
                     font-size: 1rem;
+                    transition: border-color 0.2s ease, box-shadow 0.2s ease;
                 }
 
-                .text-muted {
-                    color: #666;
-                    font-size: 0.95rem;
+                .form-group input:focus {
+                    border-color: var(--portal-primary);
+                    outline: none;
+                    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
                 }
 
-                .contact-summary {
-                    background: #f8f9fa;
-                    border-radius: 6px;
-                    padding: 1rem 1.25rem;
-                    margin-bottom: 1rem;
-                }
-
-                .contact-summary ul {
-                    list-style: none;
-                    margin: 0;
-                    padding: 0;
-                }
-
-                .contact-summary li {
-                    margin-bottom: 0.5rem;
-                    color: #555;
-                }
-
-                .checklist-item {
-                    display: flex;
-                    align-items: center;
-                    padding: 1rem;
-                    margin-bottom: 1rem;
-                    border: 2px solid #e0e0e0;
-                    border-radius: 8px;
-                    transition: all 0.3s ease;
-                }
-                
-                .checklist-item.completed {
-                    border-color: #27ae60;
-                    background: #f8fff8;
-                }
-                
-                .checklist-icon {
-                    width: 40px;
-                    height: 40px;
-                    border-radius: 50%;
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    margin-right: 1rem;
-                    background: #e0e0e0;
-                    color: #666;
-                    font-weight: bold;
-                }
-                
-                .checklist-item.completed .checklist-icon {
-                    background: #27ae60;
-                    color: #fff;
-                }
-                
-                .checklist-content {
-                    flex: 1;
-                }
-                
-                .checklist-title {
-                    font-weight: 600;
-                    margin-bottom: 0.5rem;
-                }
-                
-                .checklist-description {
-                    color: #666;
-                    font-size: 0.9rem;
-                }
-                
-                .action-section {
-                    margin-bottom: 2rem;
-                    padding: 1.5rem;
-                    border: 1px solid #e0e0e0;
-                    border-radius: 8px;
-                }
-                
-                .section-title {
-                    font-size: 1.3rem;
-                    font-weight: 600;
-                    margin-bottom: 1rem;
-                    color: <?php echo esc_attr($primary_color); ?>;
-                }
-                
-                .agreement-text {
-                    background: #f8f9fa;
-                    padding: 1rem;
-                    border-radius: 4px;
-                    margin-bottom: 1rem;
-                    max-height: 200px;
-                    overflow-y: auto;
-                    font-size: 0.9rem;
-                    line-height: 1.5;
-                }
-                
-                .signature-section {
-                    margin: 1rem 0;
-                }
-                
-                .signature-canvas {
-                    border: 2px dashed #ccc;
-                    border-radius: 4px;
-                    display: block;
-                    margin: 1rem 0;
-                    cursor: crosshair;
-                    background: #fff;
-                    width: 100%;
-                    max-width: 600px;
-                    height: 200px;
-                }
-                
-                .signature-controls {
-                    text-align: center;
-                    margin: 1rem 0;
-                }
-                
-                .btn {
-                    display: inline-block;
-                    padding: 0.75rem 1.5rem;
-                    border: none;
-                    border-radius: 4px;
-                    font-size: 1rem;
-                    font-weight: 600;
-                    cursor: pointer;
-                    text-decoration: none;
-                    transition: all 0.3s ease;
-                    margin: 0.5rem;
-                }
-                
-                .btn-primary {
-                    background: <?php echo esc_attr($primary_color); ?>;
-                    color: #fff;
-                }
-                
-                .btn-primary:hover {
-                    background: <?php echo esc_attr($secondary_color); ?>;
-                }
-                
-                .btn-secondary {
-                    background: #6c757d;
-                    color: #fff;
-                }
-                
-                .btn-success {
-                    background: #28a745;
-                    color: #fff;
-                }
-                
-                .btn-outline {
-                    background: transparent;
-                    border: 2px solid <?php echo esc_attr($primary_color); ?>;
-                    color: <?php echo esc_attr($primary_color); ?>;
-                }
-                
-                .btn:disabled {
-                    opacity: 0.6;
-                    cursor: not-allowed;
-                }
-                
                 .checkbox-group {
                     display: flex;
                     align-items: center;
-                    margin: 1rem 0;
+                    gap: 0.75rem;
+                    margin: 1.25rem 0;
                 }
-                
+
                 .checkbox-group input[type="checkbox"] {
-                    margin-right: 0.5rem;
                     transform: scale(1.2);
                 }
-                
-                .error-message {
-                    background: #f8d7da;
-                    color: #721c24;
-                    padding: 1rem;
-                    border-radius: 4px;
-                    margin: 1rem 0;
+
+                .agreement-text {
+                    background: #f8fafc;
+                    padding: 1.25rem;
+                    border-radius: 14px;
+                    border: 1px solid rgba(226, 232, 240, 0.9);
+                    max-height: 280px;
+                    overflow-y: auto;
+                    font-size: 0.95rem;
                 }
-                
-                .success-message {
-                    background: #d4edda;
-                    color: #155724;
-                    padding: 1rem;
-                    border-radius: 4px;
-                    margin: 1rem 0;
+
+                .signature-section {
+                    margin: 1.5rem 0;
                 }
-                
-                .pdf-download-section {
-                    background: #d4edda;
-                    border: 1px solid #c3e6cb;
-                    padding: 1.5rem;
-                    border-radius: 8px;
-                    margin-bottom: 2rem;
+
+                .signature-canvas {
+                    border: 2px dashed rgba(148, 163, 184, 0.7);
+                    border-radius: 12px;
+                    width: 100%;
+                    max-width: 640px;
+                    height: 200px;
+                    background: #fff;
                 }
-                
-                .pdf-download-box {
-                    background: white;
-                    padding: 1.5rem;
-                    border-radius: 4px;
+
+                .signature-controls {
+                    margin-top: 0.75rem;
+                }
+
+                .btn {
+                    display: inline-flex;
+                    align-items: center;
+                    justify-content: center;
+                    gap: 0.35rem;
+                    padding: 0.9rem 1.6rem;
+                    border-radius: 12px;
+                    font-weight: 600;
+                    font-size: 1rem;
+                    text-decoration: none;
+                    border: none;
+                    cursor: pointer;
+                    transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+                }
+
+                .btn-primary {
+                    background: var(--portal-primary);
+                    color: #fff;
+                    box-shadow: 0 10px 22px rgba(59, 130, 246, 0.3);
+                }
+
+                .btn-primary:hover {
+                    transform: translateY(-2px);
+                    background: var(--portal-secondary);
+                }
+
+                .btn-secondary {
+                    background: #0f172a;
+                    color: #fff;
+                }
+
+                .btn-outline {
+                    background: transparent;
+                    border: 2px solid var(--portal-primary);
+                    color: var(--portal-primary);
+                }
+
+                .btn-success {
+                    background: #16a34a;
+                    color: #fff;
+                }
+
+                .btn-light {
+                    background: #fff;
+                    color: var(--portal-primary);
+                    border: 2px solid rgba(148, 163, 184, 0.4);
+                    box-shadow: 0 6px 16px rgba(148, 163, 184, 0.25);
+                }
+
+                .btn:disabled {
+                    opacity: 0.6;
+                    cursor: not-allowed;
+                    box-shadow: none;
+                    transform: none;
+                }
+
+                .portal-card--success {
+                    background: linear-gradient(135deg, rgba(16, 185, 129, 0.12), rgba(56, 189, 248, 0.12));
+                    border: 1px solid rgba(45, 212, 191, 0.35);
+                }
+
+                .portal-card--success h3 {
+                    color: #0f766e;
+                }
+
+                .portal-card--link {
+                    display: flex;
+                    align-items: center;
+                    gap: 1.4rem;
+                    padding: 1.8rem 2rem;
+                    text-decoration: none;
+                    color: #0f172a;
+                    transition: transform 0.2s ease, box-shadow 0.2s ease;
+                }
+
+                .portal-card--link:hover {
+                    transform: translateY(-4px);
+                    box-shadow: 0 20px 45px rgba(15, 23, 42, 0.16);
+                }
+
+                .portal-card--link .portal-card__icon {
+                    background: rgba(255, 255, 255, 0.85);
+                    color: var(--portal-primary);
+                    padding: 0.85rem;
+                    border-radius: 16px;
+                    font-size: 1.8rem;
+                }
+
+                .portal-card__cta {
+                    margin-left: auto;
+                    font-weight: 600;
+                    color: var(--portal-primary);
+                    display: flex;
+                    align-items: center;
+                    gap: 0.35rem;
+                }
+
+                .portal-card--contact .portal-card__body {
+                    display: flex;
+                    flex-wrap: wrap;
+                    align-items: center;
+                    justify-content: space-between;
+                    gap: 1rem;
+                }
+
+                .portal-card__copy {
+                    color: #475569;
+                    font-size: 1rem;
+                }
+
+                .portal-card__copy p {
+                    margin-bottom: 0.75rem;
+                }
+
+                .portal-card--promo .portal-card__icon {
+                    background: rgba(59, 130, 246, 0.12);
+                    padding: 0.75rem;
+                    border-radius: 16px;
+                    font-size: 1.6rem;
+                }
+
+                .portal-card__cta-button {
                     margin-top: 1rem;
                 }
-                
+
                 .loading {
                     text-align: center;
                     padding: 2rem;
                 }
-                
+
                 .spinner {
-                    border: 4px solid #f3f3f3;
-                    border-top: 4px solid <?php echo esc_attr($primary_color); ?>;
+                    border: 4px solid rgba(148, 163, 184, 0.35);
+                    border-top: 4px solid var(--portal-primary);
                     border-radius: 50%;
-                    width: 40px;
-                    height: 40px;
-                    animation: spin 2s linear infinite;
-                    margin: 0 auto;
+                    width: 42px;
+                    height: 42px;
+                    animation: spin 1.2s linear infinite;
+                    margin: 0 auto 1rem;
                 }
-                
+
                 @keyframes spin {
                     0% { transform: rotate(0deg); }
                     100% { transform: rotate(360deg); }
                 }
-                
-                .progress-bar {
-                    width: 100%;
-                    background: #e0e0e0;
-                    border-radius: 4px;
-                    margin: 1rem 0;
+
+                .success-message {
+                    background: rgba(34, 197, 94, 0.12);
+                    border: 1px solid rgba(34, 197, 94, 0.35);
+                    padding: 1rem 1.25rem;
+                    border-radius: 12px;
+                    color: #166534;
+                    font-weight: 600;
                 }
-                
-                .progress-fill {
-                    height: 6px;
-                    background: <?php echo esc_attr($primary_color); ?>;
-                    border-radius: 4px;
-                    transition: width 0.3s ease;
+
+                .error-message {
+                    background: rgba(248, 113, 113, 0.12);
+                    border: 1px solid rgba(248, 113, 113, 0.4);
+                    padding: 1rem 1.25rem;
+                    border-radius: 12px;
+                    color: #b91c1c;
+                    font-weight: 600;
                 }
-                
+
+                .hidden {
+                    display: none !important;
+                }
+
                 @media (max-width: 768px) {
                     .portal-content {
-                        padding: 1rem;
+                        margin-top: -4rem;
+                        padding: 0 1.25rem 3rem;
+                    }
+
+                    .portal-hero {
+                        padding: 2rem 1.75rem;
+                    }
+
+                    .portal-card__body {
+                        padding: 0 1.5rem 1.5rem;
+                    }
+
+                    .portal-accordion summary {
+                        padding: 1.35rem 1.5rem;
                     }
 
                     .booking-details {
                         grid-template-columns: 1fr;
-                        gap: 0.5rem;
                     }
 
                     .form-grid {
                         grid-template-columns: 1fr;
                     }
 
-                    .detail-item {
-                        text-align: left;
-                        padding: 0.5rem;
+                    .door-code-display {
+                        font-size: 2.4rem;
+                        letter-spacing: 0.2rem;
                     }
-                    
-                    .checklist-item {
-                        flex-direction: column;
-                        text-align: center;
-                    }
-                    
-                    .checklist-icon {
-                        margin-right: 0;
-                        margin-bottom: 1rem;
-                    }
-                    
-                    .signature-canvas {
-                        width: 100%;
-                        height: 150px;
-                    }
-                }
-                
-                .hidden {
-                    display: none !important;
                 }
             </style>
         </head>
         <body>
             <div class="portal-container">
-                <div class="portal-header">
+                <header class="portal-header">
                     <?php if ($company_logo): ?>
                         <img src="<?php echo esc_url($company_logo); ?>" alt="<?php echo esc_attr($company_name); ?>" class="company-logo">
                     <?php endif; ?>
                     <h1>Welcome to <?php echo esc_html($company_name); ?></h1>
                     <p>Complete your check-in process below</p>
-                </div>
-                
-                <div class="portal-content">
-                    <div class="welcome-section">
+                </header>
+
+                <main class="portal-content">
+                    <section class="portal-hero">
+                        <?php if (!empty($reservation['property_name'])): ?>
+                            <p class="portal-hero__eyebrow"><?php echo esc_html($reservation['property_name']); ?></p>
+                        <?php endif; ?>
                         <h2>Hello, <span id="guest-name-display"><?php echo esc_html($display_guest_name); ?></span>!</h2>
-                        <p>We're excited to host you. Please complete the following steps to finalize your check-in.</p>
-                    </div>
-                    
-                    <div class="booking-details">
-                        <div class="detail-item">
-                            <div class="detail-label">Property</div>
-                            <div class="detail-value"><?php echo esc_html($reservation['property_name']); ?></div>
-                        </div>
-                        <div class="detail-item">
-                            <div class="detail-label">Check-in</div>
-                            <div class="detail-value"><?php echo esc_html(date('M j, Y', strtotime($reservation['checkin_date']))); ?></div>
-                            <div class="detail-value"><?php echo esc_html(date('g:i A', strtotime($reservation['checkin_date']))); ?></div>
-                        </div>
-                        <div class="detail-item">
-                            <div class="detail-label">Check-out</div>
-                            <div class="detail-value"><?php echo esc_html(date('M j, Y', strtotime($reservation['checkout_date']))); ?></div>
-                            <div class="detail-value"><?php echo esc_html(date('g:i A', strtotime($reservation['checkout_date']))); ?></div>
-                        </div>
-                        <div class="detail-item">
-                            <div class="detail-label">Booking Reference</div>
-                            <div class="detail-value"><?php echo esc_html($reservation['booking_reference']); ?></div>
-                        </div>
-                        <?php if ($door_code !== '') : ?>
-                        <div class="detail-item">
-                            <div class="detail-label">Door Code</div>
-                            <div class="detail-value"><?php echo esc_html($door_code); ?></div>
-                        </div>
+                        <p><?php esc_html_e('We\'re excited to host you. Complete the steps below so everything is ready for your arrival.', 'gms'); ?></p>
+                    </section>
+
+                    <div class="portal-cards">
+                        <section class="portal-card portal-card--door">
+                            <div class="portal-card__header">
+                                <span class="portal-card__icon" aria-hidden="true">🗝️</span>
+                                <div>
+                                    <h2 class="portal-card__title"><?php esc_html_e('Door Access', 'gms'); ?></h2>
+                                    <p class="portal-card__subtitle"><?php echo $checkin_day_long !== '' ? esc_html(sprintf(__('Activates %s', 'gms'), $checkin_day_long)) : esc_html__('Your personal entry code', 'gms'); ?></p>
+                                </div>
+                            </div>
+                            <div class="portal-card__body">
+                                <?php if ($door_code !== ''): ?>
+                                    <div class="door-code-display"><?php echo esc_html($door_code); ?></div>
+                                    <?php if ($checkin_time_display !== '' || $checkin_day_long !== ''): ?>
+                                        <p class="door-code-note"><?php
+                                            if ($checkin_day_long !== '' && $checkin_time_display !== '') {
+                                                printf(esc_html__('Active %1$s at %2$s', 'gms'), esc_html($checkin_day_long), esc_html($checkin_time_display));
+                                            } elseif ($checkin_day_long !== '') {
+                                                printf(esc_html__('Active %s', 'gms'), esc_html($checkin_day_long));
+                                            } else {
+                                                esc_html_e('Use this code at the smart lock when you arrive.', 'gms');
+                                            }
+                                        ?></p>
+                                    <?php else: ?>
+                                        <p class="door-code-note"><?php esc_html_e('Use this code at the smart lock when you arrive.', 'gms'); ?></p>
+                                    <?php endif; ?>
+                                <?php else: ?>
+                                    <p class="door-code-note door-code-note--muted"><?php esc_html_e('We\'ll send your unique access code closer to arrival.', 'gms'); ?></p>
+                                <?php endif; ?>
+                            </div>
+                        </section>
+
+                        <details class="portal-card portal-accordion" open>
+                            <summary>
+                                <span class="portal-card__icon" aria-hidden="true">🧭</span>
+                                <span class="portal-card__title"><?php esc_html_e('Your check-in checklist', 'gms'); ?></span>
+                                <span class="portal-card__chevron" aria-hidden="true">▾</span>
+                            </summary>
+                            <div class="portal-card__body">
+                                <div class="progress-bar">
+                                    <div class="progress-fill" id="progress-fill"></div>
+                                </div>
+                                <div class="checklist">
+                                    <div class="checklist-item <?php echo $contact_info_complete ? 'completed' : ''; ?>" id="contact-checklist">
+                                        <div class="checklist-icon"><?php echo $contact_info_complete ? '✓' : '1'; ?></div>
+                                        <div class="checklist-content">
+                                            <div class="checklist-title"><?php esc_html_e('Confirm guest details', 'gms'); ?></div>
+                                            <div class="checklist-description"><?php esc_html_e('Share your contact information so we can keep you updated about your stay.', 'gms'); ?></div>
+                                        </div>
+                                    </div>
+                                    <div class="checklist-item <?php echo ($agreement && $agreement['status'] === 'signed') ? 'completed' : ''; ?>" id="agreement-checklist">
+                                        <div class="checklist-icon"><?php echo ($agreement && $agreement['status'] === 'signed') ? '✓' : '2'; ?></div>
+                                        <div class="checklist-content">
+                                            <div class="checklist-title"><?php esc_html_e('Sign the guest agreement', 'gms'); ?></div>
+                                            <div class="checklist-description"><?php esc_html_e('Review the house rules and sign to confirm your reservation.', 'gms'); ?></div>
+                                        </div>
+                                    </div>
+                                    <div class="checklist-item <?php echo ($verification && $verification['verification_status'] === 'verified') ? 'completed' : ''; ?>" id="verification-checklist">
+                                        <div class="checklist-icon"><?php echo ($verification && $verification['verification_status'] === 'verified') ? '✓' : '3'; ?></div>
+                                        <div class="checklist-content">
+                                            <div class="checklist-title"><?php esc_html_e('Identity verification', 'gms'); ?></div>
+                                            <div class="checklist-description"><?php esc_html_e('Verify your identity with a government ID and quick selfie for security.', 'gms'); ?></div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </details>
+
+                        <details class="portal-card portal-accordion" open>
+                            <summary>
+                                <span class="portal-card__icon" aria-hidden="true">🏡</span>
+                                <span class="portal-card__title"><?php esc_html_e('Your stay details', 'gms'); ?></span>
+                                <span class="portal-card__chevron" aria-hidden="true">▾</span>
+                            </summary>
+                            <div class="portal-card__body">
+                                <div class="booking-details">
+                                    <div class="detail-item">
+                                        <div class="detail-label"><?php esc_html_e('Property', 'gms'); ?></div>
+                                        <div class="detail-value"><?php echo esc_html($reservation['property_name']); ?></div>
+                                    </div>
+                                    <div class="detail-item">
+                                        <div class="detail-label"><?php esc_html_e('Check-in', 'gms'); ?></div>
+                                        <?php if ($checkin_date_display !== ''): ?>
+                                            <div class="detail-value"><?php echo esc_html($checkin_date_display); ?></div>
+                                        <?php endif; ?>
+                                        <?php if ($checkin_time_display !== ''): ?>
+                                            <div class="detail-value"><?php echo esc_html($checkin_time_display); ?></div>
+                                        <?php endif; ?>
+                                    </div>
+                                    <div class="detail-item">
+                                        <div class="detail-label"><?php esc_html_e('Check-out', 'gms'); ?></div>
+                                        <?php if ($checkout_date_display !== ''): ?>
+                                            <div class="detail-value"><?php echo esc_html($checkout_date_display); ?></div>
+                                        <?php endif; ?>
+                                        <?php if ($checkout_time_display !== ''): ?>
+                                            <div class="detail-value"><?php echo esc_html($checkout_time_display); ?></div>
+                                        <?php endif; ?>
+                                    </div>
+                                    <div class="detail-item">
+                                        <div class="detail-label"><?php esc_html_e('Booking reference', 'gms'); ?></div>
+                                        <div class="detail-value"><?php echo esc_html($reservation['booking_reference']); ?></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </details>
+
+                        <details class="portal-card portal-accordion" open>
+                            <summary>
+                                <span class="portal-card__icon" aria-hidden="true">👤</span>
+                                <span class="portal-card__title"><?php esc_html_e('Guest contact information', 'gms'); ?></span>
+                                <span class="portal-card__chevron" aria-hidden="true">▾</span>
+                            </summary>
+                            <div class="portal-card__body" id="contact-section">
+                                <div class="contact-summary <?php echo $contact_info_complete ? '' : 'hidden'; ?>" id="contact-info-summary">
+                                    <p class="text-muted" style="margin-bottom: 0.75rem;"><?php esc_html_e('We\'ll use these details to send arrival information and timely updates about your stay.', 'gms'); ?></p>
+                                    <ul>
+                                        <li><strong><?php esc_html_e('Name:', 'gms'); ?></strong> <span id="contact-summary-name"><?php echo esc_html($reservation['guest_name']); ?></span></li>
+                                        <li><strong><?php esc_html_e('Email:', 'gms'); ?></strong> <span id="contact-summary-email"><?php echo esc_html($reservation['guest_email']); ?></span></li>
+                                        <li><strong><?php esc_html_e('Mobile:', 'gms'); ?></strong> <span id="contact-summary-phone"><?php echo esc_html($contact_phone_display); ?></span></li>
+                                    </ul>
+                                </div>
+
+                                <p class="text-muted" id="contact-section-helper" style="margin-bottom: 1rem;"><?php
+                                    if ($contact_info_complete) {
+                                        esc_html_e('Need to make a change? Update your contact details below.', 'gms');
+                                    } else {
+                                        esc_html_e('We need your legal name and contact information before we can confirm the reservation. The remaining steps will unlock once this is saved.', 'gms');
+                                    }
+                                ?></p>
+
+                                <form id="contact-info-form" novalidate>
+                                    <div class="form-grid">
+                                        <div class="form-group">
+                                            <label for="guest-first-name"><?php esc_html_e('First name', 'gms'); ?></label>
+                                            <input type="text" id="guest-first-name" name="first_name" value="<?php echo esc_attr($contact_first_name); ?>" required autocomplete="given-name">
+                                        </div>
+                                        <div class="form-group">
+                                            <label for="guest-last-name"><?php esc_html_e('Last name', 'gms'); ?></label>
+                                            <input type="text" id="guest-last-name" name="last_name" value="<?php echo esc_attr($contact_last_name); ?>" required autocomplete="family-name">
+                                        </div>
+                                        <div class="form-group">
+                                            <label for="guest-email"><?php esc_html_e('Email', 'gms'); ?></label>
+                                            <input type="email" id="guest-email" name="email" value="<?php echo esc_attr($reservation['guest_email']); ?>" required autocomplete="email">
+                                        </div>
+                                        <div class="form-group">
+                                            <label for="guest-phone"><?php esc_html_e('Mobile phone', 'gms'); ?></label>
+                                            <input type="tel" id="guest-phone" name="phone" value="<?php echo esc_attr($reservation['guest_phone']); ?>" required autocomplete="tel">
+                                        </div>
+                                    </div>
+                                    <button id="save-contact-info" class="btn btn-primary" type="submit"><?php echo esc_html($contact_info_complete ? __('Update details', 'gms') : __('Save & continue', 'gms')); ?></button>
+                                    <div id="contact-info-message"></div>
+                                </form>
+                            </div>
+                        </details>
+
+                        <details class="portal-card portal-accordion requires-contact-info <?php echo $contact_info_complete ? '' : 'hidden'; ?>" <?php echo ($agreement && $agreement['status'] === 'signed') ? '' : 'open'; ?>>
+                            <summary>
+                                <span class="portal-card__icon" aria-hidden="true">📋</span>
+                                <span class="portal-card__title"><?php esc_html_e('Guest agreement', 'gms'); ?></span>
+                                <span class="portal-card__chevron" aria-hidden="true">▾</span>
+                            </summary>
+                            <div class="portal-card__body" id="agreement-section" <?php echo ($agreement && $agreement['status'] === 'signed') ? 'style="display: none;"' : ''; ?>>
+                                <div class="agreement-text" id="agreement-text"><?php echo wp_kses_post($agreement_display); ?></div>
+                                <div class="checkbox-group">
+                                    <input type="checkbox" id="agreement-checkbox" required>
+                                    <label for="agreement-checkbox"><?php esc_html_e('I have read and agree to the terms above.', 'gms'); ?></label>
+                                </div>
+                                <div class="signature-section">
+                                    <label for="signature-canvas"><?php esc_html_e('Your signature', 'gms'); ?>:</label>
+                                    <canvas id="signature-canvas" class="signature-canvas"></canvas>
+                                    <div class="signature-controls">
+                                        <button type="button" id="clear-signature" class="btn btn-outline"><?php esc_html_e('Clear signature', 'gms'); ?></button>
+                                    </div>
+                                </div>
+                                <button id="submit-agreement" class="btn btn-primary" disabled><?php esc_html_e('Submit agreement', 'gms'); ?></button>
+                                <div id="agreement-message"></div>
+                            </div>
+                        </details>
+
+                        <?php if ($agreement && $agreement['status'] === 'signed' && !empty($agreement['pdf_url'])): ?>
+                            <section class="portal-card portal-card--success pdf-download-section requires-contact-info <?php echo $contact_info_complete ? '' : 'hidden'; ?>">
+                                <div class="portal-card__body">
+                                    <h3><?php esc_html_e('Agreement signed successfully', 'gms'); ?></h3>
+                                    <p class="portal-card__copy"><?php
+                                        printf(esc_html__('Signed on %s. A copy is on the way to your phone.', 'gms'), esc_html(date('F j, Y 	 g:i A', strtotime($agreement['signed_at']))));
+                                    ?></p>
+                                    <a href="<?php echo esc_url($agreement['pdf_url']); ?>" class="btn btn-success" download="<?php echo esc_attr($reservation['booking_reference']); ?>.pdf"><?php esc_html_e('Download signed agreement (PDF)', 'gms'); ?></a>
+                                </div>
+                            </section>
+                        <?php endif; ?>
+
+                        <details class="portal-card portal-accordion requires-contact-info <?php echo $contact_info_complete ? '' : 'hidden'; ?>" <?php echo ($verification && $verification['verification_status'] === 'verified') ? '' : 'open'; ?>>
+                            <summary>
+                                <span class="portal-card__icon" aria-hidden="true">🆔</span>
+                                <span class="portal-card__title"><?php esc_html_e('Identity verification', 'gms'); ?></span>
+                                <span class="portal-card__chevron" aria-hidden="true">▾</span>
+                            </summary>
+                            <div class="portal-card__body" id="verification-section" <?php echo (!$agreement || $agreement['status'] !== 'signed') ? 'style="display: none;"' : ''; ?>>
+                                <p class="text-muted"><?php esc_html_e('Please verify your identity by uploading a photo of your government-issued ID and a matching selfie. This keeps the property secure for everyone.', 'gms'); ?></p>
+                                <div id="verification-content">
+                                    <?php if ($verification && $verification['verification_status'] === 'verified'): ?>
+                                        <div class="success-message">✅ <?php esc_html_e('Identity verification completed successfully!', 'gms'); ?></div>
+                                    <?php elseif ($verification && $verification['verification_status'] === 'processing'): ?>
+                                        <div class="loading">
+                                            <div class="spinner"></div>
+                                            <p><?php esc_html_e('Verifying your identity...', 'gms'); ?></p>
+                                            <button id="check-verification" class="btn btn-secondary"><?php esc_html_e('Check status', 'gms'); ?></button>
+                                        </div>
+                                    <?php else: ?>
+                                        <div class="verification-help">
+                                            <p class="text-muted" style="margin-bottom: 0.75rem;"><?php esc_html_e('When you start, Stripe will guide you through capturing your ID and a quick selfie. Please make sure you\'re in a well-lit area.', 'gms'); ?></p>
+                                        </div>
+                                        <button id="start-verification" class="btn btn-primary"><?php esc_html_e('Start identity verification', 'gms'); ?></button>
+                                    <?php endif; ?>
+                                </div>
+                                <div id="verification-message"></div>
+                            </div>
+                        </details>
+
+                        <a class="portal-card portal-card--link" href="https://240jordanview.com/handbook" target="_blank" rel="noopener noreferrer">
+                            <span class="portal-card__icon" aria-hidden="true">📖</span>
+                            <div>
+                                <h3 class="portal-card__title"><?php esc_html_e('Guest handbook', 'gms'); ?></h3>
+                                <p class="portal-card__subtitle"><?php esc_html_e('Wi-Fi info, appliance tips, and favorite local spots—everything you need in one place.', 'gms'); ?></p>
+                            </div>
+                            <span class="portal-card__cta"><?php esc_html_e('Open', 'gms'); ?> &rarr;</span>
+                        </a>
+
+                        <?php if ($host_text_number !== ''): ?>
+                            <section class="portal-card portal-card--contact">
+                                <div class="portal-card__header">
+                                    <span class="portal-card__icon" aria-hidden="true">💬</span>
+                                    <div>
+                                        <h3 class="portal-card__title"><?php esc_html_e('Text the host', 'gms'); ?></h3>
+                                        <p class="portal-card__subtitle"><?php esc_html_e('We\'re just a message away if you need anything.', 'gms'); ?></p>
+                                    </div>
+                                </div>
+                                <div class="portal-card__body">
+                                    <div class="portal-card__copy"><?php printf(esc_html__('Send a text to %s and we\'ll respond quickly.', 'gms'), '<strong>' . esc_html($host_text_display) . '</strong>'); ?></div>
+                                    <?php if ($host_text_link !== ''): ?>
+                                        <a class="btn btn-light" href="<?php echo esc_url($host_text_link); ?>"><?php esc_html_e('Start a text', 'gms'); ?></a>
+                                    <?php endif; ?>
+                                </div>
+                            </section>
+                        <?php endif; ?>
+
+                        <?php if (!empty($custom_cards)) : ?>
+                            <?php foreach ($custom_cards as $card) : ?>
+                                <section class="portal-card portal-card--promo">
+                                    <div class="portal-card__header">
+                                        <span class="portal-card__icon" aria-hidden="true"><?php echo esc_html($card['icon'] !== '' ? $card['icon'] : '⭐'); ?></span>
+                                        <div>
+                                            <h3 class="portal-card__title"><?php echo esc_html($card['title']); ?></h3>
+                                        </div>
+                                    </div>
+                                    <div class="portal-card__body">
+                                        <?php if (!empty($card['body'])) : ?>
+                                            <div class="portal-card__copy"><?php echo wp_kses_post(wpautop($card['body'])); ?></div>
+                                        <?php endif; ?>
+                                        <?php if (!empty($card['cta_label']) && !empty($card['cta_url'])) : ?>
+                                            <a class="btn btn-primary portal-card__cta-button" href="<?php echo esc_url($card['cta_url']); ?>" target="_blank" rel="noopener noreferrer"><?php echo esc_html($card['cta_label']); ?></a>
+                                        <?php endif; ?>
+                                    </div>
+                                </section>
+                            <?php endforeach; ?>
                         <?php endif; ?>
                     </div>
-                    
-                    <div class="progress-bar">
-                        <div class="progress-fill" id="progress-fill" style="width: 0%;"></div>
-                    </div>
-                    
-                    <div class="checklist">
-                        <div class="checklist-item <?php echo $contact_info_complete ? 'completed' : ''; ?>" id="contact-checklist">
-                            <div class="checklist-icon">
-                                <?php echo $contact_info_complete ? '✓' : '1'; ?>
-                            </div>
-                            <div class="checklist-content">
-                                <div class="checklist-title">Confirm Guest Details</div>
-                                <div class="checklist-description">Share your contact information so we can finalize your stay</div>
-                            </div>
-                        </div>
-
-                        <div class="checklist-item <?php echo ($agreement && $agreement['status'] === 'signed') ? 'completed' : ''; ?>" id="agreement-checklist">
-                            <div class="checklist-icon">
-                                <?php echo ($agreement && $agreement['status'] === 'signed') ? '✓' : '2'; ?>
-                            </div>
-                            <div class="checklist-content">
-                                <div class="checklist-title">Sign Guest Agreement</div>
-                                <div class="checklist-description">Review and sign our property agreement</div>
-                            </div>
-                        </div>
-
-                        <div class="checklist-item <?php echo ($verification && $verification['verification_status'] === 'verified') ? 'completed' : ''; ?>" id="verification-checklist">
-                            <div class="checklist-icon">
-                                <?php echo ($verification && $verification['verification_status'] === 'verified') ? '✓' : '3'; ?>
-                            </div>
-                            <div class="checklist-content">
-                                <div class="checklist-title">Identity Verification</div>
-                                <div class="checklist-description">Verify your identity with your government ID and a live selfie</div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Contact Information Section -->
-                    <div class="action-section" id="contact-section">
-                        <h3 class="section-title">👤 Guest Details</h3>
-
-                        <div class="contact-summary <?php echo $contact_info_complete ? '' : 'hidden'; ?>" id="contact-info-summary">
-                            <p class="text-muted" style="margin-bottom: 0.75rem;">We'll use these details to send arrival information and important updates about your stay.</p>
-                            <ul>
-                                <li><strong>Name:</strong> <span id="contact-summary-name"><?php echo esc_html($reservation['guest_name']); ?></span></li>
-                                <li><strong>Email:</strong> <span id="contact-summary-email"><?php echo esc_html($reservation['guest_email']); ?></span></li>
-                                <li><strong>Mobile:</strong> <span id="contact-summary-phone"><?php echo esc_html($contact_phone_display); ?></span></li>
-                            </ul>
-                        </div>
-
-                        <p class="text-muted" id="contact-section-helper" style="margin-bottom: 1rem;">
-                            <?php if ($contact_info_complete): ?>
-                                <?php esc_html_e('Need to make a change? Update your contact details below.', 'gms'); ?>
-                            <?php else: ?>
-                                <?php esc_html_e('We need your legal name and contact information before we can confirm the reservation. The remaining steps will unlock once this is saved.', 'gms'); ?>
-                            <?php endif; ?>
-                        </p>
-
-                        <form id="contact-info-form" novalidate>
-                            <div class="form-grid">
-                                <div class="form-group">
-                                    <label for="guest-first-name"><?php esc_html_e('First Name', 'gms'); ?></label>
-                                    <input type="text" id="guest-first-name" name="first_name" value="<?php echo esc_attr($contact_first_name); ?>" required autocomplete="given-name">
-                                </div>
-                                <div class="form-group">
-                                    <label for="guest-last-name"><?php esc_html_e('Last Name', 'gms'); ?></label>
-                                    <input type="text" id="guest-last-name" name="last_name" value="<?php echo esc_attr($contact_last_name); ?>" required autocomplete="family-name">
-                                </div>
-                                <div class="form-group">
-                                    <label for="guest-email"><?php esc_html_e('Email', 'gms'); ?></label>
-                                    <input type="email" id="guest-email" name="email" value="<?php echo esc_attr($reservation['guest_email']); ?>" required autocomplete="email">
-                                </div>
-                                <div class="form-group">
-                                    <label for="guest-phone"><?php esc_html_e('Mobile Phone', 'gms'); ?></label>
-                                    <input type="tel" id="guest-phone" name="phone" value="<?php echo esc_attr($reservation['guest_phone']); ?>" required autocomplete="tel">
-                                </div>
-                            </div>
-                            <button id="save-contact-info" class="btn btn-primary" type="submit"><?php echo esc_html($contact_info_complete ? __('Update Details', 'gms') : __('Save & Continue', 'gms')); ?></button>
-                            <div id="contact-info-message"></div>
-                        </form>
-                    </div>
-
-                    <!-- Agreement Section -->
-                    <div class="action-section requires-contact-info <?php echo $contact_info_complete ? '' : 'hidden'; ?>" id="agreement-section" <?php echo ($agreement && $agreement['status'] === 'signed') ? 'style="display: none;"' : ''; ?>>
-                        <h3 class="section-title">📋 Guest Agreement</h3>
-
-                        <div class="agreement-text" id="agreement-text">
-                            <?php echo wp_kses_post($agreement_display); ?>
-                        </div>
-                        
-                        <div class="checkbox-group">
-                            <input type="checkbox" id="agreement-checkbox" required>
-                            <label for="agreement-checkbox">I have read and agree to the terms above</label>
-                        </div>
-                        
-                        <div class="signature-section">
-                            <label for="signature-canvas">Your Signature:</label>
-                            <canvas id="signature-canvas" class="signature-canvas"></canvas>
-                            <div class="signature-controls">
-                                <button type="button" id="clear-signature" class="btn btn-outline">Clear Signature</button>
-                            </div>
-                        </div>
-                        
-                        <button id="submit-agreement" class="btn btn-primary" disabled>Submit Agreement</button>
-                        <div id="agreement-message"></div>
-                    </div>
-                    
-                    <!-- PDF Download Section (shown after signing) -->
-                    <?php if ($agreement && $agreement['status'] === 'signed' && !empty($agreement['pdf_url'])): ?>
-                    <div class="pdf-download-section requires-contact-info <?php echo $contact_info_complete ? '' : 'hidden'; ?>">
-                        <h3 class="section-title">✅ Agreement Signed Successfully</h3>
-                        <div class="pdf-download-box">
-                            <p style="margin-bottom: 1rem;"><strong>Your agreement has been signed and saved!</strong></p>
-                            <p style="color: #666; margin-bottom: 1rem;">Signed on: <?php echo esc_html(date('F j, Y \a\t g:i A', strtotime($agreement['signed_at']))); ?></p>
-                            <p style="color: #666; margin-bottom: 1.5rem;">A copy has been sent to your phone via SMS.</p>
-                            <a href="<?php echo esc_url($agreement['pdf_url']); ?>" 
-                               class="btn btn-success" 
-                               download="<?php echo esc_attr($reservation['booking_reference']); ?>.pdf"
-                               style="text-decoration: none;">
-                                📄 Download Signed Agreement (PDF)
-                            </a>
-                        </div>
-                    </div>
-                    <?php endif; ?>
-                    
-                    <!-- Identity Verification Section -->
-                    <div class="action-section requires-contact-info <?php echo $contact_info_complete ? '' : 'hidden'; ?>" id="verification-section" <?php echo (!$agreement || $agreement['status'] !== 'signed') ? 'style="display: none;"' : ''; ?>>
-                        <h3 class="section-title">🆔 Identity Verification</h3>
-                        
-                        <p>Please verify your identity by uploading a photo of your government-issued ID and capturing a live selfie that matches your ID photo. This helps us ensure the security of our properties.</p>
-
-                        <div id="verification-content">
-                            <?php if ($verification && $verification['verification_status'] === 'verified'): ?>
-                                <div class="success-message">
-                                    ✅ Identity verification completed successfully!
-                                </div>
-                            <?php elseif ($verification && $verification['verification_status'] === 'processing'): ?>
-                                <div class="loading">
-                                    <div class="spinner"></div>
-                                    <p>Verifying your identity...</p>
-                                    <button id="check-verification" class="btn btn-secondary">Check Status</button>
-                                </div>
-                            <?php else: ?>
-                                <div class="verification-help">
-                                    <p style="margin-bottom: 0.75rem; color: #555;">When you start, Stripe will guide you through taking photos of your ID and a matching selfie. Please ensure you are in a well-lit area.</p>
-                                </div>
-                                <button id="start-verification" class="btn btn-primary">Start Identity Verification</button>
-                            <?php endif; ?>
-                        </div>
-                        <div id="verification-message"></div>
-                    </div>
-                    
-                </div>
+                </main>
             </div>
-            
             <script src="https://js.stripe.com/v3/"></script>
             <script>
                 // Initialize variables
