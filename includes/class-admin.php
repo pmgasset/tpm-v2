@@ -3392,86 +3392,6 @@ class GMS_Admin {
                                     <span class="gms-reservation-step__hint"><?php esc_html_e('Delivers email/SMS when contact info is available and posts to connected OTA inboxes.', 'guest-management-system'); ?></span>
                                 </form>
 
-                                <div class="gms-portal-card-admin">
-                                    <h3 class="gms-reservation-step__history-title"><?php esc_html_e('Guest portal cards', 'guest-management-system'); ?></h3>
-                                    <p class="gms-reservation-step__hint"><?php esc_html_e('Promote upgrades or local partners by publishing cards that appear alongside the guest resources.', 'guest-management-system'); ?></p>
-
-                                    <?php if (!empty($portal_card_feedback['messages'])) : ?>
-                                        <div class="gms-step-feedback <?php echo esc_attr($this->map_feedback_class($portal_card_feedback['type'])); ?>">
-                                            <ul>
-                                                <?php foreach ($portal_card_feedback['messages'] as $message) : ?>
-                                                    <li><?php echo esc_html($message); ?></li>
-                                                <?php endforeach; ?>
-                                            </ul>
-                                        </div>
-                                    <?php endif; ?>
-
-                                    <?php if (!empty($portal_cards)) : ?>
-                                        <ul class="gms-portal-card-admin__list">
-                                            <?php foreach ($portal_cards as $card) : ?>
-                                                <li class="gms-portal-card-admin__item">
-                                                    <div class="gms-portal-card-admin__item-meta">
-                                                        <?php if (!empty($card['icon'])) : ?>
-                                                            <span class="gms-portal-card-admin__icon" aria-hidden="true"><?php echo esc_html($card['icon']); ?></span>
-                                                        <?php endif; ?>
-                                                        <strong><?php echo esc_html($card['title']); ?></strong>
-                                                    </div>
-                                                    <?php if (!empty($card['body'])) : ?>
-                                                        <div class="gms-portal-card-admin__body"><?php echo wp_kses_post(wpautop($card['body'])); ?></div>
-                                                    <?php endif; ?>
-                                                    <?php if (!empty($card['cta_label']) && !empty($card['cta_url'])) : ?>
-                                                        <p class="gms-portal-card-admin__cta">
-                                                            <span class="dashicons dashicons-admin-links" aria-hidden="true"></span>
-                                                            <a href="<?php echo esc_url($card['cta_url']); ?>" target="_blank" rel="noopener noreferrer"><?php echo esc_html($card['cta_label']); ?></a>
-                                                        </p>
-                                                    <?php endif; ?>
-                                                    <form method="post" class="gms-portal-card-admin__delete">
-                                                        <?php wp_nonce_field('gms_delete_portal_card_' . $reservation_id); ?>
-                                                        <input type="hidden" name="gms_action" value="delete_portal_card">
-                                                        <input type="hidden" name="reservation_id" value="<?php echo esc_attr($reservation_id); ?>">
-                                                        <input type="hidden" name="portal_card_id" value="<?php echo esc_attr($card['id']); ?>">
-                                                        <button type="submit" class="button button-link-delete"><?php esc_html_e('Remove from portal', 'guest-management-system'); ?></button>
-                                                    </form>
-                                                </li>
-                                            <?php endforeach; ?>
-                                        </ul>
-                                    <?php else : ?>
-                                        <p class="description"><?php esc_html_e('No promotional cards have been published yet.', 'guest-management-system'); ?></p>
-                                    <?php endif; ?>
-
-                                    <form method="post" class="gms-portal-card-admin__form">
-                                        <?php wp_nonce_field('gms_create_portal_card_' . $reservation_id); ?>
-                                        <input type="hidden" name="gms_action" value="create_portal_card">
-                                        <input type="hidden" name="reservation_id" value="<?php echo esc_attr($reservation_id); ?>">
-
-                                        <div class="gms-field">
-                                            <label for="gms-portal-card-title"><?php esc_html_e('Card headline', 'guest-management-system'); ?></label>
-                                            <input type="text" id="gms-portal-card-title" name="portal_card_title" class="regular-text" required>
-                                        </div>
-
-                                        <div class="gms-field">
-                                            <label for="gms-portal-card-body"><?php esc_html_e('Description (optional)', 'guest-management-system'); ?></label>
-                                            <textarea id="gms-portal-card-body" name="portal_card_body" rows="4" class="large-text"></textarea>
-                                        </div>
-
-                                        <div class="gms-field gms-field--inline">
-                                            <div>
-                                                <label for="gms-portal-card-icon"><?php esc_html_e('Icon (emoji or short text)', 'guest-management-system'); ?></label>
-                                                <input type="text" id="gms-portal-card-icon" name="portal_card_icon" class="regular-text" maxlength="10">
-                                            </div>
-                                            <div>
-                                                <label for="gms-portal-card-cta-label"><?php esc_html_e('Button label', 'guest-management-system'); ?></label>
-                                                <input type="text" id="gms-portal-card-cta-label" name="portal_card_cta_label" class="regular-text">
-                                            </div>
-                                            <div>
-                                                <label for="gms-portal-card-cta-url"><?php esc_html_e('Button link', 'guest-management-system'); ?></label>
-                                                <input type="url" id="gms-portal-card-cta-url" name="portal_card_cta_url" class="regular-text" placeholder="https://">
-                                            </div>
-                                        </div>
-
-                                        <?php submit_button(__('Publish card to portal', 'guest-management-system'), 'secondary', 'submit', false); ?>
-                                    </form>
-                                </div>
                             </div>
                             <div class="gms-reservation-step__history">
                                 <h3 class="gms-reservation-step__history-title"><?php esc_html_e('Portal link activity', 'guest-management-system'); ?></h3>
@@ -3625,6 +3545,86 @@ class GMS_Admin {
                                 </div>
                             <?php endif; ?>
                         </dl>
+                    </div>
+                    <div class="gms-panel gms-portal-card-admin">
+                        <h2><?php esc_html_e('Guest Portal Promotions', 'guest-management-system'); ?></h2>
+                        <p class="description"><?php esc_html_e('Publish optional cards that appear in the guest portal alongside the door code, handbook, and other stay resources.', 'guest-management-system'); ?></p>
+
+                        <?php if (!empty($portal_card_feedback['messages'])) : ?>
+                            <div class="gms-step-feedback <?php echo esc_attr($this->map_feedback_class($portal_card_feedback['type'])); ?>">
+                                <ul>
+                                    <?php foreach ($portal_card_feedback['messages'] as $message) : ?>
+                                        <li><?php echo esc_html($message); ?></li>
+                                    <?php endforeach; ?>
+                                </ul>
+                            </div>
+                        <?php endif; ?>
+
+                        <?php if (!empty($portal_cards)) : ?>
+                            <ul class="gms-portal-card-admin__list">
+                                <?php foreach ($portal_cards as $card) : ?>
+                                    <li class="gms-portal-card-admin__item">
+                                        <div class="gms-portal-card-admin__item-meta">
+                                            <?php if (!empty($card['icon'])) : ?>
+                                                <span class="gms-portal-card-admin__icon" aria-hidden="true"><?php echo esc_html($card['icon']); ?></span>
+                                            <?php endif; ?>
+                                            <strong><?php echo esc_html($card['title']); ?></strong>
+                                        </div>
+                                        <?php if (!empty($card['body'])) : ?>
+                                            <div class="gms-portal-card-admin__body"><?php echo wp_kses_post(wpautop($card['body'])); ?></div>
+                                        <?php endif; ?>
+                                        <?php if (!empty($card['cta_label']) && !empty($card['cta_url'])) : ?>
+                                            <p class="gms-portal-card-admin__cta">
+                                                <span class="dashicons dashicons-admin-links" aria-hidden="true"></span>
+                                                <a href="<?php echo esc_url($card['cta_url']); ?>" target="_blank" rel="noopener noreferrer"><?php echo esc_html($card['cta_label']); ?></a>
+                                            </p>
+                                        <?php endif; ?>
+                                        <form method="post" class="gms-portal-card-admin__delete">
+                                            <?php wp_nonce_field('gms_delete_portal_card_' . $reservation_id); ?>
+                                            <input type="hidden" name="gms_action" value="delete_portal_card">
+                                            <input type="hidden" name="reservation_id" value="<?php echo esc_attr($reservation_id); ?>">
+                                            <input type="hidden" name="portal_card_id" value="<?php echo esc_attr($card['id']); ?>">
+                                            <button type="submit" class="button button-link-delete"><?php esc_html_e('Remove from portal', 'guest-management-system'); ?></button>
+                                        </form>
+                                    </li>
+                                <?php endforeach; ?>
+                            </ul>
+                        <?php else : ?>
+                            <p class="description"><?php esc_html_e('No promotional cards have been published yet.', 'guest-management-system'); ?></p>
+                        <?php endif; ?>
+
+                        <form method="post" class="gms-portal-card-admin__form">
+                            <?php wp_nonce_field('gms_create_portal_card_' . $reservation_id); ?>
+                            <input type="hidden" name="gms_action" value="create_portal_card">
+                            <input type="hidden" name="reservation_id" value="<?php echo esc_attr($reservation_id); ?>">
+
+                            <div class="gms-field">
+                                <label for="gms-portal-card-title"><?php esc_html_e('Card headline', 'guest-management-system'); ?></label>
+                                <input type="text" id="gms-portal-card-title" name="portal_card_title" class="regular-text" required>
+                            </div>
+
+                            <div class="gms-field">
+                                <label for="gms-portal-card-body"><?php esc_html_e('Description (optional)', 'guest-management-system'); ?></label>
+                                <textarea id="gms-portal-card-body" name="portal_card_body" rows="4" class="large-text"></textarea>
+                            </div>
+
+                            <div class="gms-field gms-field--inline">
+                                <div>
+                                    <label for="gms-portal-card-icon"><?php esc_html_e('Icon (emoji or short text)', 'guest-management-system'); ?></label>
+                                    <input type="text" id="gms-portal-card-icon" name="portal_card_icon" class="regular-text" maxlength="10">
+                                </div>
+                                <div>
+                                    <label for="gms-portal-card-cta-label"><?php esc_html_e('Button label', 'guest-management-system'); ?></label>
+                                    <input type="text" id="gms-portal-card-cta-label" name="portal_card_cta_label" class="regular-text">
+                                </div>
+                                <div>
+                                    <label for="gms-portal-card-cta-url"><?php esc_html_e('Button link', 'guest-management-system'); ?></label>
+                                    <input type="url" id="gms-portal-card-cta-url" name="portal_card_cta_url" class="regular-text" placeholder="https://">
+                                </div>
+                            </div>
+
+                            <?php submit_button(__('Publish card to portal', 'guest-management-system'), 'secondary', 'submit', false); ?>
+                        </form>
                     </div>
                     <div class="gms-panel gms-platform-panel">
                         <h2><?php esc_html_e('Platform Reservation', 'guest-management-system'); ?></h2>
