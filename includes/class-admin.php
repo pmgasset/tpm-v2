@@ -1216,7 +1216,10 @@ class GMS_Admin {
                 'label' => __('Booking.com Messaging Token', 'guest-management-system'),
                 'description' => __('Used for posting messages to Booking.com guest conversations.', 'guest-management-system'),
             ),
-            'gms_bitly_token' => array('label' => __('Bitly Access Token', 'guest-management-system')),
+            'gms_shortener_api_token' => array(
+                'label' => __('Link Shortener API Token', 'guest-management-system'),
+                'description' => __('Bearer token used when requesting short links from the 240jv.link Cloudflare Worker.', 'guest-management-system'),
+            ),
             'gms_webhook_token' => array('label' => __('Webhook Shared Secret', 'guest-management-system')),
             'gms_roku_api_token' => array(
                 'label' => __('Roku API Token', 'guest-management-system'),

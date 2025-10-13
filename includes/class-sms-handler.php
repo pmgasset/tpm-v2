@@ -991,42 +991,52 @@ class GMS_SMS_Handler implements GMS_Messaging_Channel_Interface {
     }
 
     private function shortenUrl($url) {
-        // IMPROVEMENT: Implement a URL shortening service for better SMS messages.
-        // Example using Bitly API (requires a free account and access token).
-        $bitly_token = get_option('gms_bitly_token'); // Add this to your settings page
-        if ($bitly_token) {
-            return $this->shortenWithBitly($url, $bitly_token);
+        $api_token = trim(get_option('gms_shortener_api_token'));
+        if (empty($api_token)) {
+            return $url;
         }
-        
-        return $url;
-    }
-    
-    private function shortenWithBitly($url, $token) {
-        $api_url = 'https://api-ssl.bitly.com/v4/shorten';
-        
-        $response = wp_remote_post($api_url, array(
+
+        $base_url = trim(apply_filters('gms_shortener_base_url', 'https://240jv.link'));
+        $base_url = esc_url_raw($base_url);
+        if (empty($base_url)) {
+            $base_url = 'https://240jv.link';
+        }
+
+        $endpoint = rtrim($base_url, '/') . '/shorten';
+
+        $response = wp_remote_post($endpoint, array(
             'headers' => array(
-                'Authorization' => 'Bearer ' . $token,
-                'Content-Type' => 'application/json'
+                'Authorization' => 'Bearer ' . $api_token,
+                'Content-Type' => 'application/json',
             ),
-            'body' => json_encode(array(
-                'long_url' => $url
-            )),
-            'timeout' => 15
+            'body' => wp_json_encode(array('url' => $url)),
+            'timeout' => 15,
         ));
-        
+
         if (is_wp_error($response)) {
-            return $url; // Return original URL on failure
+            return $url;
         }
-        
+
+        $status_code = wp_remote_retrieve_response_code($response);
+        if ($status_code !== 200) {
+            return $url;
+        }
+
         $body = wp_remote_retrieve_body($response);
         $data = json_decode($body, true);
-        
-        if (isset($data['link'])) {
-            return $data['link'];
+
+        if (!is_array($data)) {
+            return $url;
         }
-        
-        return $url; // Return original URL if response is not as expected
+
+        if (isset($data['short_url']) && is_string($data['short_url'])) {
+            $short_url = esc_url_raw($data['short_url']);
+            if (!empty($short_url)) {
+                return $short_url;
+            }
+        }
+
+        return $url;
     }
 
     public function formatPhoneNumber($phone) {
