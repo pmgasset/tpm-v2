@@ -12,7 +12,7 @@ if (!defined('ABSPATH')) {
 class GMS_Database {
 
     const GUEST_PLACEHOLDER_DOMAIN = 'guest.invalid';
-    const DB_VERSION = '1.3.0';
+    const DB_VERSION = '1.4.0';
     const OPTION_DB_VERSION = 'gms_db_version';
 
     public function __construct() {
@@ -242,6 +242,38 @@ class GMS_Database {
             [
                 'name' => 'channel',
                 'columns' => ['channel'],
+            ],
+            [
+                'name' => 'is_active',
+                'columns' => ['is_active'],
+            ],
+        ]);
+
+        $table_cards = $wpdb->prefix . 'gms_portal_cards';
+        $sql_cards = "CREATE TABLE $table_cards (
+            id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            reservation_id bigint(20) unsigned NOT NULL,
+            title varchar(191) NOT NULL DEFAULT '',
+            body text NULL,
+            cta_label varchar(100) NOT NULL DEFAULT '',
+            cta_url varchar(255) NOT NULL DEFAULT '',
+            icon varchar(20) NOT NULL DEFAULT '',
+            card_type varchar(50) NOT NULL DEFAULT 'custom',
+            display_order int unsigned NOT NULL DEFAULT 0,
+            is_active tinyint(1) NOT NULL DEFAULT 1,
+            created_at datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
+            updated_at datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
+            PRIMARY KEY  (id)
+        ) $charset_collate;";
+        dbDelta($sql_cards);
+        self::maybeAddIndexes($table_cards, [
+            [
+                'name' => 'reservation_id',
+                'columns' => ['reservation_id'],
+            ],
+            [
+                'name' => 'card_type',
+                'columns' => ['card_type'],
             ],
             [
                 'name' => 'is_active',
@@ -1374,6 +1406,114 @@ class GMS_Database {
         );
 
         return $row ? self::formatReservationRow($row) : null;
+    }
+
+    public static function add_portal_card($reservation_id, array $data) {
+        global $wpdb;
+
+        $reservation_id = intval($reservation_id);
+
+        if ($reservation_id <= 0) {
+            return new WP_Error('gms_invalid_reservation', __('A valid reservation is required to create a portal card.', 'guest-management-system'));
+        }
+
+        $title = isset($data['title']) ? trim((string) $data['title']) : '';
+
+        if ($title === '') {
+            return new WP_Error('gms_missing_title', __('Please provide a headline for the portal card.', 'guest-management-system'));
+        }
+
+        $table = $wpdb->prefix . 'gms_portal_cards';
+
+        $display_order = isset($data['display_order'])
+            ? intval($data['display_order'])
+            : self::get_next_portal_card_order($reservation_id);
+
+        $insert_data = array(
+            'reservation_id' => $reservation_id,
+            'title'          => sanitize_text_field($title),
+            'body'           => wp_kses_post($data['body'] ?? ''),
+            'cta_label'      => sanitize_text_field($data['cta_label'] ?? ''),
+            'cta_url'        => esc_url_raw($data['cta_url'] ?? ''),
+            'icon'           => sanitize_text_field($data['icon'] ?? ''),
+            'card_type'      => sanitize_key($data['card_type'] ?? 'custom'),
+            'display_order'  => max(0, $display_order),
+            'is_active'      => 1,
+            'created_at'     => current_time('mysql'),
+            'updated_at'     => current_time('mysql'),
+        );
+
+        $formats = array('%d', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%d', '%s', '%s');
+
+        $inserted = $wpdb->insert($table, $insert_data, $formats);
+
+        if ($inserted === false) {
+            return new WP_Error('gms_portal_card_error', sprintf(
+                __('Unable to create the portal card. Database error: %s', 'guest-management-system'),
+                $wpdb->last_error
+            ));
+        }
+
+        return (int) $wpdb->insert_id;
+    }
+
+    public static function get_portal_cards($reservation_id) {
+        global $wpdb;
+
+        $reservation_id = intval($reservation_id);
+
+        if ($reservation_id <= 0) {
+            return array();
+        }
+
+        $table = $wpdb->prefix . 'gms_portal_cards';
+
+        $results = $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT * FROM {$table} WHERE reservation_id = %d AND is_active = 1 ORDER BY display_order ASC, created_at ASC",
+                $reservation_id
+            ),
+            ARRAY_A
+        );
+
+        if (empty($results)) {
+            return array();
+        }
+
+        return array_map(array(__CLASS__, 'formatPortalCardRow'), $results);
+    }
+
+    public static function delete_portal_card($card_id, $reservation_id) {
+        global $wpdb;
+
+        $card_id = intval($card_id);
+        $reservation_id = intval($reservation_id);
+
+        if ($card_id <= 0 || $reservation_id <= 0) {
+            return false;
+        }
+
+        $table = $wpdb->prefix . 'gms_portal_cards';
+
+        $updated = $wpdb->update(
+            $table,
+            array(
+                'is_active'  => 0,
+                'updated_at' => current_time('mysql'),
+            ),
+            array(
+                'id'             => $card_id,
+                'reservation_id' => $reservation_id,
+            ),
+            array('%d', '%s'),
+            array('%d', '%d')
+        );
+
+        if ($updated === false) {
+            return false;
+        }
+
+        return $updated > 0;
     }
 
     public static function updateReservation($reservation_id, $data) {
@@ -3419,6 +3559,40 @@ class GMS_Database {
         if (isset($row['door_code'])) {
             $row['door_code'] = trim($row['door_code']);
         }
+
+        return $row;
+    }
+
+    private static function get_next_portal_card_order($reservation_id) {
+        global $wpdb;
+
+        $table = $wpdb->prefix . 'gms_portal_cards';
+
+        $max = $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT MAX(display_order) FROM {$table} WHERE reservation_id = %d",
+                intval($reservation_id)
+            )
+        );
+
+        return intval($max) + 1;
+    }
+
+    private static function formatPortalCardRow($row) {
+        if (!$row) {
+            return null;
+        }
+
+        $row['id'] = isset($row['id']) ? intval($row['id']) : 0;
+        $row['reservation_id'] = isset($row['reservation_id']) ? intval($row['reservation_id']) : 0;
+        $row['title'] = isset($row['title']) ? sanitize_text_field($row['title']) : '';
+        $row['body'] = isset($row['body']) ? wp_kses_post($row['body']) : '';
+        $row['cta_label'] = isset($row['cta_label']) ? sanitize_text_field($row['cta_label']) : '';
+        $row['cta_url'] = isset($row['cta_url']) ? esc_url_raw($row['cta_url']) : '';
+        $row['icon'] = isset($row['icon']) ? sanitize_text_field($row['icon']) : '';
+        $row['card_type'] = isset($row['card_type']) ? sanitize_key($row['card_type']) : 'custom';
+        $row['display_order'] = isset($row['display_order']) ? intval($row['display_order']) : 0;
+        $row['is_active'] = isset($row['is_active']) ? intval($row['is_active']) : 0;
 
         return $row;
     }
