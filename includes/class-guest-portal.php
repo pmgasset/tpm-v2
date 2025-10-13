@@ -31,19 +31,14 @@ class GMS_Guest_Portal {
         $agreement = GMS_Database::getAgreementByReservation($reservation['id']);
         $verification = GMS_Database::getVerificationByReservation($reservation['id']);
         
-        $is_complete = $agreement && $verification && 
-                      $agreement['status'] === 'signed' && 
+        $is_complete = $agreement && $verification &&
+                      $agreement['status'] === 'signed' &&
                       $verification['verification_status'] === 'verified';
-        
-        if ($is_complete) {
-            self::displayCompletionPage($reservation, $agreement, $verification);
-            return;
-        }
-        
-        self::displayPortalInterface($reservation, $agreement, $verification);
+
+        self::displayPortalInterface($reservation, $agreement, $verification, $is_complete);
     }
-    
-    private static function displayPortalInterface($reservation, $agreement, $verification) {
+
+    private static function displayPortalInterface($reservation, $agreement, $verification, $is_complete = false) {
         $company_name = get_option('gms_company_name', get_option('blogname'));
         $company_logo = get_option('gms_company_logo');
         $primary_color = get_option('gms_portal_primary_color', '#0073aa');
@@ -207,6 +202,37 @@ class GMS_Guest_Portal {
                     margin: -5rem auto 0;
                     padding: 0 1.75rem 4rem;
                     position: relative;
+                }
+
+                .portal-complete-banner {
+                    display: flex;
+                    align-items: flex-start;
+                    gap: 1.25rem;
+                    background: rgba(34, 197, 94, 0.16);
+                    border: 1px solid rgba(34, 197, 94, 0.35);
+                    padding: 1.25rem 1.5rem;
+                    border-radius: 18px;
+                    color: #166534;
+                    margin-bottom: 2rem;
+                    box-shadow: 0 18px 35px rgba(15, 23, 42, 0.08);
+                }
+
+                .portal-complete-banner h3 {
+                    font-size: 1.25rem;
+                    margin-bottom: 0.35rem;
+                }
+
+                .portal-complete-banner p {
+                    color: rgba(22, 101, 52, 0.85);
+                    font-weight: 500;
+                }
+
+                .portal-complete-icon {
+                    font-size: 2rem;
+                    line-height: 1;
+                    background: rgba(34, 197, 94, 0.24);
+                    padding: 0.9rem;
+                    border-radius: 16px;
                 }
 
                 .portal-hero {
@@ -707,6 +733,11 @@ class GMS_Guest_Portal {
                         padding: 0 1.25rem 3rem;
                     }
 
+                    .portal-complete-banner {
+                        flex-direction: column;
+                        align-items: flex-start;
+                    }
+
                     .portal-hero {
                         padding: 2rem 1.75rem;
                     }
@@ -754,6 +785,14 @@ class GMS_Guest_Portal {
                     </section>
 
                     <div class="portal-cards">
+                        <div class="portal-complete-banner <?php echo $is_complete ? '' : 'hidden'; ?>" id="portal-complete-banner">
+                            <div class="portal-complete-icon" aria-hidden="true">🎉</div>
+                            <div>
+                                <h3><?php esc_html_e('Check-in steps completed', 'gms'); ?></h3>
+                                <p><?php esc_html_e('You can return here anytime for your agreement, door code, and stay details.', 'gms'); ?></p>
+                            </div>
+                        </div>
+
                         <section class="portal-card portal-card--door">
                             <div class="portal-card__header">
                                 <span class="portal-card__icon" aria-hidden="true">🗝️</span>
@@ -1027,6 +1066,8 @@ class GMS_Guest_Portal {
                 let signaturePad = null;
                 let stripe = null;
                 let contactInfoComplete = <?php echo $contact_info_complete ? 'true' : 'false'; ?>;
+                let portalComplete = <?php echo $is_complete ? 'true' : 'false'; ?>;
+                let completionStatusReported = portalComplete;
                 const reservationId = <?php echo intval($reservation['id']); ?>;
                 const portalToken = '<?php echo esc_js($reservation['portal_token']); ?>';
                 const ajaxUrl = '<?php echo esc_url(admin_url('admin-ajax.php')); ?>';
@@ -1544,11 +1585,6 @@ class GMS_Guest_Portal {
                                 document.getElementById('verification-checklist').classList.add('completed');
                                 document.getElementById('verification-checklist').querySelector('.checklist-icon').textContent = '✓';
                                 updateProgress();
-                                
-                                // Show completion message after a delay
-                                setTimeout(() => {
-                                    showCompletionMessage();
-                                }, 2000);
                             } else if (status === 'requires_input') {
                                 messageDiv.innerHTML = '<div class="error-message">❌ Additional information required. Please try again.</div>';
                                 document.getElementById('verification-content').innerHTML = 
@@ -1571,41 +1607,53 @@ class GMS_Guest_Portal {
                     const completedItems = document.querySelectorAll('.checklist-item.completed').length;
                     const totalItems = document.querySelectorAll('.checklist-item').length;
                     const percentage = (completedItems / totalItems) * 100;
-                    
+
                     document.getElementById('progress-fill').style.width = percentage + '%';
+                    toggleCompletionState(completedItems === totalItems && totalItems > 0);
                 }
-                
-                function showCompletionMessage() {
-                    const portalContent = document.querySelector('.portal-content');
-                    portalContent.innerHTML = `
-                        <div style="text-align: center; padding: 3rem 1rem;">
-                            <div style="font-size: 4rem; margin-bottom: 1rem;">🎉</div>
-                            <h2 style="color: <?php echo esc_attr($primary_color); ?>; margin-bottom: 1rem;">Check-in Complete!</h2>
-                            <p style="font-size: 1.2rem; margin-bottom: 2rem;">Thank you for completing your check-in process. You're all set for your stay!</p>
-                            
-                            <div style="background: #f8f9fa; padding: 2rem; border-radius: 8px; margin: 2rem 0;">
-                                <h3>Next Steps:</h3>
-                                <ul style="text-align: left; max-width: 400px; margin: 0 auto;">
-                                    <li style="margin: 1rem 0;">📧 Check your email for detailed check-in instructions</li>
-                                    <li style="margin: 1rem 0;">🗝️ Property access information will be sent 24 hours before check-in</li>
-                                    <li style="margin: 1rem 0;">📱 Save our contact information for any questions</li>
-                                </ul>
-                            </div>
-                            
-                            <p style="color: #666;">We look forward to hosting you!</p>
-                        </div>
-                    `;
-                    
-                    // Update reservation status
+
+                function toggleCompletionState(isComplete) {
+                    const banner = document.getElementById('portal-complete-banner');
+
+                    if (isComplete) {
+                        if (banner) {
+                            banner.classList.remove('hidden');
+                        }
+
+                        if (!portalComplete) {
+                            portalComplete = true;
+                            markReservationCompleted();
+                        }
+                    } else {
+                        if (banner) {
+                            banner.classList.add('hidden');
+                        }
+                        portalComplete = false;
+                    }
+                }
+
+                function markReservationCompleted() {
+                    if (completionStatusReported) {
+                        return;
+                    }
+
+                    completionStatusReported = true;
+
+                    if (!reservationId || !ajaxUrl || !guestNonce) {
+                        return;
+                    }
+
                     const formData = new FormData();
                     formData.append('action', 'gms_update_reservation_status');
                     formData.append('reservation_id', reservationId);
                     formData.append('status', 'completed');
                     formData.append('nonce', guestNonce);
-                    
+
                     fetch(ajaxUrl, {
                         method: 'POST',
                         body: formData
+                    }).catch(() => {
+                        completionStatusReported = false;
                     });
                 }
             </script>
@@ -1657,186 +1705,6 @@ class GMS_Guest_Portal {
         return str_replace(array_keys($replacements), array_values($replacements), $agreement_template);
     }
 
-    private static function displayCompletionPage($reservation, $agreement, $verification) {
-        $company_name = get_option('gms_company_name', get_option('blogname'));
-        $company_logo = get_option('gms_company_logo');
-        $primary_color = get_option('gms_portal_primary_color', '#0073aa');
-
-        $door_code = '';
-        if (!empty($reservation['door_code'])) {
-            $door_code = GMS_Database::sanitizeDoorCode($reservation['door_code']);
-        }
-
-        ?>
-        <!DOCTYPE html>
-        <html lang="en">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Check-in Complete - <?php echo esc_html($company_name); ?></title>
-            <style>
-                * {
-                    margin: 0;
-                    padding: 0;
-                    box-sizing: border-box;
-                }
-                
-                body {
-                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-                    line-height: 1.6;
-                    color: #333;
-                    background: #f8f9fa;
-                }
-                
-                .portal-container {
-                    max-width: 800px;
-                    margin: 0 auto;
-                    background: #fff;
-                    min-height: 100vh;
-                    text-align: center;
-                    padding: 2rem 1rem;
-                }
-                
-                .company-logo {
-                    max-width: 200px;
-                    margin-bottom: 2rem;
-                }
-                
-                .completion-icon {
-                    font-size: 6rem;
-                    margin-bottom: 2rem;
-                }
-                
-                .completion-title {
-                    font-size: 2.5rem;
-                    color: <?php echo esc_attr($primary_color); ?>;
-                    margin-bottom: 1rem;
-                }
-                
-                .completion-message {
-                    font-size: 1.2rem;
-                    margin-bottom: 3rem;
-                    color: #666;
-                }
-                
-                .details-grid {
-                    display: grid;
-                    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-                    gap: 2rem;
-                    margin: 3rem 0;
-                    text-align: left;
-                }
-                
-                .detail-card {
-                    background: #f8f9fa;
-                    padding: 1.5rem;
-                    border-radius: 8px;
-                    border-left: 4px solid <?php echo esc_attr($primary_color); ?>;
-                }
-                
-                .detail-title {
-                    font-weight: 600;
-                    margin-bottom: 0.5rem;
-                    color: <?php echo esc_attr($primary_color); ?>;
-                }
-                
-                .contact-info {
-                    background: <?php echo esc_attr($primary_color); ?>;
-                    color: #fff;
-                    padding: 2rem;
-                    border-radius: 8px;
-                    margin: 2rem 0;
-                }
-                
-                .btn-download {
-                    display: inline-block;
-                    padding: 1rem 2rem;
-                    background: #28a745;
-                    color: white;
-                    text-decoration: none;
-                    border-radius: 4px;
-                    font-weight: 600;
-                    margin-top: 1rem;
-                }
-            </style>
-        </head>
-        <body>
-            <div class="portal-container">
-                <?php if ($company_logo): ?>
-                    <img src="<?php echo esc_url($company_logo); ?>" alt="<?php echo esc_attr($company_name); ?>" class="company-logo">
-                <?php endif; ?>
-                
-                <div class="completion-icon">🎉</div>
-                
-                <h1 class="completion-title">Check-in Complete!</h1>
-                
-                <p class="completion-message">
-                    Thank you, <?php echo esc_html($reservation['guest_name']); ?>! 
-                    Your check-in process is complete and you're all set for your stay.
-                </p>
-                
-                <?php if ($agreement && !empty($agreement['pdf_url'])): ?>
-                <div style="margin: 2rem 0;">
-                    <a href="<?php echo esc_url($agreement['pdf_url']); ?>" 
-                       class="btn-download"
-                       download="<?php echo esc_attr($reservation['booking_reference']); ?>.pdf">
-                        📄 Download Your Signed Agreement
-                    </a>
-                </div>
-                <?php endif; ?>
-                
-                <div class="details-grid">
-                    <div class="detail-card">
-                        <div class="detail-title">Property</div>
-                        <div><?php echo esc_html($reservation['property_name']); ?></div>
-                    </div>
-                    
-                    <div class="detail-card">
-                        <div class="detail-title">Check-in Date</div>
-                        <div><?php echo esc_html(date('l, F j, Y', strtotime($reservation['checkin_date']))); ?></div>
-                        <div><?php echo esc_html(date('g:i A', strtotime($reservation['checkin_date']))); ?></div>
-                    </div>
-                    
-                    <div class="detail-card">
-                        <div class="detail-title">Check-out Date</div>
-                        <div><?php echo esc_html(date('l, F j, Y', strtotime($reservation['checkout_date']))); ?></div>
-                        <div><?php echo esc_html(date('g:i A', strtotime($reservation['checkout_date']))); ?></div>
-                    </div>
-                    
-                    <div class="detail-card">
-                        <div class="detail-title">Agreement Signed</div>
-                        <div><?php echo esc_html(date('M j, Y g:i A', strtotime($agreement['signed_at']))); ?></div>
-                    </div>
-                    
-                    <div class="detail-card">
-                        <div class="detail-title">Identity Verified</div>
-                        <div><?php echo esc_html(date('M j, Y g:i A', strtotime($verification['verified_at']))); ?></div>
-                    </div>
-                    
-                    <?php if ($door_code !== ''): ?>
-                    <div class="detail-card">
-                        <div class="detail-title">Door Code</div>
-                        <div><?php echo esc_html($door_code); ?></div>
-                    </div>
-                    <?php endif; ?>
-
-                    <div class="detail-card">
-                        <div class="detail-title">Booking Reference</div>
-                        <div><?php echo esc_html($reservation['booking_reference']); ?></div>
-                    </div>
-                </div>
-                
-                <div class="contact-info">
-                    <h3>Need Help?</h3>
-                    <p>If you have any questions or need assistance, please contact us.</p>
-                    <p>We look forward to hosting you at <?php echo esc_html($reservation['property_name']); ?>!</p>
-                </div>
-            </div>
-        </body>
-        </html>
-        <?php
-    }
-    
     private static function displayError($message) {
         $company_name = get_option('gms_company_name', get_option('blogname'));
         ?>
