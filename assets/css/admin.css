@@ -1017,15 +1017,13 @@
 
 .gms-reservation-detail__grid {
     display: grid;
-    grid-template-columns: minmax(0, 1.8fr) minmax(320px, 1fr) minmax(260px, 0.9fr);
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
     gap: 28px;
-    align-items: flex-start;
+    align-items: stretch;
 }
 
-.gms-reservation-detail__timeline {
-    display: flex;
-    flex-direction: column;
-    gap: 28px;
+.gms-reservation-detail__grid > * {
+    min-width: 0;
 }
 
 .gms-reservation-step {
@@ -1037,6 +1035,9 @@
     padding: 26px;
     box-shadow: var(--gms-admin-shadow);
     overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
 }
 
 .gms-reservation-step--complete {
@@ -1069,12 +1070,17 @@
     box-shadow: inset 0 0 0 1px rgba(56, 189, 248, 0.35);
 }
 
+.gms-reservation-detail__grid > .gms-reservation-step,
+.gms-reservation-detail__grid > .gms-panel {
+    height: 100%;
+}
+
 .gms-reservation-step__header {
     display: flex;
     justify-content: space-between;
     gap: 16px;
     flex-wrap: wrap;
-    margin-bottom: 18px;
+    margin-bottom: 0;
 }
 
 .gms-reservation-step__title {
@@ -1162,6 +1168,7 @@
     grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
     gap: 24px;
     align-items: flex-start;
+    flex: 1;
 }
 
 .gms-reservation-step__actions {
@@ -1390,12 +1397,6 @@
     font-weight: 500;
 }
 
-.gms-reservation-detail__activity {
-    display: flex;
-    flex-direction: column;
-    gap: 24px;
-}
-
 .gms-activity-panel__header {
     display: flex;
     align-items: center;
@@ -1557,13 +1558,6 @@
     color: #b32d2e;
 }
 
-.gms-reservation-detail__form,
-.gms-reservation-detail__sidebar {
-    display: flex;
-    flex-direction: column;
-    gap: 24px;
-}
-
 .gms-reservations-index__intro {
     margin: 8px 0 24px;
     font-size: 14px;
@@ -1639,17 +1633,6 @@
     width: 100%;
 }
 
-@media screen and (max-width: 1280px) {
-    .gms-reservation-detail__grid {
-        grid-template-columns: minmax(0, 1.5fr) minmax(320px, 1fr);
-    }
-
-    .gms-reservation-detail__activity {
-        grid-column: 1 / -1;
-        position: static;
-    }
-}
-
 @media screen and (max-width: 960px) {
     .gms-reservation-detail__grid {
         grid-template-columns: 1fr;
@@ -1681,20 +1664,6 @@
 
     .gms-reservation-toolbar__step {
         width: 100%;
-    }
-}
-
-@media (min-width: 961px) {
-    .gms-reservation-detail__sidebar {
-        position: sticky;
-        top: 96px;
-    }
-}
-
-@media (min-width: 1281px) {
-    .gms-reservation-detail__activity {
-        position: sticky;
-        top: 96px;
     }
 }
 
