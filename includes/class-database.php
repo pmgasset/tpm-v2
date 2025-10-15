@@ -12,7 +12,7 @@ if (!defined('ABSPATH')) {
 class GMS_Database {
 
     const GUEST_PLACEHOLDER_DOMAIN = 'guest.invalid';
-    const DB_VERSION = '1.4.0';
+    const DB_VERSION = '1.4.1';
     const OPTION_DB_VERSION = 'gms_db_version';
 
     public function __construct() {
@@ -293,6 +293,7 @@ class GMS_Database {
 
         self::createTables();
         self::migrateCommunicationsTable($installed);
+        self::repairDuplicatePortalTokens($installed);
         self::maybeSeedMessageTemplates();
 
         update_option(self::OPTION_DB_VERSION, self::DB_VERSION);
@@ -326,6 +327,57 @@ class GMS_Database {
 
         self::backfillCommunicationNumbers($table_name);
         self::backfillCommunicationThreads($table_name);
+    }
+
+    private static function repairDuplicatePortalTokens($previous_version) {
+        global $wpdb;
+
+        if (!empty($previous_version) && version_compare($previous_version, '1.4.1', '>=')) {
+            return;
+        }
+
+        $table_name = $wpdb->prefix . 'gms_reservations';
+
+        if (!self::tableExists($table_name)) {
+            return;
+        }
+
+        $batch_size = 100;
+
+        do {
+            $duplicate_tokens = $wpdb->get_col(
+                $wpdb->prepare(
+                    "SELECT portal_token FROM {$table_name} WHERE portal_token <> '' GROUP BY portal_token HAVING COUNT(*) > 1 LIMIT %d",
+                    max(1, (int) $batch_size)
+                )
+            );
+
+            if (empty($duplicate_tokens)) {
+                break;
+            }
+
+            foreach ($duplicate_tokens as $token) {
+                $token = sanitize_text_field((string) $token);
+
+                if ($token === '') {
+                    continue;
+                }
+
+                $rows = $wpdb->get_results(
+                    $wpdb->prepare(
+                        "SELECT id, portal_token FROM {$table_name} WHERE portal_token = %s ORDER BY updated_at DESC, id DESC",
+                        $token
+                    ),
+                    ARRAY_A
+                );
+
+                if (count($rows) <= 1) {
+                    continue;
+                }
+
+                self::resolvePortalTokenConflicts($rows);
+            }
+        } while (!empty($duplicate_tokens));
     }
 
     private static function maybeAddIndexes($table, array $indexes) {
