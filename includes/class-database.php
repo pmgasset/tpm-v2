@@ -12,7 +12,7 @@ if (!defined('ABSPATH')) {
 class GMS_Database {
 
     const GUEST_PLACEHOLDER_DOMAIN = 'guest.invalid';
-    const DB_VERSION = '1.4.1';
+    const DB_VERSION = '1.4.2';
     const OPTION_DB_VERSION = 'gms_db_version';
 
     public function __construct() {
@@ -332,7 +332,7 @@ class GMS_Database {
     private static function repairDuplicatePortalTokens($previous_version) {
         global $wpdb;
 
-        if (!empty($previous_version) && version_compare($previous_version, '1.4.1', '>=')) {
+        if (!empty($previous_version) && version_compare($previous_version, '1.4.2', '>=')) {
             return;
         }
 
@@ -3643,25 +3643,27 @@ class GMS_Database {
     }
 
     private static function sortPortalTokenRows(array $rows) {
+        // Prioritize the newest reservation data so the most recent guest retains the
+        // original portal token that may have already been delivered in notifications.
         usort($rows, function ($a, $b) {
             $a_created = self::normalizePortalTokenTimestamp($a['created_at'] ?? null);
             $b_created = self::normalizePortalTokenTimestamp($b['created_at'] ?? null);
 
             if ($a_created !== $b_created) {
-                return $a_created <=> $b_created;
+                return $b_created <=> $a_created;
             }
 
             $a_updated = self::normalizePortalTokenTimestamp($a['updated_at'] ?? null);
             $b_updated = self::normalizePortalTokenTimestamp($b['updated_at'] ?? null);
 
             if ($a_updated !== $b_updated) {
-                return $a_updated <=> $b_updated;
+                return $b_updated <=> $a_updated;
             }
 
             $a_id = isset($a['id']) ? intval($a['id']) : 0;
             $b_id = isset($b['id']) ? intval($b['id']) : 0;
 
-            return $a_id <=> $b_id;
+            return $b_id <=> $a_id;
         });
 
         return $rows;
