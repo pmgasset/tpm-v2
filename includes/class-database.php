@@ -970,9 +970,30 @@ class GMS_Database {
 
     public static function getReservationByToken($token) {
         global $wpdb;
+
+        $sanitized_token = sanitize_text_field($token);
+
+        if ($sanitized_token === '') {
+            return null;
+        }
+
         $table_name = $wpdb->prefix . 'gms_reservations';
-        $row = $wpdb->get_row($wpdb->prepare("SELECT * FROM $table_name WHERE portal_token = %s", sanitize_text_field($token)), ARRAY_A);
-        return self::formatReservationRow($row);
+        $sql = $wpdb->prepare(
+            "SELECT * FROM $table_name WHERE portal_token = %s ORDER BY updated_at DESC, id DESC",
+            $sanitized_token
+        );
+
+        $rows = $wpdb->get_results($sql, ARRAY_A);
+
+        if (empty($rows)) {
+            return null;
+        }
+
+        if (count($rows) > 1) {
+            self::resolvePortalTokenConflicts($rows);
+        }
+
+        return self::formatReservationRow($rows[0]);
     }
 
     public static function ensure_guest_user($guest_id, $guest_profile = array(), $force_create = false) {
@@ -1252,10 +1273,7 @@ class GMS_Database {
 
         $data = wp_parse_args($data, $defaults);
 
-        $portal_token = $data['portal_token'];
-        if (empty($portal_token)) {
-            $portal_token = self::generatePortalToken();
-        }
+        $portal_token = self::ensureUniquePortalToken($data['portal_token']);
 
         $guest_phone = $data['guest_phone'];
         if (function_exists('gms_sanitize_phone')) {
@@ -1559,6 +1577,9 @@ class GMS_Database {
                     break;
                 case 'webhook_data':
                     $update_data['webhook_payload'] = self::maybeEncodeJson($data[$field]);
+                    break;
+                case 'portal_token':
+                    $update_data['portal_token'] = self::ensureUniquePortalToken($data[$field], $reservation_id);
                     break;
                 default:
                     $update_data[$field] = sanitize_text_field($data[$field]);
@@ -3526,6 +3547,86 @@ class GMS_Database {
 
     private static function generatePortalToken() {
         return strtolower(wp_generate_password(32, false, false));
+    }
+
+    private static function resolvePortalTokenConflicts(array $rows) {
+        if (count($rows) <= 1) {
+            return;
+        }
+
+        $primary_id = isset($rows[0]['id']) ? intval($rows[0]['id']) : 0;
+
+        foreach ($rows as $index => $row) {
+            if ($index === 0) {
+                continue;
+            }
+
+            $duplicate_id = isset($row['id']) ? intval($row['id']) : 0;
+
+            if ($duplicate_id <= 0 || $duplicate_id === $primary_id) {
+                continue;
+            }
+
+            $new_token = self::ensureUniquePortalToken('', $duplicate_id);
+
+            if ($new_token === '') {
+                continue;
+            }
+
+            if (!isset($row['portal_token']) || $row['portal_token'] === $new_token) {
+                continue;
+            }
+
+            self::updateReservation($duplicate_id, array('portal_token' => $new_token));
+        }
+    }
+
+    private static function ensureUniquePortalToken($token, $exclude_id = 0) {
+        $token = sanitize_text_field((string) $token);
+        $token = trim($token);
+
+        $attempts = 0;
+        $max_attempts = 10;
+
+        if ($token === '') {
+            $token = self::generatePortalToken();
+        }
+
+        while ($attempts < $max_attempts && self::portalTokenExists($token, $exclude_id)) {
+            $token = self::generatePortalToken();
+            $attempts++;
+        }
+
+        return $token;
+    }
+
+    private static function portalTokenExists($token, $exclude_id = 0) {
+        global $wpdb;
+
+        $token = sanitize_text_field((string) $token);
+
+        if ($token === '') {
+            return false;
+        }
+
+        $table_name = $wpdb->prefix . 'gms_reservations';
+
+        if ($exclude_id > 0) {
+            $sql = $wpdb->prepare(
+                "SELECT id FROM $table_name WHERE portal_token = %s AND id != %d LIMIT 1",
+                $token,
+                intval($exclude_id)
+            );
+        } else {
+            $sql = $wpdb->prepare(
+                "SELECT id FROM $table_name WHERE portal_token = %s LIMIT 1",
+                $token
+            );
+        }
+
+        $result = $wpdb->get_var($sql);
+
+        return !empty($result);
     }
 
     private static function formatReservationRow($row) {
