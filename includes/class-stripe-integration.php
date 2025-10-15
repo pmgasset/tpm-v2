@@ -7,24 +7,190 @@
  */
 
 class GMS_Stripe_Integration {
-    
+
     private $api_url = 'https://api.stripe.com/v1';
     private $secret_key;
     private $files_api_url = 'https://files.stripe.com/v1';
-    
+    private static $instance = null;
+    private static $bootstrapped = false;
+
     public function __construct() {
         $this->secret_key = get_option('gms_stripe_sk');
-        
-        // Add webhook handler for Stripe events
-        add_action('rest_api_init', array($this, 'registerWebhookEndpoint'));
+
+        if (!self::$bootstrapped) {
+            // Add webhook handler for Stripe events
+            add_action('rest_api_init', array($this, 'registerWebhookEndpoint'));
+            self::$bootstrapped = true;
+        }
+
+        self::$instance = $this;
     }
-    
+
+    public static function instance() {
+        if (self::$instance instanceof self) {
+            return self::$instance;
+        }
+
+        return new self();
+    }
+
     public function registerWebhookEndpoint() {
         register_rest_route('gms/v1', '/stripe-webhook', array(
             'methods' => 'POST',
             'callback' => array($this, 'handleStripeWebhook'),
             'permission_callback' => '__return_true'
         ));
+    }
+
+    public function generateFileLink($file_id, $expires_in = 600) {
+        $file_id = trim((string) $file_id);
+
+        if ($file_id === '') {
+            return new WP_Error('gms_stripe_missing_file', __('Unable to locate the requested Stripe file.', 'guest-management-system'));
+        }
+
+        if (empty($this->secret_key)) {
+            return new WP_Error('gms_stripe_missing_key', __('Stripe secret key is not configured.', 'guest-management-system'));
+        }
+
+        $expires_in = absint($expires_in);
+        if ($expires_in <= 0) {
+            $expires_in = 600;
+        }
+
+        $expiration = time() + min($expires_in, DAY_IN_SECONDS);
+
+        $endpoint = $this->files_api_url . '/file_links';
+
+        $body_params = array(
+            'file' => $file_id,
+            'expires_at' => $expiration,
+        );
+
+        $encoded_body = http_build_query($body_params, '', '&', PHP_QUERY_RFC3986);
+
+        $response = wp_remote_post($endpoint, array(
+            'headers' => array(
+                'Authorization' => 'Bearer ' . $this->secret_key,
+                'Content-Type' => 'application/x-www-form-urlencoded',
+            ),
+            'body' => $encoded_body,
+            'timeout' => 30,
+        ));
+
+        if (is_wp_error($response)) {
+            error_log('GMS Stripe Error: ' . $response->get_error_message());
+            return new WP_Error('gms_stripe_file_link_failed', __('Unable to contact Stripe to generate a secure download link.', 'guest-management-system'));
+        }
+
+        $body = wp_remote_retrieve_body($response);
+        $result = json_decode($body, true);
+
+        if (json_last_error() !== JSON_ERROR_NONE || !is_array($result)) {
+            error_log('GMS Stripe Error: Unable to decode Stripe file link response.');
+            return new WP_Error('gms_stripe_file_link_failed', __('Unable to generate a secure download link for this Stripe file.', 'guest-management-system'));
+        }
+
+        if (isset($result['error'])) {
+            $message = isset($result['error']['message']) ? $result['error']['message'] : __('Unknown Stripe API error.', 'guest-management-system');
+            error_log('GMS Stripe API Error: ' . $message);
+
+            return new WP_Error('gms_stripe_file_link_failed', __('Stripe did not accept the request for a secure download link.', 'guest-management-system'));
+        }
+
+        $url = isset($result['url']) ? esc_url_raw($result['url']) : '';
+
+        if ($url === '') {
+            error_log('GMS Stripe Error: Stripe file link response did not include a URL.');
+            return new WP_Error('gms_stripe_file_link_missing', __('Stripe did not return a secure download link for this file.', 'guest-management-system'));
+        }
+
+        return $url;
+    }
+
+    public function getFileStreamData($file_id) {
+        $file_id = trim((string) $file_id);
+
+        if ($file_id === '') {
+            return new WP_Error('gms_stripe_missing_file', __('Unable to locate the requested Stripe file.', 'guest-management-system'));
+        }
+
+        if (empty($this->secret_key)) {
+            return new WP_Error('gms_stripe_missing_key', __('Stripe secret key is not configured.', 'guest-management-system'));
+        }
+
+        $file = $this->retrieveStripeFile($file_id);
+
+        if (!is_array($file) || empty($file['url'])) {
+            error_log('GMS Stripe Error: Unable to retrieve metadata for Stripe file ' . $file_id . '.');
+
+            return new WP_Error(
+                'gms_stripe_file_metadata_missing',
+                __('Unable to load details for the requested Stripe file.', 'guest-management-system')
+            );
+        }
+
+        $contents = $this->downloadStripeFile($file);
+
+        if (!is_string($contents)) {
+            return new WP_Error(
+                'gms_stripe_file_download_failed',
+                __('Stripe declined to provide the requested verification file. Please try again or contact support.', 'guest-management-system')
+            );
+        }
+
+        $filename = '';
+        if (!empty($file['filename'])) {
+            $filename = sanitize_file_name($file['filename']);
+        }
+
+        if ($filename === '') {
+            $filename = sanitize_file_name($file_id . '.bin');
+        }
+
+        $mime_type = '';
+        if (!empty($file['mime_type'])) {
+            $mime_type = sanitize_mime_type($file['mime_type']);
+        }
+
+        if ($mime_type === '') {
+            $mime_type = 'application/octet-stream';
+        }
+
+        return array(
+            'contents' => $contents,
+            'filename' => $filename,
+            'mime_type' => $mime_type,
+        );
+    }
+
+    public function refreshVerificationForSession($session_id) {
+        $session_id = trim((string) $session_id);
+
+        if ($session_id === '') {
+            return new WP_Error('gms_stripe_missing_session', __('Unable to refresh verification without a Stripe session ID.', 'guest-management-system'));
+        }
+
+        if (empty($this->secret_key)) {
+            return new WP_Error('gms_stripe_missing_key', __('Stripe secret key is not configured.', 'guest-management-system'));
+        }
+
+        $session = $this->retrieveVerificationSessionById($session_id);
+
+        if (!is_array($session) || empty($session['id'])) {
+            return new WP_Error('gms_stripe_session_not_found', __('Stripe verification session could not be located.', 'guest-management-system'));
+        }
+
+        $reservation_id = $this->syncVerificationSession($session, false);
+
+        if (empty($reservation_id)) {
+            return new WP_Error('gms_stripe_reservation_missing', __('The verification session is not linked to a reservation in this system.', 'guest-management-system'));
+        }
+
+        return array(
+            'reservation_id' => $reservation_id,
+            'session' => $session,
+        );
     }
     
     public function createVerificationSession($reservation) {
@@ -543,7 +709,19 @@ class GMS_Stripe_Integration {
             update_user_meta($user_id, $meta_key, $meta_value);
         }
 
-        update_user_meta($user_id, 'gms_verification_report', $report);
+        if (!empty($report)) {
+            $encoded_report = wp_json_encode($report);
+            if ($encoded_report !== false) {
+                update_user_meta($user_id, 'gms_verification_report', wp_slash($encoded_report));
+            } else {
+                error_log('GMS Stripe Error: Unable to encode verification report for storage.');
+            }
+        }
+
+        $existing_verification = GMS_Database::getVerificationByReservation($reservation_id);
+        if (!is_array($existing_verification)) {
+            $existing_verification = array();
+        }
 
         $document_front = $this->extractStripeFileId($document['front'] ?? null);
         $document_back = $this->extractStripeFileId($document['back'] ?? null);
@@ -557,8 +735,42 @@ class GMS_Stripe_Integration {
             update_user_meta($user_id, 'gms_verification_document_back_file_id', sanitize_text_field($document_back));
         }
 
+        $verification_updates = array();
+        $guest_record_id = intval($reservation['guest_record_id'] ?? 0);
+        if ($guest_record_id > 0) {
+            $verification_updates['guest_record_id'] = $guest_record_id;
+        }
+
+        if ($document_front !== '') {
+            $asset = $this->syncVerificationAsset($document_front, 'document_front', $existing_verification);
+            if ($asset) {
+                $verification_updates['document_front_file_id'] = $asset['file_id'];
+                $verification_updates['document_front_path'] = $asset['path'];
+                $verification_updates['document_front_mime'] = $asset['mime_type'];
+            }
+        }
+
+        if ($document_back !== '') {
+            $asset = $this->syncVerificationAsset($document_back, 'document_back', $existing_verification);
+            if ($asset) {
+                $verification_updates['document_back_file_id'] = $asset['file_id'];
+                $verification_updates['document_back_path'] = $asset['path'];
+                $verification_updates['document_back_mime'] = $asset['mime_type'];
+            }
+        }
+
         if ($selfie_file_id !== '') {
-            $this->maybeDownloadAndAssignSelfie($user_id, $selfie_file_id);
+            update_user_meta($user_id, 'gms_verification_selfie_file_id', sanitize_text_field($selfie_file_id));
+            $asset = $this->syncVerificationAsset($selfie_file_id, 'selfie', $existing_verification, $user_id);
+            if ($asset) {
+                $verification_updates['selfie_file_id'] = $asset['file_id'];
+                $verification_updates['selfie_path'] = $asset['path'];
+                $verification_updates['selfie_mime'] = $asset['mime_type'];
+            }
+        }
+
+        if (!empty($verification_updates) && !empty($session['id'])) {
+            GMS_Database::updateVerification($session['id'], $verification_updates);
         }
     }
 
@@ -574,11 +786,12 @@ class GMS_Stripe_Integration {
         return '';
     }
 
-    private function maybeDownloadAndAssignSelfie($user_id, $file_id) {
-        if (empty($file_id)) {
+    private function assignSelfieAttachment($user_id, array $file, $contents) {
+        if (empty($file['id']) || !$contents) {
             return;
         }
 
+        $file_id = sanitize_text_field($file['id']);
         $existing_file_id = get_user_meta($user_id, 'gms_verification_selfie_file_id', true);
         $existing_attachment_id = (int) get_user_meta($user_id, 'gms_verification_selfie_attachment_id', true);
 
@@ -590,18 +803,6 @@ class GMS_Stripe_Integration {
             return;
         }
 
-        $file = $this->retrieveStripeFile($file_id);
-
-        if (!is_array($file) || empty($file['id'])) {
-            return;
-        }
-
-        $contents = $this->downloadStripeFile($file);
-
-        if (!$contents) {
-            return;
-        }
-
         $attachment_id = $this->saveSelfieAttachment($file, $contents);
 
         if (!$attachment_id || is_wp_error($attachment_id)) {
@@ -610,20 +811,222 @@ class GMS_Stripe_Integration {
 
         $url = wp_get_attachment_url($attachment_id);
 
-        update_user_meta($user_id, 'gms_verification_selfie_file_id', sanitize_text_field($file_id));
+        update_user_meta($user_id, 'gms_verification_selfie_file_id', $file_id);
         update_user_meta($user_id, 'gms_verification_selfie_attachment_id', $attachment_id);
 
         if ($url) {
-            update_user_meta($user_id, 'gms_verification_selfie_url', esc_url_raw($url));
-            update_user_meta($user_id, 'profile_photo_url', esc_url_raw($url));
+            $safe_url = esc_url_raw($url);
+            update_user_meta($user_id, 'gms_verification_selfie_url', $safe_url);
+            update_user_meta($user_id, 'profile_photo_url', $safe_url);
             update_user_meta($user_id, 'simple_local_avatar', array(
-                'full' => esc_url_raw($url),
+                'full' => $safe_url,
                 'media_id' => $attachment_id,
             ));
         }
 
         update_user_meta($user_id, 'profile_photo', $attachment_id);
         update_user_meta($user_id, 'profile_photo_id', $attachment_id);
+    }
+
+    private function syncVerificationAsset($file_id, $context, array $existing_record = array(), $user_id = 0) {
+        $file_id = sanitize_text_field($file_id);
+
+        if ($file_id === '') {
+            return null;
+        }
+
+        $key_base = $context;
+        $existing_file_id = isset($existing_record[$key_base . '_file_id']) ? sanitize_text_field($existing_record[$key_base . '_file_id']) : '';
+        $existing_path = isset($existing_record[$key_base . '_path']) ? sanitize_text_field($existing_record[$key_base . '_path']) : '';
+        $existing_mime = isset($existing_record[$key_base . '_mime']) ? sanitize_mime_type($existing_record[$key_base . '_mime']) : '';
+
+        $path_value = 'stripe-file:' . $file_id;
+
+        if ($existing_file_id === $file_id && strpos($existing_path, 'stripe-file:') === 0) {
+            $path_value = $existing_path;
+        }
+
+        $mime_type = $existing_mime;
+
+        if ($mime_type === '') {
+            $file = $this->retrieveStripeFile($file_id);
+
+            if (is_array($file) && !empty($file['mime_type'])) {
+                $mime_type = sanitize_mime_type($file['mime_type']);
+            }
+        }
+
+        if ($mime_type === '') {
+            $mime_type = 'application/octet-stream';
+        }
+
+        return array(
+            'file_id' => $file_id,
+            'path' => $path_value,
+            'mime_type' => $mime_type,
+        );
+    }
+
+    private function storeVerificationFile(array $file, $contents, $context, $existing_relative_path = '') {
+        $storage = $this->getSecureStorageDirectory();
+
+        if (!$storage) {
+            return '';
+        }
+
+        $extension = '';
+        if (!empty($file['filename'])) {
+            $extension = pathinfo($file['filename'], PATHINFO_EXTENSION);
+        }
+
+        if ($extension === '' && !empty($file['mime_type'])) {
+            $extension = $this->extensionFromMime($file['mime_type']);
+        }
+
+        if ($extension === '') {
+            $extension = 'bin';
+        }
+
+        $hash_source = $file['id'] . '|' . $context . '|' . microtime(true) . '|' . wp_rand();
+        $hash = hash('sha256', $hash_source);
+        $filename = sanitize_file_name($context . '-' . $hash . '.' . $extension);
+
+        $absolute_path = trailingslashit($storage['dir']) . $filename;
+
+        if (file_put_contents($absolute_path, $contents) === false) {
+            return '';
+        }
+
+        @chmod($absolute_path, 0640);
+
+        if ($existing_relative_path !== '') {
+            $this->deleteSecureFile($existing_relative_path, $storage);
+        }
+
+        return $storage['relative'] . '/' . $filename;
+    }
+
+    private function getSecureStorageDirectory() {
+        $upload_dir = wp_upload_dir();
+
+        if (!empty($upload_dir['error'])) {
+            error_log('GMS Stripe Error: Unable to determine upload directory for verification assets - ' . $upload_dir['error']);
+            return null;
+        }
+
+        $base_dir = wp_normalize_path(trailingslashit($upload_dir['basedir']));
+        $relative = 'gms-secure';
+        $target_dir = wp_normalize_path($base_dir . $relative);
+
+        if (!wp_mkdir_p($target_dir)) {
+            error_log('GMS Stripe Error: Unable to create secure verification storage directory.');
+            return null;
+        }
+
+        $this->ensureSecureDirectoryProtection($target_dir);
+
+        return array(
+            'dir' => $target_dir,
+            'relative' => $relative,
+            'base' => $base_dir,
+        );
+    }
+
+    private function ensureSecureDirectoryProtection($directory) {
+        if (!is_dir($directory)) {
+            return;
+        }
+
+        $htaccess_path = trailingslashit($directory) . '.htaccess';
+        if (!file_exists($htaccess_path)) {
+            @file_put_contents($htaccess_path, "Deny from all\n");
+        }
+
+        $index_path = trailingslashit($directory) . 'index.php';
+        if (!file_exists($index_path)) {
+            @file_put_contents($index_path, "<?php\n// Silence is golden.\n");
+        }
+    }
+
+    private function resolveSecurePath($relative_path, $storage = null) {
+        $relative_path = ltrim((string) $relative_path, '/');
+
+        if ($relative_path === '') {
+            return '';
+        }
+
+        if (is_array($storage) && !empty($storage['base'])) {
+            $base_dir = wp_normalize_path(trailingslashit($storage['base']));
+        } else {
+            $upload_dir = wp_upload_dir();
+            if (!empty($upload_dir['error'])) {
+                return '';
+            }
+
+            $base_dir = wp_normalize_path(trailingslashit($upload_dir['basedir']));
+        }
+
+        $path = wp_normalize_path($base_dir . $relative_path);
+
+        if (!str_starts_with($path, $base_dir)) {
+            return '';
+        }
+
+        return $path;
+    }
+
+    private function deleteSecureFile($relative_path, $storage = null) {
+        $absolute_path = $this->resolveSecurePath($relative_path, $storage);
+
+        if ($absolute_path && is_file($absolute_path)) {
+            @unlink($absolute_path);
+        }
+    }
+
+    private function extensionFromMime($mime_type) {
+        $mime_type = sanitize_mime_type($mime_type);
+
+        if ($mime_type === '') {
+            return '';
+        }
+
+        $mime_map = wp_get_mime_types();
+        foreach ($mime_map as $extensions => $mapped_mime) {
+            if ($mapped_mime === $mime_type) {
+                $parts = explode('|', $extensions);
+                return sanitize_key($parts[0]);
+            }
+        }
+
+        if (str_contains($mime_type, '/')) {
+            $suffix = substr(strrchr($mime_type, '/'), 1);
+            if ($suffix !== false) {
+                return sanitize_key($suffix);
+            }
+        }
+
+        return '';
+    }
+
+    private function determineMimeType($file, $absolute_path) {
+        $candidate = '';
+
+        if (is_array($file) && !empty($file['mime_type'])) {
+            $candidate = sanitize_mime_type($file['mime_type']);
+        }
+
+        if ($candidate !== '') {
+            return $candidate;
+        }
+
+        if ($absolute_path && file_exists($absolute_path)) {
+            $filetype = wp_check_filetype($absolute_path);
+            if (!empty($filetype['type'])) {
+                return sanitize_mime_type($filetype['type']);
+            }
+        }
+
+        return 'application/octet-stream';
     }
 
     private function retrieveStripeFile($file_id) {
@@ -667,26 +1070,66 @@ class GMS_Stripe_Integration {
             return null;
         }
 
-        $response = wp_remote_get($file['url'], array(
-            'headers' => array(
-                'Authorization' => 'Bearer ' . $this->secret_key,
-            ),
-            'timeout' => 60,
-        ));
+        $url = $file['url'];
+        $headers = array(
+            'Authorization' => 'Bearer ' . $this->secret_key,
+        );
 
-        if (is_wp_error($response)) {
-            error_log('GMS Stripe Error: ' . $response->get_error_message());
+        $max_redirects = 5;
+        $attempt = 0;
+
+        while ($attempt < $max_redirects && !empty($url)) {
+            $response = wp_remote_get($url, array(
+                'headers' => $headers,
+                'timeout' => 60,
+                'redirection' => 0,
+            ));
+
+            if (is_wp_error($response)) {
+                error_log('GMS Stripe Error: ' . $response->get_error_message());
+                return null;
+            }
+
+            $code = wp_remote_retrieve_response_code($response);
+
+            if ($code >= 200 && $code < 300) {
+                return wp_remote_retrieve_body($response);
+            }
+
+            if ($code >= 300 && $code < 400) {
+                $location = wp_remote_retrieve_header($response, 'location');
+
+                if (empty($location)) {
+                    break;
+                }
+
+                if (is_array($location)) {
+                    $location = reset($location);
+                }
+
+                if (strpos($location, 'http') !== 0) {
+                    $url = rtrim($this->files_api_url, '/') . '/' . ltrim($location, '/');
+                } else {
+                    $url = $location;
+                }
+
+                $attempt++;
+                continue;
+            }
+
+            error_log(
+                sprintf(
+                    'GMS Stripe Error: Unexpected response while downloading Stripe file (HTTP %d).',
+                    intval($code)
+                )
+            );
+
             return null;
         }
 
-        $code = wp_remote_retrieve_response_code($response);
+        error_log('GMS Stripe Error: Unable to resolve Stripe file download after redirects.');
 
-        if ($code < 200 || $code >= 300) {
-            error_log('GMS Stripe Error: Unexpected response while downloading Stripe file.');
-            return null;
-        }
-
-        return wp_remote_retrieve_body($response);
+        return null;
     }
 
     private function saveSelfieAttachment($file, $contents) {
