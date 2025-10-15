@@ -135,10 +135,20 @@ class GMS_Database {
             id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
             reservation_id bigint(20) unsigned NOT NULL,
             guest_id bigint(20) unsigned DEFAULT 0,
+            guest_record_id bigint(20) unsigned DEFAULT 0,
             stripe_verification_session_id varchar(191) NOT NULL DEFAULT '',
             stripe_client_secret varchar(191) NOT NULL DEFAULT '',
             verification_status varchar(50) NOT NULL DEFAULT 'pending',
             verification_data longtext NULL,
+            document_front_file_id varchar(191) NOT NULL DEFAULT '',
+            document_front_path varchar(255) NOT NULL DEFAULT '',
+            document_front_mime varchar(100) NOT NULL DEFAULT '',
+            document_back_file_id varchar(191) NOT NULL DEFAULT '',
+            document_back_path varchar(255) NOT NULL DEFAULT '',
+            document_back_mime varchar(100) NOT NULL DEFAULT '',
+            selfie_file_id varchar(191) NOT NULL DEFAULT '',
+            selfie_path varchar(255) NOT NULL DEFAULT '',
+            selfie_mime varchar(100) NOT NULL DEFAULT '',
             verified_at datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
             created_at datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
             updated_at datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
@@ -154,6 +164,10 @@ class GMS_Database {
             [
                 'name' => 'reservation_id',
                 'columns' => ['reservation_id'],
+            ],
+            [
+                'name' => 'guest_record_id',
+                'columns' => ['guest_record_id'],
             ],
         ]);
 
@@ -1825,6 +1839,7 @@ class GMS_Database {
         $defaults = array(
             'reservation_id' => 0,
             'guest_id' => 0,
+            'guest_record_id' => 0,
             'stripe_session_id' => '',
             'stripe_client_secret' => '',
             'status' => 'pending',
@@ -1833,9 +1848,20 @@ class GMS_Database {
 
         $data = wp_parse_args($data, $defaults);
 
+        $reservation_id = intval($data['reservation_id']);
+        $guest_record_id = intval($data['guest_record_id']);
+
+        if ($guest_record_id <= 0 && $reservation_id > 0) {
+            $reservation_record = self::getReservationById($reservation_id);
+            if ($reservation_record) {
+                $guest_record_id = intval($reservation_record['guest_record_id'] ?? 0);
+            }
+        }
+
         $insert_data = array(
-            'reservation_id' => intval($data['reservation_id']),
+            'reservation_id' => $reservation_id,
             'guest_id' => intval($data['guest_id']),
+            'guest_record_id' => $guest_record_id,
             'stripe_verification_session_id' => sanitize_text_field($data['stripe_session_id']),
             'stripe_client_secret' => sanitize_text_field($data['stripe_client_secret']),
             'verification_status' => sanitize_text_field($data['status']),
@@ -1844,7 +1870,7 @@ class GMS_Database {
             'updated_at' => current_time('mysql'),
         );
 
-        $formats = array('%d', '%d', '%s', '%s', '%s', '%s', '%s', '%s');
+        $formats = array('%d', '%d', '%d', '%s', '%s', '%s', '%s', '%s');
 
         $result = $wpdb->insert($table_name, $insert_data, $formats);
 
@@ -1864,11 +1890,46 @@ class GMS_Database {
         return self::formatVerificationRow($row);
     }
 
+    public static function getLatestVerificationForGuest($guest_id) {
+        global $wpdb;
+
+        $guest_id = intval($guest_id);
+        if ($guest_id <= 0) {
+            return null;
+        }
+
+        $table_name = $wpdb->prefix . 'gms_identity_verification';
+        $row = $wpdb->get_row(
+            $wpdb->prepare(
+                "SELECT * FROM $table_name WHERE guest_record_id = %d ORDER BY verified_at DESC, id DESC LIMIT 1",
+                $guest_id
+            ),
+            ARRAY_A
+        );
+
+        return self::formatVerificationRow($row);
+    }
+
     public static function updateVerification($stripe_session_id, $data) {
         global $wpdb;
         $table_name = $wpdb->prefix . 'gms_identity_verification';
 
-        $allowed = array('status', 'verification_data', 'stripe_client_secret', 'verified_at');
+        $allowed = array(
+            'status',
+            'verification_data',
+            'stripe_client_secret',
+            'verified_at',
+            'guest_record_id',
+            'document_front_file_id',
+            'document_front_path',
+            'document_front_mime',
+            'document_back_file_id',
+            'document_back_path',
+            'document_back_mime',
+            'selfie_file_id',
+            'selfie_path',
+            'selfie_mime',
+        );
         $update_data = array();
 
         foreach ($allowed as $field) {
@@ -1885,6 +1946,24 @@ class GMS_Database {
                     break;
                 case 'status':
                     $update_data['verification_status'] = sanitize_text_field($data[$field]);
+                    break;
+                case 'guest_record_id':
+                    $update_data['guest_record_id'] = intval($data[$field]);
+                    break;
+                case 'document_front_file_id':
+                case 'document_back_file_id':
+                case 'selfie_file_id':
+                    $update_data[$field] = sanitize_text_field($data[$field]);
+                    break;
+                case 'document_front_path':
+                case 'document_back_path':
+                case 'selfie_path':
+                    $update_data[$field] = sanitize_text_field($data[$field]);
+                    break;
+                case 'document_front_mime':
+                case 'document_back_mime':
+                case 'selfie_mime':
+                    $update_data[$field] = sanitize_text_field($data[$field]);
                     break;
                 default:
                     $update_data[$field] = sanitize_text_field($data[$field]);
@@ -3270,6 +3349,33 @@ class GMS_Database {
         }, $results);
     }
 
+    public static function getReservationsForGuest($guest_id) {
+        global $wpdb;
+
+        $guest_id = intval($guest_id);
+        if ($guest_id <= 0) {
+            return array();
+        }
+
+        $table_reservations = $wpdb->prefix . 'gms_reservations';
+
+        $rows = $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT * FROM {$table_reservations} WHERE guest_record_id = %d ORDER BY checkin_date DESC, id DESC",
+                $guest_id
+            ),
+            ARRAY_A
+        );
+
+        if (!$rows) {
+            return array();
+        }
+
+        $rows = array_map(array(__CLASS__, 'formatReservationRow'), $rows);
+
+        return array_values(array_filter($rows));
+    }
+
     public static function get_guest_by_id($guest_id) {
         global $wpdb;
 
@@ -3834,6 +3940,10 @@ class GMS_Database {
 
         if (isset($row['verified_at']) && $row['verified_at'] === '0000-00-00 00:00:00') {
             $row['verified_at'] = '';
+        }
+
+        if (isset($row['guest_record_id'])) {
+            $row['guest_record_id'] = intval($row['guest_record_id']);
         }
 
         $row['stripe_session_id'] = $row['stripe_verification_session_id'];
