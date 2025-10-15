@@ -3351,8 +3351,7 @@ class GMS_Admin {
             </div>
 
             <div class="gms-reservation-detail__grid">
-                <div class="gms-reservation-detail__timeline">
-                    <section id="gms-step-portal" class="gms-reservation-step gms-reservation-step--<?php echo esc_attr($portal_status); ?>">
+                <section id="gms-step-portal" class="gms-reservation-step gms-reservation-step--<?php echo esc_attr($portal_status); ?>">
                         <div class="gms-reservation-step__header">
                             <div class="gms-reservation-step__title">
                                 <span class="gms-reservation-step__icon" aria-hidden="true">
@@ -3398,9 +3397,9 @@ class GMS_Admin {
                                 <?php $this->render_step_timeline($portal_logs); ?>
                             </div>
                         </div>
-                    </section>
+                </section>
 
-                    <section id="gms-step-door-code" class="gms-reservation-step gms-reservation-step--<?php echo esc_attr($door_code_status); ?>">
+                <section id="gms-step-door-code" class="gms-reservation-step gms-reservation-step--<?php echo esc_attr($door_code_status); ?>">
                         <div class="gms-reservation-step__header">
                             <div class="gms-reservation-step__title">
                                 <span class="gms-reservation-step__icon" aria-hidden="true">
@@ -3445,9 +3444,9 @@ class GMS_Admin {
                                 <?php $this->render_step_timeline($door_code_logs); ?>
                             </div>
                         </div>
-                    </section>
+                </section>
 
-                    <section id="gms-step-welcome" class="gms-reservation-step gms-reservation-step--<?php echo esc_attr($welcome_status); ?>">
+                <section id="gms-step-welcome" class="gms-reservation-step gms-reservation-step--<?php echo esc_attr($welcome_status); ?>">
                         <div class="gms-reservation-step__header">
                             <div class="gms-reservation-step__title">
                                 <span class="gms-reservation-step__icon" aria-hidden="true">
@@ -3492,11 +3491,9 @@ class GMS_Admin {
                                 <?php $this->render_step_timeline($welcome_logs); ?>
                             </div>
                         </div>
-                    </section>
-                </div>
+                </section>
 
-                <div class="gms-reservation-detail__form gms-reservation-detail__sidebar">
-                    <div class="gms-panel gms-contact-panel">
+                <div class="gms-panel gms-contact-panel">
                         <div class="gms-contact-panel__header">
                             <h2><?php esc_html_e('Guest Directory', 'guest-management-system'); ?></h2>
                             <?php if ($portal_url) : ?>
@@ -3546,7 +3543,7 @@ class GMS_Admin {
                             <?php endif; ?>
                         </dl>
                     </div>
-                    <div class="gms-panel gms-portal-card-admin">
+                <div class="gms-panel gms-portal-card-admin">
                         <h2><?php esc_html_e('Guest Portal Promotions', 'guest-management-system'); ?></h2>
                         <p class="description"><?php esc_html_e('Publish optional cards that appear in the guest portal alongside the door code, handbook, and other stay resources.', 'guest-management-system'); ?></p>
 
@@ -3626,7 +3623,7 @@ class GMS_Admin {
                             <?php submit_button(__('Publish card to portal', 'guest-management-system'), 'secondary', 'submit', false); ?>
                         </form>
                     </div>
-                    <div class="gms-panel gms-platform-panel">
+                <div class="gms-panel gms-platform-panel">
                         <h2><?php esc_html_e('Platform Reservation', 'guest-management-system'); ?></h2>
                         <p><?php esc_html_e('Stay aligned with Airbnb, VRBO, and Booking.com by keeping this reservation in sync.', 'guest-management-system'); ?></p>
 
@@ -3690,7 +3687,7 @@ class GMS_Admin {
                             <p class="gms-platform-sync__hint"><?php esc_html_e('Add a platform, booking reference, and credentials to enable one-click sync.', 'guest-management-system'); ?></p>
                         <?php endif; ?>
                     </div>
-                    <div class="gms-panel">
+                <div class="gms-panel">
                         <h2><?php esc_html_e('Reservation Details', 'guest-management-system'); ?></h2>
                         <form method="post" class="gms-reservation-form">
                             <?php wp_nonce_field('gms_edit_reservation_' . $reservation_id); ?>
@@ -3746,9 +3743,7 @@ class GMS_Admin {
                             <?php submit_button(__('Update Reservation', 'guest-management-system')); ?>
                         </form>
                     </div>
-                </div>
-                <div class="gms-reservation-detail__activity">
-                    <div class="gms-panel gms-activity-panel">
+                <div class="gms-panel gms-activity-panel">
                         <div class="gms-activity-panel__header">
                             <h2><?php esc_html_e('Communication Feed', 'guest-management-system'); ?></h2>
                             <?php if ($activity_total > 0) : ?>
