@@ -731,9 +731,17 @@
 }
 
 /* Reservation Detail Layout */
+#wpbody-content .wrap.gms-reservation-detail {
+    max-width: 100%;
+    width: 100%;
+    margin-right: 0;
+    padding-right: 20px;
+    box-sizing: border-box;
+}
+
 .gms-reservation-detail {
     width: 100%;
-    max-width: none;
+    max-width: 100%;
     margin-top: 24px;
 }
 
