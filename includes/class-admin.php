@@ -2692,6 +2692,14 @@ class GMS_Admin {
         }
 
         $stripe = GMS_Stripe_Integration::instance();
+
+        $file_link = $stripe->generateFileLink($file_id);
+
+        if (is_string($file_link) && $file_link !== '') {
+            wp_redirect(esc_url_raw($file_link));
+            exit;
+        }
+
         $stream = $stripe->getFileStreamData($file_id);
 
         if (is_wp_error($stream)) {

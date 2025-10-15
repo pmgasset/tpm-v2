@@ -11,6 +11,7 @@ class GMS_Stripe_Integration {
     private $api_url = 'https://api.stripe.com/v1';
     private $secret_key;
     private $files_api_url = 'https://files.stripe.com/v1';
+    private $api_version = '2020-08-27';
     private static $instance = null;
     private static $bootstrapped = false;
 
@@ -73,6 +74,7 @@ class GMS_Stripe_Integration {
             'headers' => array(
                 'Authorization' => 'Bearer ' . $this->secret_key,
                 'Content-Type' => 'application/x-www-form-urlencoded',
+                'Stripe-Version' => $this->api_version,
             ),
             'body' => $encoded_body,
             'timeout' => 30,
@@ -296,6 +298,7 @@ class GMS_Stripe_Integration {
         $response = wp_remote_get($endpoint, array(
             'headers' => array(
                 'Authorization' => 'Bearer ' . $this->secret_key,
+                'Stripe-Version' => $this->api_version,
             ),
             'timeout' => 30,
         ));
@@ -1073,6 +1076,7 @@ class GMS_Stripe_Integration {
         $url = $file['url'];
         $headers = array(
             'Authorization' => 'Bearer ' . $this->secret_key,
+            'Stripe-Version' => $this->api_version,
         );
 
         $max_redirects = 5;
