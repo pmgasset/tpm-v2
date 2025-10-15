@@ -7,24 +7,105 @@
  */
 
 class GMS_Stripe_Integration {
-    
+
     private $api_url = 'https://api.stripe.com/v1';
     private $secret_key;
     private $files_api_url = 'https://files.stripe.com/v1';
-    
+    private static $instance = null;
+    private static $bootstrapped = false;
+
     public function __construct() {
         $this->secret_key = get_option('gms_stripe_sk');
-        
-        // Add webhook handler for Stripe events
-        add_action('rest_api_init', array($this, 'registerWebhookEndpoint'));
+
+        if (!self::$bootstrapped) {
+            // Add webhook handler for Stripe events
+            add_action('rest_api_init', array($this, 'registerWebhookEndpoint'));
+            self::$bootstrapped = true;
+        }
+
+        self::$instance = $this;
     }
-    
+
+    public static function instance() {
+        if (self::$instance instanceof self) {
+            return self::$instance;
+        }
+
+        return new self();
+    }
+
     public function registerWebhookEndpoint() {
         register_rest_route('gms/v1', '/stripe-webhook', array(
             'methods' => 'POST',
             'callback' => array($this, 'handleStripeWebhook'),
             'permission_callback' => '__return_true'
         ));
+    }
+
+    public function generateFileLink($file_id, $expires_in = 600) {
+        $file_id = trim((string) $file_id);
+
+        if ($file_id === '') {
+            return new WP_Error('gms_stripe_missing_file', __('Unable to locate the requested Stripe file.', 'guest-management-system'));
+        }
+
+        if (empty($this->secret_key)) {
+            return new WP_Error('gms_stripe_missing_key', __('Stripe secret key is not configured.', 'guest-management-system'));
+        }
+
+        $expires_in = absint($expires_in);
+        if ($expires_in <= 0) {
+            $expires_in = 600;
+        }
+
+        $expiration = time() + min($expires_in, DAY_IN_SECONDS);
+
+        $endpoint = $this->files_api_url . '/file_links';
+
+        $body_params = array(
+            'file' => $file_id,
+            'expires_at' => $expiration,
+        );
+
+        $encoded_body = http_build_query($body_params, '', '&', PHP_QUERY_RFC3986);
+
+        $response = wp_remote_post($endpoint, array(
+            'headers' => array(
+                'Authorization' => 'Bearer ' . $this->secret_key,
+                'Content-Type' => 'application/x-www-form-urlencoded',
+            ),
+            'body' => $encoded_body,
+            'timeout' => 30,
+        ));
+
+        if (is_wp_error($response)) {
+            error_log('GMS Stripe Error: ' . $response->get_error_message());
+            return new WP_Error('gms_stripe_file_link_failed', __('Unable to contact Stripe to generate a secure download link.', 'guest-management-system'));
+        }
+
+        $body = wp_remote_retrieve_body($response);
+        $result = json_decode($body, true);
+
+        if (json_last_error() !== JSON_ERROR_NONE || !is_array($result)) {
+            error_log('GMS Stripe Error: Unable to decode Stripe file link response.');
+            return new WP_Error('gms_stripe_file_link_failed', __('Unable to generate a secure download link for this Stripe file.', 'guest-management-system'));
+        }
+
+        if (isset($result['error'])) {
+            $message = isset($result['error']['message']) ? $result['error']['message'] : __('Unknown Stripe API error.', 'guest-management-system');
+            error_log('GMS Stripe API Error: ' . $message);
+
+            return new WP_Error('gms_stripe_file_link_failed', __('Stripe did not accept the request for a secure download link.', 'guest-management-system'));
+        }
+
+        $url = isset($result['url']) ? esc_url_raw($result['url']) : '';
+
+        if ($url === '') {
+            error_log('GMS Stripe Error: Stripe file link response did not include a URL.');
+            return new WP_Error('gms_stripe_file_link_missing', __('Stripe did not return a secure download link for this file.', 'guest-management-system'));
+        }
+
+        return $url;
     }
 
     public function refreshVerificationForSession($session_id) {
@@ -572,7 +653,19 @@ class GMS_Stripe_Integration {
             update_user_meta($user_id, $meta_key, $meta_value);
         }
 
-        update_user_meta($user_id, 'gms_verification_report', $report);
+        if (!empty($report)) {
+            $encoded_report = wp_json_encode($report);
+            if ($encoded_report !== false) {
+                update_user_meta($user_id, 'gms_verification_report', wp_slash($encoded_report));
+            } else {
+                error_log('GMS Stripe Error: Unable to encode verification report for storage.');
+            }
+        }
+
+        $existing_verification = GMS_Database::getVerificationByReservation($reservation_id);
+        if (!is_array($existing_verification)) {
+            $existing_verification = array();
+        }
 
         $existing_verification = GMS_Database::getVerificationByReservation($reservation_id);
         if (!is_array($existing_verification)) {
@@ -696,48 +789,29 @@ class GMS_Stripe_Integration {
         $existing_path = isset($existing_record[$key_base . '_path']) ? sanitize_text_field($existing_record[$key_base . '_path']) : '';
         $existing_mime = isset($existing_record[$key_base . '_mime']) ? sanitize_mime_type($existing_record[$key_base . '_mime']) : '';
 
-        if ($existing_file_id === $file_id && $existing_path !== '') {
-            $absolute = $this->resolveSecurePath($existing_path);
-            if ($absolute && file_exists($absolute)) {
-                $mime_type = $existing_mime !== '' ? $existing_mime : $this->determineMimeType(array(), $absolute);
+        $path_value = 'stripe-file:' . $file_id;
 
-                return array(
-                    'file_id' => $existing_file_id,
-                    'path' => $existing_path,
-                    'mime_type' => $mime_type,
-                );
+        if ($existing_file_id === $file_id && strpos($existing_path, 'stripe-file:') === 0) {
+            $path_value = $existing_path;
+        }
+
+        $mime_type = $existing_mime;
+
+        if ($mime_type === '') {
+            $file = $this->retrieveStripeFile($file_id);
+
+            if (is_array($file) && !empty($file['mime_type'])) {
+                $mime_type = sanitize_mime_type($file['mime_type']);
             }
         }
 
-        $file = $this->retrieveStripeFile($file_id);
-
-        if (!is_array($file) || empty($file['id'])) {
-            return null;
+        if ($mime_type === '') {
+            $mime_type = 'application/octet-stream';
         }
-
-        $contents = $this->downloadStripeFile($file);
-
-        if (!$contents) {
-            return null;
-        }
-
-        $existing_relative_path = ($existing_path !== '' && $existing_file_id !== $file['id']) ? $existing_path : '';
-        $relative_path = $this->storeVerificationFile($file, $contents, $context, $existing_relative_path);
-
-        if ($relative_path === '') {
-            return null;
-        }
-
-        if ($context === 'selfie' && $user_id > 0) {
-            $this->assignSelfieAttachment($user_id, $file, $contents);
-        }
-
-        $absolute_path = $this->resolveSecurePath($relative_path);
-        $mime_type = $this->determineMimeType($file, $absolute_path);
 
         return array(
-            'file_id' => sanitize_text_field($file['id']),
-            'path' => $relative_path,
+            'file_id' => $file_id,
+            'path' => $path_value,
             'mime_type' => $mime_type,
         );
     }

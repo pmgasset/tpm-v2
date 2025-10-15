@@ -692,6 +692,7 @@ class GMS_Admin {
         add_action('admin_post_gms_delete_message_template', array($this, 'handle_delete_message_template'));
         add_action('admin_post_gms_housekeeper_ical', array($this, 'handle_housekeeper_ical_export'));
         add_action('admin_post_gms_refresh_guest_verification', array($this, 'handle_refresh_guest_verification'));
+        add_action('admin_post_gms_view_verification_asset', array($this, 'handle_view_verification_asset'));
     }
 
     private function build_reservations_redirect_url() {
@@ -2323,19 +2324,31 @@ class GMS_Admin {
 
         $media_items = array();
         if (is_array($verification)) {
-            $front_preview = $this->build_verification_media_preview($verification['document_front_path'] ?? '', $verification['document_front_mime'] ?? '');
+            $front_preview = $this->build_verification_media_preview(
+                $verification['document_front_path'] ?? '',
+                $verification['document_front_mime'] ?? '',
+                $verification['document_front_file_id'] ?? ''
+            );
             if ($front_preview) {
                 $front_preview['label'] = esc_html__('Document Front', 'guest-management-system');
                 $media_items[] = $front_preview;
             }
 
-            $back_preview = $this->build_verification_media_preview($verification['document_back_path'] ?? '', $verification['document_back_mime'] ?? '');
+            $back_preview = $this->build_verification_media_preview(
+                $verification['document_back_path'] ?? '',
+                $verification['document_back_mime'] ?? '',
+                $verification['document_back_file_id'] ?? ''
+            );
             if ($back_preview) {
                 $back_preview['label'] = esc_html__('Document Back', 'guest-management-system');
                 $media_items[] = $back_preview;
             }
 
-            $selfie_preview = $this->build_verification_media_preview($verification['selfie_path'] ?? '', $verification['selfie_mime'] ?? '');
+            $selfie_preview = $this->build_verification_media_preview(
+                $verification['selfie_path'] ?? '',
+                $verification['selfie_mime'] ?? '',
+                $verification['selfie_file_id'] ?? ''
+            );
             if ($selfie_preview) {
                 $selfie_preview['label'] = esc_html__('Selfie', 'guest-management-system');
                 $media_items[] = $selfie_preview;
@@ -2500,10 +2513,15 @@ class GMS_Admin {
                             $data_uri = isset($item['data_uri']) ? $item['data_uri'] : '';
                             $label = isset($item['label']) ? $item['label'] : '';
                             $mime_type = isset($item['type']) ? $item['type'] : '';
+                            $view_url = isset($item['view_url']) ? $item['view_url'] : '';
                             ?>
                             <figure>
                                 <?php if ($data_uri !== '') : ?>
                                     <img src="<?php echo esc_attr($data_uri); ?>" alt="<?php echo esc_attr($label); ?>" loading="lazy">
+                                <?php elseif ($view_url !== '') : ?>
+                                    <a class="button button-secondary" target="_blank" rel="noopener noreferrer" href="<?php echo esc_url($view_url); ?>">
+                                        <?php esc_html_e('Open secure Stripe link', 'guest-management-system'); ?>
+                                    </a>
                                 <?php else : ?>
                                     <div><?php esc_html_e('Stored securely', 'guest-management-system'); ?></div>
                                 <?php endif; ?>
@@ -2633,7 +2651,7 @@ class GMS_Admin {
             require_once plugin_dir_path(__FILE__) . 'class-stripe-integration.php';
         }
 
-        $stripe = new GMS_Stripe_Integration();
+        $stripe = GMS_Stripe_Integration::instance();
         $result = $stripe->refreshVerificationForSession($session_id);
 
         if (is_wp_error($result)) {
@@ -2649,6 +2667,43 @@ class GMS_Admin {
         }
 
         wp_safe_redirect($redirect_url);
+        exit;
+    }
+
+    public function handle_view_verification_asset() {
+        if (!current_user_can('manage_options')) {
+            wp_die(__('You do not have permission to access verification assets.', 'guest-management-system'));
+        }
+
+        $file_id = isset($_GET['file']) ? sanitize_text_field(wp_unslash($_GET['file'])) : '';
+
+        if ($file_id === '') {
+            wp_die(__('Missing Stripe file identifier.', 'guest-management-system'));
+        }
+
+        $nonce = isset($_GET['_wpnonce']) ? wp_unslash($_GET['_wpnonce']) : '';
+
+        if (!wp_verify_nonce($nonce, 'gms_view_verification_asset_' . $file_id)) {
+            wp_die(__('Invalid or expired verification asset request.', 'guest-management-system'));
+        }
+
+        if (!class_exists('GMS_Stripe_Integration')) {
+            require_once plugin_dir_path(__FILE__) . 'class-stripe-integration.php';
+        }
+
+        $stripe = GMS_Stripe_Integration::instance();
+        $link = $stripe->generateFileLink($file_id);
+
+        if (is_wp_error($link)) {
+            wp_die(esc_html($link->get_error_message()), __('Stripe File Error', 'guest-management-system'));
+        }
+
+        $host = wp_parse_url($link, PHP_URL_HOST);
+        if (!in_array($host, array('files.stripe.com'), true)) {
+            wp_die(__('Unexpected Stripe file host.', 'guest-management-system'), __('Stripe File Error', 'guest-management-system'));
+        }
+
+        wp_redirect($link);
         exit;
     }
 
@@ -5490,54 +5545,100 @@ class GMS_Admin {
         return $phone;
     }
 
-    private function build_verification_media_preview($relative_path, $mime_type) {
-        $relative_path = ltrim((string) $relative_path, '/');
+    private function build_verification_media_preview($relative_path, $mime_type, $file_id = '') {
+        $relative_path = (string) $relative_path;
+        $file_id = sanitize_text_field($file_id);
 
-        if ($relative_path === '') {
-            return null;
-        }
-
-        $upload_dir = wp_upload_dir();
-        if (!empty($upload_dir['error'])) {
-            return null;
-        }
-
-        $base_dir = wp_normalize_path(trailingslashit($upload_dir['basedir']));
-        $full_path = wp_normalize_path($base_dir . $relative_path);
-
-        if (!str_starts_with($full_path, $base_dir)) {
-            return null;
-        }
-
-        if (!file_exists($full_path) || !is_file($full_path)) {
-            return null;
+        if (strpos($relative_path, 'stripe-file:') === 0) {
+            $file_id = sanitize_text_field(substr($relative_path, strlen('stripe-file:')));
+            $relative_path = '';
         }
 
         $mime = sanitize_mime_type($mime_type);
-        if ($mime === '') {
-            $filetype = wp_check_filetype($full_path);
-            if (!empty($filetype['type'])) {
-                $mime = sanitize_mime_type($filetype['type']);
+
+        if ($relative_path !== '') {
+            $trimmed_path = ltrim($relative_path, '/');
+
+            $upload_dir = wp_upload_dir();
+            if (!empty($upload_dir['error'])) {
+                return null;
             }
-        }
 
-        $contents = @file_get_contents($full_path);
-        if ($contents === false) {
-            return null;
-        }
+            $base_dir = wp_normalize_path(trailingslashit($upload_dir['basedir']));
+            $full_path = wp_normalize_path($base_dir . $trimmed_path);
 
-        if ($mime === '' || strpos($mime, 'image/') !== 0) {
+            if (!str_starts_with($full_path, $base_dir)) {
+                return null;
+            }
+
+            if (!file_exists($full_path) || !is_file($full_path)) {
+                return null;
+            }
+
+            if ($mime === '') {
+                $filetype = wp_check_filetype($full_path);
+                if (!empty($filetype['type'])) {
+                    $mime = sanitize_mime_type($filetype['type']);
+                }
+            }
+
+            $contents = @file_get_contents($full_path);
+            if ($contents === false) {
+                return null;
+            }
+
+            if ($mime === '' || strpos($mime, 'image/') !== 0) {
+                return array(
+                    'type' => $mime !== '' ? $mime : 'application/octet-stream',
+                    'data_uri' => '',
+                );
+            }
+
+            $data_uri = 'data:' . $mime . ';base64,' . base64_encode($contents);
+
             return array(
-                'type' => $mime !== '' ? $mime : 'application/octet-stream',
-                'data_uri' => '',
+                'type' => $mime,
+                'data_uri' => $data_uri,
             );
         }
 
-        $data_uri = 'data:' . $mime . ';base64,' . base64_encode($contents);
+        if ($file_id === '') {
+            return null;
+        }
+
+        $view_url = $this->build_verification_asset_view_url($file_id);
+
+        if ($view_url === '') {
+            return null;
+        }
+
+        if ($mime === '') {
+            $mime = 'application/octet-stream';
+        }
 
         return array(
             'type' => $mime,
-            'data_uri' => $data_uri,
+            'data_uri' => '',
+            'view_url' => $view_url,
+        );
+    }
+
+    private function build_verification_asset_view_url($file_id) {
+        $file_id = sanitize_text_field($file_id);
+
+        if ($file_id === '') {
+            return '';
+        }
+
+        $nonce = wp_create_nonce('gms_view_verification_asset_' . $file_id);
+
+        return add_query_arg(
+            array(
+                'action' => 'gms_view_verification_asset',
+                'file' => $file_id,
+                '_wpnonce' => $nonce,
+            ),
+            admin_url('admin-post.php')
         );
     }
 
