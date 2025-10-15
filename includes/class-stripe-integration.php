@@ -60,7 +60,7 @@ class GMS_Stripe_Integration {
 
         $expiration = time() + min($expires_in, DAY_IN_SECONDS);
 
-        $endpoint = $this->files_api_url . '/file_links';
+        $endpoint = $this->api_url . '/file_links';
 
         $body_params = array(
             'file' => $file_id,
@@ -1078,9 +1078,18 @@ class GMS_Stripe_Integration {
         $max_redirects = 5;
         $attempt = 0;
 
+        $files_host = wp_parse_url($this->files_api_url, PHP_URL_HOST);
+
         while ($attempt < $max_redirects && !empty($url)) {
+            $request_headers = $headers;
+            $host = wp_parse_url($url, PHP_URL_HOST);
+
+            if (!empty($host) && $files_host && $host !== $files_host) {
+                $request_headers = array();
+            }
+
             $response = wp_remote_get($url, array(
-                'headers' => $headers,
+                'headers' => $request_headers,
                 'timeout' => 60,
                 'redirection' => 0,
             ));
