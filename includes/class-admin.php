@@ -2342,29 +2342,60 @@ class GMS_Admin {
             }
         }
 
-        $can_request_refresh = false;
         $stripe_session_id = '';
+        $session_candidates = array();
+
         if (is_array($verification)) {
-            $stripe_session_id = isset($verification['stripe_session_id']) ? sanitize_text_field($verification['stripe_session_id']) : '';
-            $stored_paths = array(
-                isset($verification['document_front_path']) ? (string) $verification['document_front_path'] : '',
-                isset($verification['document_back_path']) ? (string) $verification['document_back_path'] : '',
-                isset($verification['selfie_path']) ? (string) $verification['selfie_path'] : '',
-            );
-            $missing_paths = array_filter($stored_paths, static function ($path) {
-                return trim($path) === '';
-            });
+            if (!empty($verification['stripe_session_id'])) {
+                $session_candidates[] = sanitize_text_field($verification['stripe_session_id']);
+            }
 
             if (
-                $stripe_session_id !== ''
-                && (
-                    count($missing_paths) > 0
-                    || empty($media_items)
-                )
+                isset($verification['verification_data'])
+                && is_array($verification['verification_data'])
+                && !empty($verification['verification_data']['id'])
             ) {
-                $can_request_refresh = true;
+                $session_candidates[] = sanitize_text_field($verification['verification_data']['id']);
             }
         }
+
+        if (empty($session_candidates) && !empty($reservations)) {
+            foreach ($reservations as $reservation) {
+                $reservation_id = isset($reservation['id']) ? intval($reservation['id']) : 0;
+
+                if ($reservation_id <= 0) {
+                    continue;
+                }
+
+                $reservation_verification = GMS_Database::getVerificationByReservation($reservation_id);
+
+                if (!is_array($reservation_verification)) {
+                    continue;
+                }
+
+                if (!empty($reservation_verification['stripe_session_id'])) {
+                    $session_candidates[] = sanitize_text_field($reservation_verification['stripe_session_id']);
+                }
+
+                if (
+                    isset($reservation_verification['verification_data'])
+                    && is_array($reservation_verification['verification_data'])
+                    && !empty($reservation_verification['verification_data']['id'])
+                ) {
+                    $session_candidates[] = sanitize_text_field($reservation_verification['verification_data']['id']);
+                }
+
+                if (!empty($session_candidates)) {
+                    break;
+                }
+            }
+        }
+
+        if (!empty($session_candidates)) {
+            $stripe_session_id = reset($session_candidates);
+        }
+
+        $can_request_refresh = ($stripe_session_id !== '');
 
         $refresh_notice = isset($_GET['gms_verification_refresh']) ? sanitize_key(wp_unslash($_GET['gms_verification_refresh'])) : '';
         $refresh_error = '';
