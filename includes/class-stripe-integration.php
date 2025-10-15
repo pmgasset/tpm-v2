@@ -945,26 +945,66 @@ class GMS_Stripe_Integration {
             return null;
         }
 
-        $response = wp_remote_get($file['url'], array(
-            'headers' => array(
-                'Authorization' => 'Bearer ' . $this->secret_key,
-            ),
-            'timeout' => 60,
-        ));
+        $url = $file['url'];
+        $headers = array(
+            'Authorization' => 'Bearer ' . $this->secret_key,
+        );
 
-        if (is_wp_error($response)) {
-            error_log('GMS Stripe Error: ' . $response->get_error_message());
+        $max_redirects = 5;
+        $attempt = 0;
+
+        while ($attempt < $max_redirects && !empty($url)) {
+            $response = wp_remote_get($url, array(
+                'headers' => $headers,
+                'timeout' => 60,
+                'redirection' => 0,
+            ));
+
+            if (is_wp_error($response)) {
+                error_log('GMS Stripe Error: ' . $response->get_error_message());
+                return null;
+            }
+
+            $code = wp_remote_retrieve_response_code($response);
+
+            if ($code >= 200 && $code < 300) {
+                return wp_remote_retrieve_body($response);
+            }
+
+            if ($code >= 300 && $code < 400) {
+                $location = wp_remote_retrieve_header($response, 'location');
+
+                if (empty($location)) {
+                    break;
+                }
+
+                if (is_array($location)) {
+                    $location = reset($location);
+                }
+
+                if (strpos($location, 'http') !== 0) {
+                    $url = rtrim($this->files_api_url, '/') . '/' . ltrim($location, '/');
+                } else {
+                    $url = $location;
+                }
+
+                $attempt++;
+                continue;
+            }
+
+            error_log(
+                sprintf(
+                    'GMS Stripe Error: Unexpected response while downloading Stripe file (HTTP %d).',
+                    intval($code)
+                )
+            );
+
             return null;
         }
 
-        $code = wp_remote_retrieve_response_code($response);
+        error_log('GMS Stripe Error: Unable to resolve Stripe file download after redirects.');
 
-        if ($code < 200 || $code >= 300) {
-            error_log('GMS Stripe Error: Unexpected response while downloading Stripe file.');
-            return null;
-        }
-
-        return wp_remote_retrieve_body($response);
+        return null;
     }
 
     private function saveSelfieAttachment($file, $contents) {
