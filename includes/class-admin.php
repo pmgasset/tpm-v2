@@ -691,6 +691,7 @@ class GMS_Admin {
         add_action('admin_post_gms_save_message_template', array($this, 'handle_save_message_template'));
         add_action('admin_post_gms_delete_message_template', array($this, 'handle_delete_message_template'));
         add_action('admin_post_gms_housekeeper_ical', array($this, 'handle_housekeeper_ical_export'));
+        add_action('admin_post_gms_refresh_guest_verification', array($this, 'handle_refresh_guest_verification'));
     }
 
     private function build_reservations_redirect_url() {
@@ -2341,11 +2342,47 @@ class GMS_Admin {
             }
         }
 
+        $can_request_refresh = false;
+        $stripe_session_id = '';
+        if (is_array($verification)) {
+            $stripe_session_id = isset($verification['stripe_session_id']) ? sanitize_text_field($verification['stripe_session_id']) : '';
+            $stored_paths = array(
+                isset($verification['document_front_path']) ? (string) $verification['document_front_path'] : '',
+                isset($verification['document_back_path']) ? (string) $verification['document_back_path'] : '',
+                isset($verification['selfie_path']) ? (string) $verification['selfie_path'] : '',
+            );
+            $missing_paths = array_filter($stored_paths, static function ($path) {
+                return trim($path) === '';
+            });
+
+            if ($stripe_session_id !== '' && count($missing_paths) > 0) {
+                $can_request_refresh = true;
+            }
+        }
+
+        $refresh_notice = isset($_GET['gms_verification_refresh']) ? sanitize_key(wp_unslash($_GET['gms_verification_refresh'])) : '';
+        $refresh_error = '';
+        if ($refresh_notice === 'error' && isset($_GET['gms_verification_error'])) {
+            $refresh_error = sanitize_text_field(rawurldecode(wp_unslash($_GET['gms_verification_error'])));
+        }
+
         ?>
         <div class="wrap gms-guest-profile">
             <h1 class="wp-heading-inline"><?php esc_html_e('Guest Profiles', 'guest-management-system'); ?></h1>
             <a href="<?php echo esc_url($list_url); ?>" class="page-title-action"><?php esc_html_e('Back to Guest Profiles', 'guest-management-system'); ?></a>
             <hr class="wp-header-end">
+
+            <?php if ($refresh_notice === 'success') : ?>
+                <div class="notice notice-success is-dismissible">
+                    <p><?php esc_html_e('Stripe verification assets were requested successfully. Stored media will appear once downloaded.', 'guest-management-system'); ?></p>
+                </div>
+            <?php elseif ($refresh_notice === 'error') : ?>
+                <div class="notice notice-error is-dismissible">
+                    <p><?php echo $refresh_error !== ''
+                        ? esc_html($refresh_error)
+                        : esc_html__('Unable to refresh the verification assets. Please try again.', 'guest-management-system'); ?></p>
+                </div>
+            <?php endif; ?>
 
             <style>
                 .gms-guest-profile__media-grid {
@@ -2440,6 +2477,16 @@ class GMS_Admin {
                 <?php else : ?>
                     <p><?php esc_html_e('No ID images are stored for this guest yet.', 'guest-management-system'); ?></p>
                 <?php endif; ?>
+
+                <?php if ($can_request_refresh) : ?>
+                    <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" class="gms-guest-profile__refresh-form">
+                        <?php wp_nonce_field('gms_refresh_guest_verification_' . $guest_id); ?>
+                        <input type="hidden" name="action" value="gms_refresh_guest_verification">
+                        <input type="hidden" name="guest_id" value="<?php echo esc_attr($guest_id); ?>">
+                        <input type="hidden" name="session_id" value="<?php echo esc_attr($stripe_session_id); ?>">
+                        <?php submit_button(__('Request ID from Stripe', 'guest-management-system'), 'secondary', 'submit', false); ?>
+                    </form>
+                <?php endif; ?>
             </div>
 
             <div class="gms-guest-profile__section">
@@ -2508,6 +2555,64 @@ class GMS_Admin {
             </div>
         </div>
         <?php
+    }
+
+    public function handle_refresh_guest_verification() {
+        if (!current_user_can('manage_options')) {
+            wp_die(__('You do not have permission to refresh verification details.', 'guest-management-system'));
+        }
+
+        $guest_id = isset($_POST['guest_id']) ? absint(wp_unslash($_POST['guest_id'])) : 0;
+        $session_id = isset($_POST['session_id']) ? sanitize_text_field(wp_unslash($_POST['session_id'])) : '';
+
+        if ($guest_id <= 0) {
+            wp_die(__('Invalid guest selected for verification refresh.', 'guest-management-system'));
+        }
+
+        check_admin_referer('gms_refresh_guest_verification_' . $guest_id);
+
+        $redirect_url = add_query_arg(
+            array(
+                'page' => 'guest-management-guests',
+                'action' => 'view',
+                'guest_id' => $guest_id,
+            ),
+            admin_url('admin.php')
+        );
+
+        if ($session_id === '') {
+            $redirect_url = add_query_arg(
+                array(
+                    'gms_verification_refresh' => 'error',
+                    'gms_verification_error' => rawurlencode(__('Missing Stripe verification session identifier.', 'guest-management-system')),
+                ),
+                $redirect_url
+            );
+            wp_safe_redirect($redirect_url);
+            exit;
+        }
+
+        if (!class_exists('GMS_Stripe_Integration')) {
+            require_once plugin_dir_path(__FILE__) . 'class-stripe-integration.php';
+        }
+
+        $stripe = new GMS_Stripe_Integration();
+        $result = $stripe->refreshVerificationForSession($session_id);
+
+        if (is_wp_error($result)) {
+            $redirect_url = add_query_arg(
+                array(
+                    'gms_verification_refresh' => 'error',
+                    'gms_verification_error' => rawurlencode($result->get_error_message()),
+                ),
+                $redirect_url
+            );
+        } else {
+            $redirect_url = add_query_arg('gms_verification_refresh', 'success', $redirect_url);
+        }
+
+        wp_safe_redirect($redirect_url);
+        exit;
     }
 
     public function handle_housekeeper_ical_export() {

@@ -26,6 +26,35 @@ class GMS_Stripe_Integration {
             'permission_callback' => '__return_true'
         ));
     }
+
+    public function refreshVerificationForSession($session_id) {
+        $session_id = trim((string) $session_id);
+
+        if ($session_id === '') {
+            return new WP_Error('gms_stripe_missing_session', __('Unable to refresh verification without a Stripe session ID.', 'guest-management-system'));
+        }
+
+        if (empty($this->secret_key)) {
+            return new WP_Error('gms_stripe_missing_key', __('Stripe secret key is not configured.', 'guest-management-system'));
+        }
+
+        $session = $this->retrieveVerificationSessionById($session_id);
+
+        if (!is_array($session) || empty($session['id'])) {
+            return new WP_Error('gms_stripe_session_not_found', __('Stripe verification session could not be located.', 'guest-management-system'));
+        }
+
+        $reservation_id = $this->syncVerificationSession($session, false);
+
+        if (empty($reservation_id)) {
+            return new WP_Error('gms_stripe_reservation_missing', __('The verification session is not linked to a reservation in this system.', 'guest-management-system'));
+        }
+
+        return array(
+            'reservation_id' => $reservation_id,
+            'session' => $session,
+        );
+    }
     
     public function createVerificationSession($reservation) {
         if (empty($this->secret_key)) {
