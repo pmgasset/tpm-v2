@@ -365,7 +365,7 @@ class GMS_Database {
 
                 $rows = $wpdb->get_results(
                     $wpdb->prepare(
-                        "SELECT id, portal_token FROM {$table_name} WHERE portal_token = %s ORDER BY updated_at DESC, id DESC",
+                        "SELECT id, portal_token, created_at, updated_at FROM {$table_name} WHERE portal_token = %s ORDER BY created_at ASC, id ASC",
                         $token
                     ),
                     ARRAY_A
@@ -1031,7 +1031,7 @@ class GMS_Database {
 
         $table_name = $wpdb->prefix . 'gms_reservations';
         $sql = $wpdb->prepare(
-            "SELECT * FROM $table_name WHERE portal_token = %s ORDER BY updated_at DESC, id DESC",
+            "SELECT * FROM $table_name WHERE portal_token = %s ORDER BY created_at ASC, id ASC",
             $sanitized_token
         );
 
@@ -1043,6 +1043,12 @@ class GMS_Database {
 
         if (count($rows) > 1) {
             self::resolvePortalTokenConflicts($rows);
+
+            $rows = $wpdb->get_results($sql, ARRAY_A);
+
+            if (empty($rows)) {
+                return null;
+            }
         }
 
         return self::formatReservationRow($rows[0]);
@@ -3606,7 +3612,10 @@ class GMS_Database {
             return;
         }
 
-        $primary_id = isset($rows[0]['id']) ? intval($rows[0]['id']) : 0;
+        $rows = self::sortPortalTokenRows($rows);
+
+        $primary = reset($rows);
+        $primary_id = isset($primary['id']) ? intval($primary['id']) : 0;
 
         foreach ($rows as $index => $row) {
             if ($index === 0) {
@@ -3631,6 +3640,45 @@ class GMS_Database {
 
             self::updateReservation($duplicate_id, array('portal_token' => $new_token));
         }
+    }
+
+    private static function sortPortalTokenRows(array $rows) {
+        usort($rows, function ($a, $b) {
+            $a_created = self::normalizePortalTokenTimestamp($a['created_at'] ?? null);
+            $b_created = self::normalizePortalTokenTimestamp($b['created_at'] ?? null);
+
+            if ($a_created !== $b_created) {
+                return $a_created <=> $b_created;
+            }
+
+            $a_updated = self::normalizePortalTokenTimestamp($a['updated_at'] ?? null);
+            $b_updated = self::normalizePortalTokenTimestamp($b['updated_at'] ?? null);
+
+            if ($a_updated !== $b_updated) {
+                return $a_updated <=> $b_updated;
+            }
+
+            $a_id = isset($a['id']) ? intval($a['id']) : 0;
+            $b_id = isset($b['id']) ? intval($b['id']) : 0;
+
+            return $a_id <=> $b_id;
+        });
+
+        return $rows;
+    }
+
+    private static function normalizePortalTokenTimestamp($value) {
+        if (empty($value) || $value === '0000-00-00 00:00:00') {
+            return 0;
+        }
+
+        $timestamp = strtotime((string) $value);
+
+        if ($timestamp === false) {
+            return 0;
+        }
+
+        return $timestamp;
     }
 
     private static function ensureUniquePortalToken($token, $exclude_id = 0) {
