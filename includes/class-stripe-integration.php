@@ -667,6 +667,11 @@ class GMS_Stripe_Integration {
             $existing_verification = array();
         }
 
+        $existing_verification = GMS_Database::getVerificationByReservation($reservation_id);
+        if (!is_array($existing_verification)) {
+            $existing_verification = array();
+        }
+
         $document_front = $this->extractStripeFileId($document['front'] ?? null);
         $document_back = $this->extractStripeFileId($document['back'] ?? null);
         $selfie_file_id = $this->extractStripeFileId($selfie['selfie'] ?? null);
