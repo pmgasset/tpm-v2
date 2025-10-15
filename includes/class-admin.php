@@ -2355,7 +2355,13 @@ class GMS_Admin {
                 return trim($path) === '';
             });
 
-            if ($stripe_session_id !== '' && count($missing_paths) > 0) {
+            if (
+                $stripe_session_id !== ''
+                && (
+                    count($missing_paths) > 0
+                    || empty($media_items)
+                )
+            ) {
                 $can_request_refresh = true;
             }
         }
