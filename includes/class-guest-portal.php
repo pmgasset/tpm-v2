@@ -49,11 +49,6 @@ class GMS_Guest_Portal {
         }
         $secondary_color = get_option('gms_portal_secondary_color', '#005a87');
 
-        $guest_profile = null;
-        if (!empty($reservation['guest_id'])) {
-            $guest_profile = GMS_Database::get_guest_by_id($reservation['guest_id']);
-        }
-
         $contact_first_name = '';
         $contact_last_name = '';
 
@@ -63,24 +58,6 @@ class GMS_Guest_Portal {
 
         $contact_email = trim((string) ($reservation['guest_email'] ?? ''));
         $contact_phone = trim((string) ($reservation['guest_phone'] ?? ''));
-
-        if (is_array($guest_profile)) {
-            if ($contact_first_name === '' && !empty($guest_profile['first_name'])) {
-                $contact_first_name = trim((string) $guest_profile['first_name']);
-            }
-
-            if ($contact_last_name === '' && !empty($guest_profile['last_name'])) {
-                $contact_last_name = trim((string) $guest_profile['last_name']);
-            }
-
-            if ($contact_email === '' && !empty($guest_profile['email'])) {
-                $contact_email = trim((string) $guest_profile['email']);
-            }
-
-            if ($contact_phone === '' && !empty($guest_profile['phone'])) {
-                $contact_phone = trim((string) $guest_profile['phone']);
-            }
-        }
 
         if ($contact_first_name === '' || $contact_last_name === '') {
             list($split_first, $split_last) = self::splitGuestName($reservation['guest_name'] ?? '');
