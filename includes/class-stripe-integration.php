@@ -108,6 +108,62 @@ class GMS_Stripe_Integration {
         return $url;
     }
 
+    public function getFileStreamData($file_id) {
+        $file_id = trim((string) $file_id);
+
+        if ($file_id === '') {
+            return new WP_Error('gms_stripe_missing_file', __('Unable to locate the requested Stripe file.', 'guest-management-system'));
+        }
+
+        if (empty($this->secret_key)) {
+            return new WP_Error('gms_stripe_missing_key', __('Stripe secret key is not configured.', 'guest-management-system'));
+        }
+
+        $file = $this->retrieveStripeFile($file_id);
+
+        if (!is_array($file) || empty($file['url'])) {
+            error_log('GMS Stripe Error: Unable to retrieve metadata for Stripe file ' . $file_id . '.');
+
+            return new WP_Error(
+                'gms_stripe_file_metadata_missing',
+                __('Unable to load details for the requested Stripe file.', 'guest-management-system')
+            );
+        }
+
+        $contents = $this->downloadStripeFile($file);
+
+        if (!is_string($contents)) {
+            return new WP_Error(
+                'gms_stripe_file_download_failed',
+                __('Stripe declined to provide the requested verification file. Please try again or contact support.', 'guest-management-system')
+            );
+        }
+
+        $filename = '';
+        if (!empty($file['filename'])) {
+            $filename = sanitize_file_name($file['filename']);
+        }
+
+        if ($filename === '') {
+            $filename = sanitize_file_name($file_id . '.bin');
+        }
+
+        $mime_type = '';
+        if (!empty($file['mime_type'])) {
+            $mime_type = sanitize_mime_type($file['mime_type']);
+        }
+
+        if ($mime_type === '') {
+            $mime_type = 'application/octet-stream';
+        }
+
+        return array(
+            'contents' => $contents,
+            'filename' => $filename,
+            'mime_type' => $mime_type,
+        );
+    }
+
     public function refreshVerificationForSession($session_id) {
         $session_id = trim((string) $session_id);
 
@@ -660,11 +716,6 @@ class GMS_Stripe_Integration {
             } else {
                 error_log('GMS Stripe Error: Unable to encode verification report for storage.');
             }
-        }
-
-        $existing_verification = GMS_Database::getVerificationByReservation($reservation_id);
-        if (!is_array($existing_verification)) {
-            $existing_verification = array();
         }
 
         $existing_verification = GMS_Database::getVerificationByReservation($reservation_id);

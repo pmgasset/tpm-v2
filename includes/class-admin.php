@@ -2692,18 +2692,37 @@ class GMS_Admin {
         }
 
         $stripe = GMS_Stripe_Integration::instance();
-        $link = $stripe->generateFileLink($file_id);
+        $stream = $stripe->getFileStreamData($file_id);
 
-        if (is_wp_error($link)) {
-            wp_die(esc_html($link->get_error_message()), __('Stripe File Error', 'guest-management-system'));
+        if (is_wp_error($stream)) {
+            wp_die(esc_html($stream->get_error_message()), __('Stripe File Error', 'guest-management-system'));
         }
 
-        $host = wp_parse_url($link, PHP_URL_HOST);
-        if (!in_array($host, array('files.stripe.com'), true)) {
-            wp_die(__('Unexpected Stripe file host.', 'guest-management-system'), __('Stripe File Error', 'guest-management-system'));
+        $mime_type = isset($stream['mime_type']) ? sanitize_mime_type($stream['mime_type']) : 'application/octet-stream';
+        if ($mime_type === '') {
+            $mime_type = 'application/octet-stream';
         }
 
-        wp_redirect($link);
+        $filename = isset($stream['filename']) ? sanitize_file_name($stream['filename']) : ($file_id . '.bin');
+        if ($filename === '') {
+            $filename = sanitize_file_name($file_id . '.bin');
+        }
+
+        $contents = isset($stream['contents']) ? $stream['contents'] : '';
+
+        if (!is_string($contents) || $contents === '') {
+            wp_die(__('Unable to render the requested Stripe file.', 'guest-management-system'), __('Stripe File Error', 'guest-management-system'));
+        }
+
+        if (!headers_sent()) {
+            nocache_headers();
+            header('Content-Type: ' . $mime_type);
+            header('Content-Length: ' . strlen($contents));
+            header('Content-Disposition: inline; filename="' . $filename . '"');
+            header('X-Content-Type-Options: nosniff');
+        }
+
+        echo $contents;
         exit;
     }
 
