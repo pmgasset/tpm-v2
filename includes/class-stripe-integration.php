@@ -10,13 +10,16 @@ class GMS_Stripe_Integration {
 
     private $api_url = 'https://api.stripe.com/v1';
     private $secret_key;
+    private $restricted_key;
     private $files_api_url = 'https://files.stripe.com/v1';
     private $api_version = '2020-08-27';
     private static $instance = null;
     private static $bootstrapped = false;
+    private $restricted_warning_logged = false;
 
     public function __construct() {
         $this->secret_key = get_option('gms_stripe_sk');
+        $this->restricted_key = get_option('gms_stripe_identity_restricted_key');
 
         if (!self::$bootstrapped) {
             // Add webhook handler for Stripe events
@@ -35,6 +38,57 @@ class GMS_Stripe_Integration {
         return new self();
     }
 
+    private function getStripeApiKey($scope = 'default', &$used_restricted = null) {
+        $used_restricted = false;
+        $scope = (string) $scope;
+
+        if ($scope === 'identity' || $scope === 'identity_restricted') {
+            if (!empty($this->restricted_key)) {
+                $used_restricted = true;
+                return $this->restricted_key;
+            }
+
+            if (!$this->restricted_warning_logged && !empty($this->secret_key)) {
+                error_log('GMS Stripe Notice: Using the primary secret key for identity verification results because a restricted Identity key is not configured.');
+                $this->restricted_warning_logged = true;
+            }
+        }
+
+        if (!empty($this->secret_key)) {
+            return $this->secret_key;
+        }
+
+        return '';
+    }
+
+    private function getStripeRequestHeaders($scope = 'default', $include_version = false, array $extra_headers = array(), &$used_restricted = null) {
+        $headers = array();
+        $api_key = $this->getStripeApiKey($scope, $used_restricted);
+
+        if ($api_key === '') {
+            if ($scope === 'identity' || $scope === 'identity_restricted') {
+                return new WP_Error(
+                    'gms_stripe_missing_key',
+                    __('Stripe Identity API keys are not configured. Add a restricted key with verification permissions in Integrations settings.', 'guest-management-system')
+                );
+            }
+
+            return new WP_Error('gms_stripe_missing_key', __('Stripe secret key is not configured.', 'guest-management-system'));
+        }
+
+        $headers['Authorization'] = 'Bearer ' . $api_key;
+
+        if ($include_version) {
+            $headers['Stripe-Version'] = $this->api_version;
+        }
+
+        foreach ($extra_headers as $key => $value) {
+            $headers[$key] = $value;
+        }
+
+        return $headers;
+    }
+
     public function registerWebhookEndpoint() {
         register_rest_route('gms/v1', '/stripe-webhook', array(
             'methods' => 'POST',
@@ -50,8 +104,16 @@ class GMS_Stripe_Integration {
             return new WP_Error('gms_stripe_missing_file', __('Unable to locate the requested Stripe file.', 'guest-management-system'));
         }
 
-        if (empty($this->secret_key)) {
-            return new WP_Error('gms_stripe_missing_key', __('Stripe secret key is not configured.', 'guest-management-system'));
+        $used_restricted = false;
+        $headers = $this->getStripeRequestHeaders(
+            'identity_restricted',
+            true,
+            array('Content-Type' => 'application/x-www-form-urlencoded'),
+            $used_restricted
+        );
+
+        if (is_wp_error($headers)) {
+            return $headers;
         }
 
         $expires_in = absint($expires_in);
@@ -71,11 +133,7 @@ class GMS_Stripe_Integration {
         $encoded_body = http_build_query($body_params, '', '&', PHP_QUERY_RFC3986);
 
         $response = wp_remote_post($endpoint, array(
-            'headers' => array(
-                'Authorization' => 'Bearer ' . $this->secret_key,
-                'Content-Type' => 'application/x-www-form-urlencoded',
-                'Stripe-Version' => $this->api_version,
-            ),
+            'headers' => $headers,
             'body' => $encoded_body,
             'timeout' => 30,
         ));
@@ -97,6 +155,13 @@ class GMS_Stripe_Integration {
             $message = isset($result['error']['message']) ? $result['error']['message'] : __('Unknown Stripe API error.', 'guest-management-system');
             error_log('GMS Stripe API Error: ' . $message);
 
+            if (stripos($message, 'restricted') !== false) {
+                return new WP_Error(
+                    'gms_stripe_file_link_failed',
+                    __('Stripe declined to share the verification file. Ensure the restricted Identity API key has permission to access verification results.', 'guest-management-system')
+                );
+            }
+
             return new WP_Error('gms_stripe_file_link_failed', __('Stripe did not accept the request for a secure download link.', 'guest-management-system'));
         }
 
@@ -117,11 +182,11 @@ class GMS_Stripe_Integration {
             return new WP_Error('gms_stripe_missing_file', __('Unable to locate the requested Stripe file.', 'guest-management-system'));
         }
 
-        if (empty($this->secret_key)) {
-            return new WP_Error('gms_stripe_missing_key', __('Stripe secret key is not configured.', 'guest-management-system'));
-        }
-
         $file = $this->retrieveStripeFile($file_id);
+
+        if (is_wp_error($file)) {
+            return $file;
+        }
 
         if (!is_array($file) || empty($file['url'])) {
             error_log('GMS Stripe Error: Unable to retrieve metadata for Stripe file ' . $file_id . '.');
@@ -133,6 +198,10 @@ class GMS_Stripe_Integration {
         }
 
         $contents = $this->downloadStripeFile($file);
+
+        if (is_wp_error($contents)) {
+            return $contents;
+        }
 
         if (!is_string($contents)) {
             return new WP_Error(
@@ -173,11 +242,21 @@ class GMS_Stripe_Integration {
             return new WP_Error('gms_stripe_missing_session', __('Unable to refresh verification without a Stripe session ID.', 'guest-management-system'));
         }
 
-        if (empty($this->secret_key)) {
-            return new WP_Error('gms_stripe_missing_key', __('Stripe secret key is not configured.', 'guest-management-system'));
+        $used_restricted = false;
+        $api_key = $this->getStripeApiKey('identity_restricted', $used_restricted);
+
+        if ($api_key === '') {
+            return new WP_Error(
+                'gms_stripe_missing_key',
+                __('Stripe Identity API keys are not configured. Add a restricted key with verification permissions in Integrations settings.', 'guest-management-system')
+            );
         }
 
         $session = $this->retrieveVerificationSessionById($session_id);
+
+        if (is_wp_error($session)) {
+            return $session;
+        }
 
         if (!is_array($session) || empty($session['id'])) {
             return new WP_Error('gms_stripe_session_not_found', __('Stripe verification session could not be located.', 'guest-management-system'));
@@ -282,11 +361,6 @@ class GMS_Stripe_Integration {
             return false;
         }
 
-        if (empty($this->secret_key)) {
-            error_log('GMS Stripe Error: Secret key not configured.');
-            return false;
-        }
-
         $endpoint = $this->api_url . '/identity/verification_sessions/' . rawurlencode($session_id);
         $endpoint = add_query_arg(
             array(
@@ -295,11 +369,16 @@ class GMS_Stripe_Integration {
             $endpoint
         );
 
+        $used_restricted = false;
+        $headers = $this->getStripeRequestHeaders('identity_restricted', true, array(), $used_restricted);
+
+        if (is_wp_error($headers)) {
+            error_log('GMS Stripe Error: ' . $headers->get_error_message());
+            return false;
+        }
+
         $response = wp_remote_get($endpoint, array(
-            'headers' => array(
-                'Authorization' => 'Bearer ' . $this->secret_key,
-                'Stripe-Version' => $this->api_version,
-            ),
+            'headers' => $headers,
             'timeout' => 30,
         ));
 
@@ -524,8 +603,8 @@ class GMS_Stripe_Integration {
     }
 
     private function retrieveVerificationSessionById($session_id) {
-        if (empty($session_id) || empty($this->secret_key)) {
-            return null;
+        if ($session_id === '') {
+            return new WP_Error('gms_stripe_missing_session', __('Unable to refresh verification without a Stripe session ID.', 'guest-management-system'));
         }
 
         $endpoint = $this->api_url . '/identity/verification_sessions/' . rawurlencode($session_id);
@@ -536,16 +615,24 @@ class GMS_Stripe_Integration {
             $endpoint
         );
 
+        $used_restricted = false;
+        $headers = $this->getStripeRequestHeaders('identity_restricted', true, array(), $used_restricted);
+
+        if (is_wp_error($headers)) {
+            return $headers;
+        }
+
         $response = wp_remote_get($endpoint, array(
-            'headers' => array(
-                'Authorization' => 'Bearer ' . $this->secret_key,
-            ),
+            'headers' => $headers,
             'timeout' => 30,
         ));
 
         if (is_wp_error($response)) {
             error_log('GMS Stripe Error: ' . $response->get_error_message());
-            return null;
+            return new WP_Error(
+                'gms_stripe_session_not_found',
+                __('Unable to contact Stripe to refresh the verification session details.', 'guest-management-system')
+            );
         }
 
         $body = wp_remote_retrieve_body($response);
@@ -553,13 +640,26 @@ class GMS_Stripe_Integration {
 
         if (json_last_error() !== JSON_ERROR_NONE) {
             error_log('GMS Stripe Error: Unable to decode verification session refresh response.');
-            return null;
+            return new WP_Error(
+                'gms_stripe_session_not_found',
+                __('Unable to interpret the verification session details returned by Stripe.', 'guest-management-system')
+            );
         }
 
         if (isset($result['error'])) {
             $message = isset($result['error']['message']) ? $result['error']['message'] : 'Unknown Stripe API error.';
             error_log('GMS Stripe API Error: ' . $message);
-            return null;
+            if (stripos($message, 'restricted') !== false) {
+                return new WP_Error(
+                    'gms_stripe_identity_permission',
+                    __('Stripe declined to return the verification session. Confirm the restricted Identity API key has access to verification results.', 'guest-management-system')
+                );
+            }
+
+            return new WP_Error(
+                'gms_stripe_session_not_found',
+                __('Stripe could not provide the requested verification session.', 'guest-management-system')
+            );
         }
 
         return $result;
@@ -609,8 +709,8 @@ class GMS_Stripe_Integration {
     }
 
     private function retrieveVerificationReport($report_id) {
-        if (empty($report_id) || empty($this->secret_key)) {
-            return null;
+        if ($report_id === '') {
+            return new WP_Error('gms_stripe_missing_report', __('Unable to refresh verification without a Stripe report ID.', 'guest-management-system'));
         }
 
         $endpoint = $this->api_url . '/identity/verification_reports/' . rawurlencode($report_id);
@@ -625,16 +725,24 @@ class GMS_Stripe_Integration {
             $endpoint
         );
 
+        $used_restricted = false;
+        $headers = $this->getStripeRequestHeaders('identity_restricted', true, array(), $used_restricted);
+
+        if (is_wp_error($headers)) {
+            return $headers;
+        }
+
         $response = wp_remote_get($endpoint, array(
-            'headers' => array(
-                'Authorization' => 'Bearer ' . $this->secret_key,
-            ),
+            'headers' => $headers,
             'timeout' => 30,
         ));
 
         if (is_wp_error($response)) {
             error_log('GMS Stripe Error: ' . $response->get_error_message());
-            return null;
+            return new WP_Error(
+                'gms_stripe_report_not_found',
+                __('Unable to contact Stripe to load the verification report.', 'guest-management-system')
+            );
         }
 
         $body = wp_remote_retrieve_body($response);
@@ -642,13 +750,26 @@ class GMS_Stripe_Integration {
 
         if (json_last_error() !== JSON_ERROR_NONE) {
             error_log('GMS Stripe Error: Unable to decode verification report response.');
-            return null;
+            return new WP_Error(
+                'gms_stripe_report_not_found',
+                __('Unable to interpret the verification report returned by Stripe.', 'guest-management-system')
+            );
         }
 
         if (isset($result['error'])) {
             $message = isset($result['error']['message']) ? $result['error']['message'] : 'Unknown Stripe API error.';
             error_log('GMS Stripe API Error: ' . $message);
-            return null;
+            if (stripos($message, 'restricted') !== false) {
+                return new WP_Error(
+                    'gms_stripe_identity_permission',
+                    __('Stripe declined to return the verification report. Ensure the restricted Identity API key grants access to verification results.', 'guest-management-system')
+                );
+            }
+
+            return new WP_Error(
+                'gms_stripe_report_not_found',
+                __('Stripe could not provide the requested verification report.', 'guest-management-system')
+            );
         }
 
         return $result;
@@ -854,7 +975,9 @@ class GMS_Stripe_Integration {
         if ($mime_type === '') {
             $file = $this->retrieveStripeFile($file_id);
 
-            if (is_array($file) && !empty($file['mime_type'])) {
+            if (is_wp_error($file)) {
+                error_log('GMS Stripe Error: ' . $file->get_error_message());
+            } elseif (is_array($file) && !empty($file['mime_type'])) {
                 $mime_type = sanitize_mime_type($file['mime_type']);
             }
         }
@@ -1033,36 +1156,59 @@ class GMS_Stripe_Integration {
     }
 
     private function retrieveStripeFile($file_id) {
-        if (empty($file_id) || empty($this->secret_key)) {
-            return null;
+        if ($file_id === '') {
+            return new WP_Error('gms_stripe_missing_file', __('Unable to locate the requested Stripe file.', 'guest-management-system'));
         }
 
         $endpoint = $this->files_api_url . '/files/' . rawurlencode($file_id);
 
+        $used_restricted = false;
+        $headers = $this->getStripeRequestHeaders('identity_restricted', false, array(), $used_restricted);
+
+        if (is_wp_error($headers)) {
+            return $headers;
+        }
+
         $response = wp_remote_get($endpoint, array(
-            'headers' => array(
-                'Authorization' => 'Bearer ' . $this->secret_key,
-            ),
+            'headers' => $headers,
             'timeout' => 30,
         ));
 
         if (is_wp_error($response)) {
             error_log('GMS Stripe Error: ' . $response->get_error_message());
-            return null;
+            return new WP_Error(
+                'gms_stripe_file_metadata_failed',
+                __('Unable to contact Stripe to load details for the requested verification file.', 'guest-management-system')
+            );
         }
+
+        $code = wp_remote_retrieve_response_code($response);
 
         $body = wp_remote_retrieve_body($response);
         $result = json_decode($body, true);
 
         if (json_last_error() !== JSON_ERROR_NONE) {
             error_log('GMS Stripe Error: Unable to decode Stripe file metadata response.');
-            return null;
+            return new WP_Error(
+                'gms_stripe_file_metadata_failed',
+                __('Unable to interpret the details returned for the requested Stripe file.', 'guest-management-system')
+            );
         }
 
         if (isset($result['error'])) {
             $message = isset($result['error']['message']) ? $result['error']['message'] : 'Unknown Stripe API error.';
             error_log('GMS Stripe API Error: ' . $message);
-            return null;
+            if (stripos($message, 'restricted') !== false || $code === 401 || $code === 403) {
+                return new WP_Error(
+                    'gms_stripe_identity_permission',
+                    __('Stripe declined to share the requested verification file details. Ensure the restricted Identity API key grants access to verification results.', 'guest-management-system')
+                );
+            }
+
+            return new WP_Error(
+                'gms_stripe_file_metadata_failed',
+                __('Stripe reported an error while loading the requested verification file.', 'guest-management-system')
+            );
         }
 
         return $result;
@@ -1074,10 +1220,12 @@ class GMS_Stripe_Integration {
         }
 
         $url = $file['url'];
-        $headers = array(
-            'Authorization' => 'Bearer ' . $this->secret_key,
-            'Stripe-Version' => $this->api_version,
-        );
+        $used_restricted = false;
+        $headers = $this->getStripeRequestHeaders('identity_restricted', true, array(), $used_restricted);
+
+        if (is_wp_error($headers)) {
+            return $headers;
+        }
 
         $max_redirects = 5;
         $attempt = 0;
@@ -1100,7 +1248,11 @@ class GMS_Stripe_Integration {
 
             if (is_wp_error($response)) {
                 error_log('GMS Stripe Error: ' . $response->get_error_message());
-                return null;
+
+                return new WP_Error(
+                    'gms_stripe_file_download_failed',
+                    __('Unable to contact Stripe to download the requested verification file.', 'guest-management-system')
+                );
             }
 
             $code = wp_remote_retrieve_response_code($response);
@@ -1137,12 +1289,25 @@ class GMS_Stripe_Integration {
                 )
             );
 
-            return null;
+            if ($code === 401 || $code === 403) {
+                return new WP_Error(
+                    'gms_stripe_file_download_failed',
+                    __('Stripe declined to provide the requested verification file. Ensure the restricted Identity API key has access to verification results.', 'guest-management-system')
+                );
+            }
+
+            return new WP_Error(
+                'gms_stripe_file_download_failed',
+                __('Stripe declined to provide the requested verification file. Please try again or contact support.', 'guest-management-system')
+            );
         }
 
         error_log('GMS Stripe Error: Unable to resolve Stripe file download after redirects.');
 
-        return null;
+        return new WP_Error(
+            'gms_stripe_file_download_failed',
+            __('Unable to complete the Stripe verification file download after following redirects.', 'guest-management-system')
+        );
     }
 
     private function saveSelfieAttachment($file, $contents) {

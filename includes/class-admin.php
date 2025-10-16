@@ -1219,6 +1219,10 @@ class GMS_Admin {
         $integration_options = array(
             'gms_stripe_pk' => array('label' => __('Stripe Publishable Key', 'guest-management-system')),
             'gms_stripe_sk' => array('label' => __('Stripe Secret Key', 'guest-management-system')),
+            'gms_stripe_identity_restricted_key' => array(
+                'label' => __('Stripe Identity Restricted Key', 'guest-management-system'),
+                'description' => __('Use a restricted key with Identity permissions to view verification files inside Guest Profiles.', 'guest-management-system'),
+            ),
             'gms_stripe_webhook_secret' => array('label' => __('Stripe Webhook Secret', 'guest-management-system')),
             'gms_voipms_user' => array('label' => __('VoIP.ms Username', 'guest-management-system')),
             'gms_voipms_pass' => array('label' => __('VoIP.ms API Password', 'guest-management-system')),
