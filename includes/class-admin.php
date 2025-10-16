@@ -2326,37 +2326,52 @@ class GMS_Admin {
             }
         }
 
-        $media_items = array();
+        $selfie_preview = null;
         if (is_array($verification)) {
-            $front_preview = $this->build_verification_media_preview(
-                $verification['document_front_path'] ?? '',
-                $verification['document_front_mime'] ?? '',
-                $verification['document_front_file_id'] ?? ''
-            );
-            if ($front_preview) {
-                $front_preview['label'] = esc_html__('Document Front', 'guest-management-system');
-                $media_items[] = $front_preview;
-            }
-
-            $back_preview = $this->build_verification_media_preview(
-                $verification['document_back_path'] ?? '',
-                $verification['document_back_mime'] ?? '',
-                $verification['document_back_file_id'] ?? ''
-            );
-            if ($back_preview) {
-                $back_preview['label'] = esc_html__('Document Back', 'guest-management-system');
-                $media_items[] = $back_preview;
-            }
-
             $selfie_preview = $this->build_verification_media_preview(
                 $verification['selfie_path'] ?? '',
                 $verification['selfie_mime'] ?? '',
                 $verification['selfie_file_id'] ?? ''
             );
-            if ($selfie_preview) {
-                $selfie_preview['label'] = esc_html__('Selfie', 'guest-management-system');
-                $media_items[] = $selfie_preview;
+        }
+
+        $guest_user_id = GMS_Database::get_guest_wp_user_id($guest_id);
+        $stored_selfie_url = '';
+        if ($guest_user_id > 0) {
+            $stored_selfie_url = get_user_meta($guest_user_id, 'gms_verification_selfie_url', true);
+            if (!is_string($stored_selfie_url)) {
+                $stored_selfie_url = '';
             }
+            $stored_selfie_url = trim($stored_selfie_url);
+        }
+
+        $selfie_src = '';
+        $selfie_mime_type = '';
+        $selfie_is_data_uri = false;
+
+        if ($stored_selfie_url !== '') {
+            $selfie_src = esc_url_raw($stored_selfie_url);
+        }
+
+        if ($selfie_src === '' && is_array($selfie_preview)) {
+            $preview_data_uri = isset($selfie_preview['data_uri']) ? (string) $selfie_preview['data_uri'] : '';
+            $preview_view_url = isset($selfie_preview['view_url']) ? (string) $selfie_preview['view_url'] : '';
+            $preview_mime = isset($selfie_preview['type']) ? sanitize_mime_type($selfie_preview['type']) : '';
+
+            if ($preview_data_uri !== '') {
+                $selfie_src = $preview_data_uri;
+                $selfie_is_data_uri = true;
+            } elseif ($preview_view_url !== '') {
+                $selfie_src = esc_url_raw($preview_view_url);
+            }
+
+            if ($preview_mime !== '') {
+                $selfie_mime_type = $preview_mime;
+            }
+        }
+
+        if ($selfie_src !== '' && strpos($selfie_src, 'data:') === 0) {
+            $selfie_is_data_uri = true;
         }
 
         $stripe_session_id = '';
@@ -2439,19 +2454,6 @@ class GMS_Admin {
             <?php endif; ?>
 
             <style>
-                .gms-guest-profile__media-actions {
-                    display: flex;
-                    flex-wrap: wrap;
-                    gap: 12px;
-                    margin: 1em 0;
-                }
-
-                .gms-guest-profile__media-actions .button {
-                    display: inline-flex;
-                    align-items: center;
-                    gap: 6px;
-                }
-
                 .gms-guest-profile__section {
                     margin-bottom: 2em;
                 }
@@ -2460,99 +2462,29 @@ class GMS_Admin {
                     margin-top: 1.5em;
                 }
 
-                .gms-verification-modal {
-                    position: fixed;
-                    inset: 0;
-                    display: none;
-                    align-items: center;
-                    justify-content: center;
-                    background: rgba(0, 0, 0, 0.65);
-                    z-index: 100000;
-                    padding: 20px;
-                }
-
-                .gms-verification-modal.is-active {
+                .gms-guest-profile__selfie-wrapper {
+                    margin: 1em 0;
                     display: flex;
+                    align-items: center;
+                    justify-content: flex-start;
                 }
 
-                .gms-verification-modal__dialog {
-                    background: #fff;
-                    max-width: min(900px, 90vw);
+                .gms-guest-profile__selfie {
+                    max-width: 240px;
+                    border-radius: 12px;
+                    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.2);
                     width: 100%;
-                    max-height: 90vh;
-                    border-radius: 8px;
-                    box-shadow: 0 18px 48px rgba(0, 0, 0, 0.35);
-                    overflow: hidden;
-                    position: relative;
-                    display: flex;
-                    flex-direction: column;
+                    height: auto;
                 }
 
-                .gms-verification-modal__close {
-                    position: absolute;
-                    top: 12px;
-                    right: 12px;
-                    border: none;
-                    background: transparent;
-                    color: #1d2327;
-                    font-size: 28px;
-                    line-height: 1;
-                    cursor: pointer;
-                }
-
-                .gms-verification-modal__title {
-                    margin: 0;
-                    padding: 20px 48px 10px 20px;
-                    font-size: 18px;
-                    border-bottom: 1px solid #dcdcde;
-                }
-
-                .gms-verification-modal__body {
-                    padding: 20px;
-                    flex: 1;
-                    overflow: auto;
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
+                .gms-guest-profile__selfie-placeholder {
+                    margin: 1em 0;
+                    padding: 24px;
                     background: #f6f7f7;
-                }
-
-                .gms-verification-modal__body img,
-                .gms-verification-modal__body iframe {
-                    max-width: 100%;
-                    max-height: calc(90vh - 140px);
-                    border: none;
-                    box-shadow: 0 4px 18px rgba(0, 0, 0, 0.25);
-                    background: #fff;
-                }
-
-                body.gms-verification-modal-open {
-                    overflow: hidden;
-                }
-
-                .gms-verification-modal__loading {
-                    display: flex;
-                    flex-direction: column;
-                    align-items: center;
-                    justify-content: center;
-                    gap: 12px;
-                    color: #3c434a;
-                    font-size: 14px;
-                    text-align: center;
-                    padding: 20px;
-                }
-
-                .gms-verification-modal__loading .spinner {
-                    float: none;
-                    margin: 0 auto;
-                    visibility: visible;
-                }
-
-                .gms-verification-modal__error {
-                    color: #b32d2e;
-                    font-weight: 600;
-                    text-align: center;
-                    padding: 20px;
+                    border: 1px dashed #dcdcde;
+                    border-radius: 8px;
+                    color: #646970;
+                    font-style: italic;
                 }
             </style>
 
@@ -2597,241 +2529,33 @@ class GMS_Admin {
                     </tbody>
                 </table>
 
-                <?php if (!empty($media_items)) : ?>
-                    <div class="gms-guest-profile__media-actions">
-                        <?php foreach ($media_items as $item) :
-                            $data_uri = isset($item['data_uri']) ? $item['data_uri'] : '';
-                            $label = isset($item['label']) ? $item['label'] : '';
-                            $mime_type = isset($item['type']) ? $item['type'] : '';
-                            $view_url = isset($item['view_url']) ? $item['view_url'] : '';
+                <?php
+                $selfie_alt_text = sprintf(
+                    /* translators: %s: guest name */
+                    __('Selfie for %s', 'guest-management-system'),
+                    $full_name !== '' ? $full_name : __('guest', 'guest-management-system')
+                );
+                ?>
 
-                            $source = '';
-                            $is_remote = false;
-
-                            if ($data_uri !== '') {
-                                $source = $data_uri;
-                            } elseif ($view_url !== '') {
-                                $is_remote = true;
-                            } else {
-                                continue;
-                            }
-                            ?>
-                            <button
-                                type="button"
-                                class="button button-secondary gms-verification-view-button"
-                                data-src="<?php echo esc_attr($source); ?>"
-                                data-type="<?php echo esc_attr($mime_type); ?>"
-                                data-label="<?php echo esc_attr($label); ?>"
-                                <?php if ($is_remote && $view_url !== '') : ?>
-                                    data-view-url="<?php echo esc_url($view_url); ?>"
-                                    data-remote="1"
-                                <?php endif; ?>
-                            >
-                                <?php echo esc_html(sprintf(__('View %s', 'guest-management-system'), $label)); ?>
-                            </button>
-                        <?php endforeach; ?>
+                <?php if ($selfie_src !== '') :
+                    $selfie_attr = $selfie_is_data_uri ? esc_attr($selfie_src) : esc_url($selfie_src);
+                    ?>
+                    <div class="gms-guest-profile__selfie-wrapper">
+                        <img
+                            src="<?php echo $selfie_attr; ?>"
+                            class="gms-guest-profile__selfie"
+                            alt="<?php echo esc_attr($selfie_alt_text); ?>"
+                            <?php if ($selfie_mime_type !== '') : ?>
+                                data-mime-type="<?php echo esc_attr($selfie_mime_type); ?>"
+                            <?php endif; ?>
+                            loading="lazy"
+                        />
                     </div>
                 <?php else : ?>
-                    <p><?php esc_html_e('No ID images are stored for this guest yet.', 'guest-management-system'); ?></p>
-                <?php endif; ?>
-
-                <div id="gms-verification-modal" class="gms-verification-modal" aria-hidden="true">
-                    <div class="gms-verification-modal__dialog" role="dialog" aria-modal="true" aria-labelledby="gms-verification-modal-title">
-                        <button type="button" class="gms-verification-modal__close" data-gms-close-modal aria-label="<?php esc_attr_e('Close modal', 'guest-management-system'); ?>">&times;</button>
-                        <h3 class="gms-verification-modal__title" id="gms-verification-modal-title"></h3>
-                        <div class="gms-verification-modal__body"></div>
+                    <div class="gms-guest-profile__selfie-placeholder">
+                        <?php esc_html_e('No selfie has been stored for this guest yet.', 'guest-management-system'); ?>
                     </div>
-                </div>
-
-                <script>
-                    (function() {
-                        const modal = document.getElementById('gms-verification-modal');
-                        if (!modal) {
-                            return;
-                        }
-
-                        const modalBody = modal.querySelector('.gms-verification-modal__body');
-                        const modalTitle = modal.querySelector('.gms-verification-modal__title');
-                        const closeButton = modal.querySelector('.gms-verification-modal__close');
-                        const openButtons = document.querySelectorAll('.gms-verification-view-button');
-                        const fallbackTitle = '<?php echo esc_js(__('Verification Asset', 'guest-management-system')); ?>';
-                        const loadingMessage = '<?php echo esc_js(__('Loading verification media…', 'guest-management-system')); ?>';
-                        const errorMessage = '<?php echo esc_js(__('Unable to display this verification file. Please try again.', 'guest-management-system')); ?>';
-                        let lastActiveElement = null;
-                        let activeObjectUrl = null;
-
-                        function clearActiveObjectUrl() {
-                            if (activeObjectUrl) {
-                                URL.revokeObjectURL(activeObjectUrl);
-                                activeObjectUrl = null;
-                            }
-                        }
-
-                        function closeModal() {
-                            modal.classList.remove('is-active');
-                            modal.setAttribute('aria-hidden', 'true');
-                            document.body.classList.remove('gms-verification-modal-open');
-                            if (modalBody) {
-                                modalBody.innerHTML = '';
-                            }
-                            clearActiveObjectUrl();
-                            if (lastActiveElement && typeof lastActiveElement.focus === 'function') {
-                                lastActiveElement.focus();
-                            }
-                            lastActiveElement = null;
-                        }
-
-                        function ensureModal(label) {
-                            modalTitle.textContent = label || fallbackTitle;
-                            if (!modal.classList.contains('is-active')) {
-                                modal.classList.add('is-active');
-                                modal.setAttribute('aria-hidden', 'false');
-                                document.body.classList.add('gms-verification-modal-open');
-                                if (closeButton) {
-                                    closeButton.focus();
-                                }
-                            }
-                        }
-
-                        function showLoading(label) {
-                            ensureModal(label);
-                            if (!modalBody) {
-                                return;
-                            }
-
-                            modalBody.innerHTML = '';
-
-                            const wrapper = document.createElement('div');
-                            wrapper.className = 'gms-verification-modal__loading';
-
-                            const spinner = document.createElement('span');
-                            spinner.className = 'spinner is-active';
-                            spinner.setAttribute('aria-hidden', 'true');
-                            wrapper.appendChild(spinner);
-
-                            const message = document.createElement('p');
-                            message.textContent = loadingMessage;
-                            wrapper.appendChild(message);
-
-                            modalBody.appendChild(wrapper);
-                        }
-
-                        function showError(label) {
-                            ensureModal(label);
-                            if (!modalBody) {
-                                return;
-                            }
-
-                            modalBody.innerHTML = '';
-
-                            const message = document.createElement('p');
-                            message.className = 'gms-verification-modal__error';
-                            message.textContent = errorMessage;
-                            modalBody.appendChild(message);
-                        }
-
-                        function renderContent(source, type, label) {
-                            if (!modalBody || !source) {
-                                return;
-                            }
-
-                            modalBody.innerHTML = '';
-
-                            const normalizedType = type || '';
-                            const isImage = (normalizedType.indexOf('image/') === 0) || source.indexOf('data:image/') === 0;
-
-                            if (isImage) {
-                                const img = document.createElement('img');
-                                img.src = source;
-                                img.alt = label || fallbackTitle;
-                                img.loading = 'lazy';
-                                modalBody.appendChild(img);
-                                return;
-                            }
-
-                            const frame = document.createElement('iframe');
-                            frame.src = source;
-                            frame.setAttribute('frameborder', '0');
-                            frame.setAttribute('allowfullscreen', 'true');
-                            frame.title = label || fallbackTitle;
-                            modalBody.appendChild(frame);
-                        }
-
-                        function displayMedia(source, type, label) {
-                            if (!source) {
-                                showError(label);
-                                return;
-                            }
-
-                            ensureModal(label);
-                            renderContent(source, type || '', label || '');
-                        }
-
-                        if (closeButton) {
-                            closeButton.addEventListener('click', function(event) {
-                                event.preventDefault();
-                                closeModal();
-                            });
-                        }
-
-                        modal.addEventListener('click', function(event) {
-                            if (event.target === modal) {
-                                closeModal();
-                            }
-                        });
-
-                        document.addEventListener('keydown', function(event) {
-                            if (event.key === 'Escape' && modal.classList.contains('is-active')) {
-                                closeModal();
-                            }
-                        });
-
-                        openButtons.forEach(function(button) {
-                            button.addEventListener('click', function(event) {
-                                event.preventDefault();
-                                lastActiveElement = document.activeElement;
-                                const type = button.getAttribute('data-type') || '';
-                                const label = button.getAttribute('data-label') || '';
-                                const source = button.getAttribute('data-src') || '';
-                                const remoteUrl = button.getAttribute('data-view-url') || '';
-                                const isRemote = button.getAttribute('data-remote') === '1';
-
-                                if (source) {
-                                    clearActiveObjectUrl();
-                                    displayMedia(source, type, label);
-                                    return;
-                                }
-
-                                if (isRemote && remoteUrl) {
-                                    showLoading(label);
-
-                                    fetch(remoteUrl, {
-                                        credentials: 'same-origin',
-                                        cache: 'no-store',
-                                    })
-                                        .then(function(response) {
-                                            if (!response.ok) {
-                                                throw new Error('Network response was not ok');
-                                            }
-
-                                            const contentType = response.headers.get('Content-Type') || type || '';
-                                            return response.blob().then(function(blob) {
-                                                clearActiveObjectUrl();
-                                                activeObjectUrl = URL.createObjectURL(blob);
-                                                displayMedia(activeObjectUrl, contentType, label);
-                                            });
-                                        })
-                                        .catch(function() {
-                                            clearActiveObjectUrl();
-                                            showError(label);
-                                        });
-
-                                    return;
-                                }
-                        });
-                        });
-                    })();
-                </script>
+                <?php endif; ?>
 
                 <?php if ($can_request_refresh) : ?>
                     <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" class="gms-guest-profile__refresh-form">

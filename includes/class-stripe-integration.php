@@ -971,14 +971,40 @@ class GMS_Stripe_Integration {
         }
 
         $mime_type = $existing_mime;
+        $file = null;
 
-        if ($mime_type === '') {
+        $should_download_selfie = ($context === 'selfie' && $user_id > 0);
+        if ($should_download_selfie) {
+            $stored_file_id = get_user_meta($user_id, 'gms_verification_selfie_file_id', true);
+            $stored_attachment_id = (int) get_user_meta($user_id, 'gms_verification_selfie_attachment_id', true);
+
+            if (
+                $stored_file_id === $file_id &&
+                $stored_attachment_id > 0 &&
+                wp_get_attachment_url($stored_attachment_id)
+            ) {
+                $should_download_selfie = false;
+            }
+        }
+
+        if ($mime_type === '' || $should_download_selfie) {
             $file = $this->retrieveStripeFile($file_id);
 
             if (is_wp_error($file)) {
                 error_log('GMS Stripe Error: ' . $file->get_error_message());
-            } elseif (is_array($file) && !empty($file['mime_type'])) {
+                $file = null;
+            } elseif (is_array($file) && !empty($file['mime_type']) && $mime_type === '') {
                 $mime_type = sanitize_mime_type($file['mime_type']);
+            }
+        }
+
+        if ($should_download_selfie && is_array($file) && !empty($file['url'])) {
+            $contents = $this->downloadStripeFile($file);
+
+            if (is_wp_error($contents)) {
+                error_log('GMS Stripe Error: ' . $contents->get_error_message());
+            } elseif (is_string($contents) && $contents !== '') {
+                $this->assignSelfieAttachment($user_id, $file, $contents);
             }
         }
 
