@@ -2529,6 +2529,31 @@ class GMS_Admin {
                 body.gms-verification-modal-open {
                     overflow: hidden;
                 }
+
+                .gms-verification-modal__loading {
+                    display: flex;
+                    flex-direction: column;
+                    align-items: center;
+                    justify-content: center;
+                    gap: 12px;
+                    color: #3c434a;
+                    font-size: 14px;
+                    text-align: center;
+                    padding: 20px;
+                }
+
+                .gms-verification-modal__loading .spinner {
+                    float: none;
+                    margin: 0 auto;
+                    visibility: visible;
+                }
+
+                .gms-verification-modal__error {
+                    color: #b32d2e;
+                    font-weight: 600;
+                    text-align: center;
+                    padding: 20px;
+                }
             </style>
 
             <div class="gms-guest-profile__section">
@@ -2579,9 +2604,15 @@ class GMS_Admin {
                             $label = isset($item['label']) ? $item['label'] : '';
                             $mime_type = isset($item['type']) ? $item['type'] : '';
                             $view_url = isset($item['view_url']) ? $item['view_url'] : '';
-                            $source = $data_uri !== '' ? $data_uri : $view_url;
 
-                            if ($source === '') {
+                            $source = '';
+                            $is_remote = false;
+
+                            if ($data_uri !== '') {
+                                $source = $data_uri;
+                            } elseif ($view_url !== '') {
+                                $is_remote = true;
+                            } else {
                                 continue;
                             }
                             ?>
@@ -2591,6 +2622,10 @@ class GMS_Admin {
                                 data-src="<?php echo esc_attr($source); ?>"
                                 data-type="<?php echo esc_attr($mime_type); ?>"
                                 data-label="<?php echo esc_attr($label); ?>"
+                                <?php if ($is_remote && $view_url !== '') : ?>
+                                    data-view-url="<?php echo esc_url($view_url); ?>"
+                                    data-remote="1"
+                                <?php endif; ?>
                             >
                                 <?php echo esc_html(sprintf(__('View %s', 'guest-management-system'), $label)); ?>
                             </button>
@@ -2620,7 +2655,17 @@ class GMS_Admin {
                         const closeButton = modal.querySelector('.gms-verification-modal__close');
                         const openButtons = document.querySelectorAll('.gms-verification-view-button');
                         const fallbackTitle = '<?php echo esc_js(__('Verification Asset', 'guest-management-system')); ?>';
+                        const loadingMessage = '<?php echo esc_js(__('Loading verification media…', 'guest-management-system')); ?>';
+                        const errorMessage = '<?php echo esc_js(__('Unable to display this verification file. Please try again.', 'guest-management-system')); ?>';
                         let lastActiveElement = null;
+                        let activeObjectUrl = null;
+
+                        function clearActiveObjectUrl() {
+                            if (activeObjectUrl) {
+                                URL.revokeObjectURL(activeObjectUrl);
+                                activeObjectUrl = null;
+                            }
+                        }
 
                         function closeModal() {
                             modal.classList.remove('is-active');
@@ -2629,20 +2674,72 @@ class GMS_Admin {
                             if (modalBody) {
                                 modalBody.innerHTML = '';
                             }
+                            clearActiveObjectUrl();
                             if (lastActiveElement && typeof lastActiveElement.focus === 'function') {
                                 lastActiveElement.focus();
                             }
                             lastActiveElement = null;
                         }
 
-                        function renderContent(source, type, label) {
+                        function ensureModal(label) {
+                            modalTitle.textContent = label || fallbackTitle;
+                            if (!modal.classList.contains('is-active')) {
+                                modal.classList.add('is-active');
+                                modal.setAttribute('aria-hidden', 'false');
+                                document.body.classList.add('gms-verification-modal-open');
+                                if (closeButton) {
+                                    closeButton.focus();
+                                }
+                            }
+                        }
+
+                        function showLoading(label) {
+                            ensureModal(label);
                             if (!modalBody) {
                                 return;
                             }
 
                             modalBody.innerHTML = '';
 
-                            const isImage = (type && type.indexOf('image/') === 0) || source.indexOf('data:image/') === 0;
+                            const wrapper = document.createElement('div');
+                            wrapper.className = 'gms-verification-modal__loading';
+
+                            const spinner = document.createElement('span');
+                            spinner.className = 'spinner is-active';
+                            spinner.setAttribute('aria-hidden', 'true');
+                            wrapper.appendChild(spinner);
+
+                            const message = document.createElement('p');
+                            message.textContent = loadingMessage;
+                            wrapper.appendChild(message);
+
+                            modalBody.appendChild(wrapper);
+                        }
+
+                        function showError(label) {
+                            ensureModal(label);
+                            if (!modalBody) {
+                                return;
+                            }
+
+                            modalBody.innerHTML = '';
+
+                            const message = document.createElement('p');
+                            message.className = 'gms-verification-modal__error';
+                            message.textContent = errorMessage;
+                            modalBody.appendChild(message);
+                        }
+
+                        function renderContent(source, type, label) {
+                            if (!modalBody || !source) {
+                                return;
+                            }
+
+                            modalBody.innerHTML = '';
+
+                            const normalizedType = type || '';
+                            const isImage = (normalizedType.indexOf('image/') === 0) || source.indexOf('data:image/') === 0;
+
                             if (isImage) {
                                 const img = document.createElement('img');
                                 img.src = source;
@@ -2660,19 +2757,14 @@ class GMS_Admin {
                             modalBody.appendChild(frame);
                         }
 
-                        function openModal(source, type, label) {
+                        function displayMedia(source, type, label) {
                             if (!source) {
+                                showError(label);
                                 return;
                             }
 
+                            ensureModal(label);
                             renderContent(source, type || '', label || '');
-                            modalTitle.textContent = label || fallbackTitle;
-                            modal.classList.add('is-active');
-                            modal.setAttribute('aria-hidden', 'false');
-                            document.body.classList.add('gms-verification-modal-open');
-                            if (closeButton) {
-                                closeButton.focus();
-                            }
                         }
 
                         if (closeButton) {
@@ -2697,16 +2789,46 @@ class GMS_Admin {
                         openButtons.forEach(function(button) {
                             button.addEventListener('click', function(event) {
                                 event.preventDefault();
-                                const source = button.getAttribute('data-src') || '';
-                                if (!source) {
-                                    return;
-                                }
-
                                 lastActiveElement = document.activeElement;
                                 const type = button.getAttribute('data-type') || '';
                                 const label = button.getAttribute('data-label') || '';
-                                openModal(source, type, label);
-                            });
+                                const source = button.getAttribute('data-src') || '';
+                                const remoteUrl = button.getAttribute('data-view-url') || '';
+                                const isRemote = button.getAttribute('data-remote') === '1';
+
+                                if (source) {
+                                    clearActiveObjectUrl();
+                                    displayMedia(source, type, label);
+                                    return;
+                                }
+
+                                if (isRemote && remoteUrl) {
+                                    showLoading(label);
+
+                                    fetch(remoteUrl, {
+                                        credentials: 'same-origin',
+                                        cache: 'no-store',
+                                    })
+                                        .then(function(response) {
+                                            if (!response.ok) {
+                                                throw new Error('Network response was not ok');
+                                            }
+
+                                            const contentType = response.headers.get('Content-Type') || type || '';
+                                            return response.blob().then(function(blob) {
+                                                clearActiveObjectUrl();
+                                                activeObjectUrl = URL.createObjectURL(blob);
+                                                displayMedia(activeObjectUrl, contentType, label);
+                                            });
+                                        })
+                                        .catch(function() {
+                                            clearActiveObjectUrl();
+                                            showError(label);
+                                        });
+
+                                    return;
+                                }
+                        });
                         });
                     })();
                 </script>
@@ -2871,9 +2993,15 @@ class GMS_Admin {
 
         $stripe = GMS_Stripe_Integration::instance();
 
-        $file_link = $stripe->generateFileLink($file_id);
+        $context = isset($_GET['context']) ? sanitize_key(wp_unslash($_GET['context'])) : '';
+        $prefer_stream = ($context === 'modal');
 
-        if (is_string($file_link) && $file_link !== '') {
+        $file_link = '';
+        if (!$prefer_stream) {
+            $file_link = $stripe->generateFileLink($file_id);
+        }
+
+        if (!$prefer_stream && is_string($file_link) && $file_link !== '') {
             wp_redirect(esc_url_raw($file_link));
             exit;
         }
@@ -5842,6 +5970,7 @@ class GMS_Admin {
                 'action' => 'gms_view_verification_asset',
                 'file' => $file_id,
                 '_wpnonce' => $nonce,
+                'context' => 'modal',
             ),
             admin_url('admin-post.php')
         );
