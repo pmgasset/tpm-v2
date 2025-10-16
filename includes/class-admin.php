@@ -369,7 +369,24 @@ class GMS_Guests_List_Table extends WP_List_Table {
         $value = '<strong>' . esc_html($name) . '</strong>';
 
         if ($guest_id) {
+            $profile_url = add_query_arg(
+                [
+                    'page' => 'guest-management-guests',
+                    'action' => 'view',
+                    'guest_id' => $guest_id,
+                ],
+                admin_url('admin.php')
+            );
+
+            $value = sprintf('<strong><a href="%s">%s</a></strong>', esc_url($profile_url), esc_html($name));
+
             $actions = [];
+
+            $actions['view'] = sprintf(
+                '<a href="%s">%s</a>',
+                esc_url($profile_url),
+                esc_html__('View Profile', 'guest-management-system')
+            );
 
             $edit_url = add_query_arg(
                 [
@@ -674,6 +691,8 @@ class GMS_Admin {
         add_action('admin_post_gms_save_message_template', array($this, 'handle_save_message_template'));
         add_action('admin_post_gms_delete_message_template', array($this, 'handle_delete_message_template'));
         add_action('admin_post_gms_housekeeper_ical', array($this, 'handle_housekeeper_ical_export'));
+        add_action('admin_post_gms_refresh_guest_verification', array($this, 'handle_refresh_guest_verification'));
+        add_action('admin_post_gms_view_verification_asset', array($this, 'handle_view_verification_asset'));
     }
 
     private function build_reservations_redirect_url() {
@@ -1200,6 +1219,10 @@ class GMS_Admin {
         $integration_options = array(
             'gms_stripe_pk' => array('label' => __('Stripe Publishable Key', 'guest-management-system')),
             'gms_stripe_sk' => array('label' => __('Stripe Secret Key', 'guest-management-system')),
+            'gms_stripe_identity_restricted_key' => array(
+                'label' => __('Stripe Identity Restricted Key', 'guest-management-system'),
+                'description' => __('Use a restricted key with Identity permissions to view verification files inside Guest Profiles.', 'guest-management-system'),
+            ),
             'gms_stripe_webhook_secret' => array('label' => __('Stripe Webhook Secret', 'guest-management-system')),
             'gms_voipms_user' => array('label' => __('VoIP.ms Username', 'guest-management-system')),
             'gms_voipms_pass' => array('label' => __('VoIP.ms API Password', 'guest-management-system')),
@@ -1763,8 +1786,8 @@ class GMS_Admin {
 
         $guests_hook = add_submenu_page(
             'guest-management-dashboard',
-            'Guests',
-            'Guests',
+            'Guest Profiles',
+            'Guest Profiles',
             'manage_options',
             'guest-management-guests',
             [$this, 'render_guests_page']
@@ -2247,6 +2270,776 @@ class GMS_Admin {
         <?php
     }
 
+    protected function render_guest_profile_page($guest_id) {
+        $list_url = add_query_arg(['page' => 'guest-management-guests'], admin_url('admin.php'));
+
+        if ($guest_id <= 0) {
+            ?>
+            <div class="wrap">
+                <h1 class="wp-heading-inline"><?php esc_html_e('Guest Profiles', 'guest-management-system'); ?></h1>
+                <a href="<?php echo esc_url($list_url); ?>" class="page-title-action"><?php esc_html_e('Back to Guest Profiles', 'guest-management-system'); ?></a>
+                <hr class="wp-header-end">
+                <div class="notice notice-error"><p><?php esc_html_e('The requested guest profile could not be found.', 'guest-management-system'); ?></p></div>
+            </div>
+            <?php
+            return;
+        }
+
+        $guest = GMS_Database::get_guest_by_id($guest_id);
+
+        if (!$guest) {
+            ?>
+            <div class="wrap">
+                <h1 class="wp-heading-inline"><?php esc_html_e('Guest Profiles', 'guest-management-system'); ?></h1>
+                <a href="<?php echo esc_url($list_url); ?>" class="page-title-action"><?php esc_html_e('Back to Guest Profiles', 'guest-management-system'); ?></a>
+                <hr class="wp-header-end">
+                <div class="notice notice-error"><p><?php esc_html_e('The requested guest profile could not be found.', 'guest-management-system'); ?></p></div>
+            </div>
+            <?php
+            return;
+        }
+
+        $full_name = trim($guest['name'] ?? '');
+        if ($full_name === '') {
+            $full_name = trim(trim($guest['first_name'] ?? '') . ' ' . trim($guest['last_name'] ?? ''));
+        }
+        if ($full_name === '') {
+            $full_name = esc_html__('Unnamed Guest', 'guest-management-system');
+        }
+
+        $email = isset($guest['email']) ? sanitize_email($guest['email']) : '';
+        $phone = isset($guest['phone']) ? sanitize_text_field($guest['phone']) : '';
+        $display_phone = $this->format_guest_phone_display($phone);
+
+        $verification = GMS_Database::getLatestVerificationForGuest($guest_id);
+        $reservations = GMS_Database::getReservationsForGuest($guest_id);
+
+        $verification_status = isset($verification['status']) ? sanitize_text_field($verification['status']) : '';
+        $verification_status = $verification_status !== '' ? ucwords(str_replace(['_', '-'], ' ', $verification_status)) : esc_html__('Not yet verified', 'guest-management-system');
+
+        $verified_at = isset($verification['verified_at']) ? $verification['verified_at'] : '';
+        if ($verified_at !== '') {
+            if (function_exists('gms_format_datetime')) {
+                $verified_at = gms_format_datetime($verified_at);
+            } else {
+                $verified_at = date_i18n(get_option('date_format') . ' ' . get_option('time_format'), strtotime($verified_at));
+            }
+        }
+
+        $media_items = array();
+        if (is_array($verification)) {
+            $front_preview = $this->build_verification_media_preview(
+                $verification['document_front_path'] ?? '',
+                $verification['document_front_mime'] ?? '',
+                $verification['document_front_file_id'] ?? ''
+            );
+            if ($front_preview) {
+                $front_preview['label'] = esc_html__('Document Front', 'guest-management-system');
+                $media_items[] = $front_preview;
+            }
+
+            $back_preview = $this->build_verification_media_preview(
+                $verification['document_back_path'] ?? '',
+                $verification['document_back_mime'] ?? '',
+                $verification['document_back_file_id'] ?? ''
+            );
+            if ($back_preview) {
+                $back_preview['label'] = esc_html__('Document Back', 'guest-management-system');
+                $media_items[] = $back_preview;
+            }
+
+            $selfie_preview = $this->build_verification_media_preview(
+                $verification['selfie_path'] ?? '',
+                $verification['selfie_mime'] ?? '',
+                $verification['selfie_file_id'] ?? ''
+            );
+            if ($selfie_preview) {
+                $selfie_preview['label'] = esc_html__('Selfie', 'guest-management-system');
+                $media_items[] = $selfie_preview;
+            }
+        }
+
+        $stripe_session_id = '';
+        $session_candidates = array();
+
+        if (is_array($verification)) {
+            if (!empty($verification['stripe_session_id'])) {
+                $session_candidates[] = sanitize_text_field($verification['stripe_session_id']);
+            }
+
+            if (
+                isset($verification['verification_data'])
+                && is_array($verification['verification_data'])
+                && !empty($verification['verification_data']['id'])
+            ) {
+                $session_candidates[] = sanitize_text_field($verification['verification_data']['id']);
+            }
+        }
+
+        if (empty($session_candidates) && !empty($reservations)) {
+            foreach ($reservations as $reservation) {
+                $reservation_id = isset($reservation['id']) ? intval($reservation['id']) : 0;
+
+                if ($reservation_id <= 0) {
+                    continue;
+                }
+
+                $reservation_verification = GMS_Database::getVerificationByReservation($reservation_id);
+
+                if (!is_array($reservation_verification)) {
+                    continue;
+                }
+
+                if (!empty($reservation_verification['stripe_session_id'])) {
+                    $session_candidates[] = sanitize_text_field($reservation_verification['stripe_session_id']);
+                }
+
+                if (
+                    isset($reservation_verification['verification_data'])
+                    && is_array($reservation_verification['verification_data'])
+                    && !empty($reservation_verification['verification_data']['id'])
+                ) {
+                    $session_candidates[] = sanitize_text_field($reservation_verification['verification_data']['id']);
+                }
+
+                if (!empty($session_candidates)) {
+                    break;
+                }
+            }
+        }
+
+        if (!empty($session_candidates)) {
+            $stripe_session_id = reset($session_candidates);
+        }
+
+        $can_request_refresh = ($stripe_session_id !== '');
+
+        $refresh_notice = isset($_GET['gms_verification_refresh']) ? sanitize_key(wp_unslash($_GET['gms_verification_refresh'])) : '';
+        $refresh_error = '';
+        if ($refresh_notice === 'error' && isset($_GET['gms_verification_error'])) {
+            $refresh_error = sanitize_text_field(rawurldecode(wp_unslash($_GET['gms_verification_error'])));
+        }
+
+        ?>
+        <div class="wrap gms-guest-profile">
+            <h1 class="wp-heading-inline"><?php esc_html_e('Guest Profiles', 'guest-management-system'); ?></h1>
+            <a href="<?php echo esc_url($list_url); ?>" class="page-title-action"><?php esc_html_e('Back to Guest Profiles', 'guest-management-system'); ?></a>
+            <hr class="wp-header-end">
+
+            <?php if ($refresh_notice === 'success') : ?>
+                <div class="notice notice-success is-dismissible">
+                    <p><?php esc_html_e('Stripe verification assets were requested successfully. Stored media will appear once downloaded.', 'guest-management-system'); ?></p>
+                </div>
+            <?php elseif ($refresh_notice === 'error') : ?>
+                <div class="notice notice-error is-dismissible">
+                    <p><?php echo $refresh_error !== ''
+                        ? esc_html($refresh_error)
+                        : esc_html__('Unable to refresh the verification assets. Please try again.', 'guest-management-system'); ?></p>
+                </div>
+            <?php endif; ?>
+
+            <style>
+                .gms-guest-profile__media-actions {
+                    display: flex;
+                    flex-wrap: wrap;
+                    gap: 12px;
+                    margin: 1em 0;
+                }
+
+                .gms-guest-profile__media-actions .button {
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 6px;
+                }
+
+                .gms-guest-profile__section {
+                    margin-bottom: 2em;
+                }
+
+                .gms-guest-profile__section h2 {
+                    margin-top: 1.5em;
+                }
+
+                .gms-verification-modal {
+                    position: fixed;
+                    inset: 0;
+                    display: none;
+                    align-items: center;
+                    justify-content: center;
+                    background: rgba(0, 0, 0, 0.65);
+                    z-index: 100000;
+                    padding: 20px;
+                }
+
+                .gms-verification-modal.is-active {
+                    display: flex;
+                }
+
+                .gms-verification-modal__dialog {
+                    background: #fff;
+                    max-width: min(900px, 90vw);
+                    width: 100%;
+                    max-height: 90vh;
+                    border-radius: 8px;
+                    box-shadow: 0 18px 48px rgba(0, 0, 0, 0.35);
+                    overflow: hidden;
+                    position: relative;
+                    display: flex;
+                    flex-direction: column;
+                }
+
+                .gms-verification-modal__close {
+                    position: absolute;
+                    top: 12px;
+                    right: 12px;
+                    border: none;
+                    background: transparent;
+                    color: #1d2327;
+                    font-size: 28px;
+                    line-height: 1;
+                    cursor: pointer;
+                }
+
+                .gms-verification-modal__title {
+                    margin: 0;
+                    padding: 20px 48px 10px 20px;
+                    font-size: 18px;
+                    border-bottom: 1px solid #dcdcde;
+                }
+
+                .gms-verification-modal__body {
+                    padding: 20px;
+                    flex: 1;
+                    overflow: auto;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    background: #f6f7f7;
+                }
+
+                .gms-verification-modal__body img,
+                .gms-verification-modal__body iframe {
+                    max-width: 100%;
+                    max-height: calc(90vh - 140px);
+                    border: none;
+                    box-shadow: 0 4px 18px rgba(0, 0, 0, 0.25);
+                    background: #fff;
+                }
+
+                body.gms-verification-modal-open {
+                    overflow: hidden;
+                }
+
+                .gms-verification-modal__loading {
+                    display: flex;
+                    flex-direction: column;
+                    align-items: center;
+                    justify-content: center;
+                    gap: 12px;
+                    color: #3c434a;
+                    font-size: 14px;
+                    text-align: center;
+                    padding: 20px;
+                }
+
+                .gms-verification-modal__loading .spinner {
+                    float: none;
+                    margin: 0 auto;
+                    visibility: visible;
+                }
+
+                .gms-verification-modal__error {
+                    color: #b32d2e;
+                    font-weight: 600;
+                    text-align: center;
+                    padding: 20px;
+                }
+            </style>
+
+            <div class="gms-guest-profile__section">
+                <h2><?php esc_html_e('Guest Details', 'guest-management-system'); ?></h2>
+                <table class="form-table" role="presentation">
+                    <tbody>
+                        <tr>
+                            <th scope="row"><?php esc_html_e('Full Name', 'guest-management-system'); ?></th>
+                            <td><?php echo esc_html($full_name); ?></td>
+                        </tr>
+                        <tr>
+                            <th scope="row"><?php esc_html_e('Email', 'guest-management-system'); ?></th>
+                            <td>
+                                <?php if ($email !== '') : ?>
+                                    <a href="mailto:<?php echo esc_attr($email); ?>"><?php echo esc_html($email); ?></a>
+                                <?php else : ?>
+                                    &mdash;
+                                <?php endif; ?>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row"><?php esc_html_e('Phone', 'guest-management-system'); ?></th>
+                            <td><?php echo $display_phone !== '' ? esc_html($display_phone) : '&mdash;'; ?></td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="gms-guest-profile__section">
+                <h2><?php esc_html_e('Identity Verification', 'guest-management-system'); ?></h2>
+                <table class="form-table" role="presentation">
+                    <tbody>
+                        <tr>
+                            <th scope="row"><?php esc_html_e('Status', 'guest-management-system'); ?></th>
+                            <td><?php echo esc_html($verification_status); ?></td>
+                        </tr>
+                        <tr>
+                            <th scope="row"><?php esc_html_e('Verified At', 'guest-management-system'); ?></th>
+                            <td><?php echo $verified_at !== '' ? esc_html($verified_at) : '&mdash;'; ?></td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <?php if (!empty($media_items)) : ?>
+                    <div class="gms-guest-profile__media-actions">
+                        <?php foreach ($media_items as $item) :
+                            $data_uri = isset($item['data_uri']) ? $item['data_uri'] : '';
+                            $label = isset($item['label']) ? $item['label'] : '';
+                            $mime_type = isset($item['type']) ? $item['type'] : '';
+                            $view_url = isset($item['view_url']) ? $item['view_url'] : '';
+
+                            $source = '';
+                            $is_remote = false;
+
+                            if ($data_uri !== '') {
+                                $source = $data_uri;
+                            } elseif ($view_url !== '') {
+                                $is_remote = true;
+                            } else {
+                                continue;
+                            }
+                            ?>
+                            <button
+                                type="button"
+                                class="button button-secondary gms-verification-view-button"
+                                data-src="<?php echo esc_attr($source); ?>"
+                                data-type="<?php echo esc_attr($mime_type); ?>"
+                                data-label="<?php echo esc_attr($label); ?>"
+                                <?php if ($is_remote && $view_url !== '') : ?>
+                                    data-view-url="<?php echo esc_url($view_url); ?>"
+                                    data-remote="1"
+                                <?php endif; ?>
+                            >
+                                <?php echo esc_html(sprintf(__('View %s', 'guest-management-system'), $label)); ?>
+                            </button>
+                        <?php endforeach; ?>
+                    </div>
+                <?php else : ?>
+                    <p><?php esc_html_e('No ID images are stored for this guest yet.', 'guest-management-system'); ?></p>
+                <?php endif; ?>
+
+                <div id="gms-verification-modal" class="gms-verification-modal" aria-hidden="true">
+                    <div class="gms-verification-modal__dialog" role="dialog" aria-modal="true" aria-labelledby="gms-verification-modal-title">
+                        <button type="button" class="gms-verification-modal__close" data-gms-close-modal aria-label="<?php esc_attr_e('Close modal', 'guest-management-system'); ?>">&times;</button>
+                        <h3 class="gms-verification-modal__title" id="gms-verification-modal-title"></h3>
+                        <div class="gms-verification-modal__body"></div>
+                    </div>
+                </div>
+
+                <script>
+                    (function() {
+                        const modal = document.getElementById('gms-verification-modal');
+                        if (!modal) {
+                            return;
+                        }
+
+                        const modalBody = modal.querySelector('.gms-verification-modal__body');
+                        const modalTitle = modal.querySelector('.gms-verification-modal__title');
+                        const closeButton = modal.querySelector('.gms-verification-modal__close');
+                        const openButtons = document.querySelectorAll('.gms-verification-view-button');
+                        const fallbackTitle = '<?php echo esc_js(__('Verification Asset', 'guest-management-system')); ?>';
+                        const loadingMessage = '<?php echo esc_js(__('Loading verification media…', 'guest-management-system')); ?>';
+                        const errorMessage = '<?php echo esc_js(__('Unable to display this verification file. Please try again.', 'guest-management-system')); ?>';
+                        let lastActiveElement = null;
+                        let activeObjectUrl = null;
+
+                        function clearActiveObjectUrl() {
+                            if (activeObjectUrl) {
+                                URL.revokeObjectURL(activeObjectUrl);
+                                activeObjectUrl = null;
+                            }
+                        }
+
+                        function closeModal() {
+                            modal.classList.remove('is-active');
+                            modal.setAttribute('aria-hidden', 'true');
+                            document.body.classList.remove('gms-verification-modal-open');
+                            if (modalBody) {
+                                modalBody.innerHTML = '';
+                            }
+                            clearActiveObjectUrl();
+                            if (lastActiveElement && typeof lastActiveElement.focus === 'function') {
+                                lastActiveElement.focus();
+                            }
+                            lastActiveElement = null;
+                        }
+
+                        function ensureModal(label) {
+                            modalTitle.textContent = label || fallbackTitle;
+                            if (!modal.classList.contains('is-active')) {
+                                modal.classList.add('is-active');
+                                modal.setAttribute('aria-hidden', 'false');
+                                document.body.classList.add('gms-verification-modal-open');
+                                if (closeButton) {
+                                    closeButton.focus();
+                                }
+                            }
+                        }
+
+                        function showLoading(label) {
+                            ensureModal(label);
+                            if (!modalBody) {
+                                return;
+                            }
+
+                            modalBody.innerHTML = '';
+
+                            const wrapper = document.createElement('div');
+                            wrapper.className = 'gms-verification-modal__loading';
+
+                            const spinner = document.createElement('span');
+                            spinner.className = 'spinner is-active';
+                            spinner.setAttribute('aria-hidden', 'true');
+                            wrapper.appendChild(spinner);
+
+                            const message = document.createElement('p');
+                            message.textContent = loadingMessage;
+                            wrapper.appendChild(message);
+
+                            modalBody.appendChild(wrapper);
+                        }
+
+                        function showError(label) {
+                            ensureModal(label);
+                            if (!modalBody) {
+                                return;
+                            }
+
+                            modalBody.innerHTML = '';
+
+                            const message = document.createElement('p');
+                            message.className = 'gms-verification-modal__error';
+                            message.textContent = errorMessage;
+                            modalBody.appendChild(message);
+                        }
+
+                        function renderContent(source, type, label) {
+                            if (!modalBody || !source) {
+                                return;
+                            }
+
+                            modalBody.innerHTML = '';
+
+                            const normalizedType = type || '';
+                            const isImage = (normalizedType.indexOf('image/') === 0) || source.indexOf('data:image/') === 0;
+
+                            if (isImage) {
+                                const img = document.createElement('img');
+                                img.src = source;
+                                img.alt = label || fallbackTitle;
+                                img.loading = 'lazy';
+                                modalBody.appendChild(img);
+                                return;
+                            }
+
+                            const frame = document.createElement('iframe');
+                            frame.src = source;
+                            frame.setAttribute('frameborder', '0');
+                            frame.setAttribute('allowfullscreen', 'true');
+                            frame.title = label || fallbackTitle;
+                            modalBody.appendChild(frame);
+                        }
+
+                        function displayMedia(source, type, label) {
+                            if (!source) {
+                                showError(label);
+                                return;
+                            }
+
+                            ensureModal(label);
+                            renderContent(source, type || '', label || '');
+                        }
+
+                        if (closeButton) {
+                            closeButton.addEventListener('click', function(event) {
+                                event.preventDefault();
+                                closeModal();
+                            });
+                        }
+
+                        modal.addEventListener('click', function(event) {
+                            if (event.target === modal) {
+                                closeModal();
+                            }
+                        });
+
+                        document.addEventListener('keydown', function(event) {
+                            if (event.key === 'Escape' && modal.classList.contains('is-active')) {
+                                closeModal();
+                            }
+                        });
+
+                        openButtons.forEach(function(button) {
+                            button.addEventListener('click', function(event) {
+                                event.preventDefault();
+                                lastActiveElement = document.activeElement;
+                                const type = button.getAttribute('data-type') || '';
+                                const label = button.getAttribute('data-label') || '';
+                                const source = button.getAttribute('data-src') || '';
+                                const remoteUrl = button.getAttribute('data-view-url') || '';
+                                const isRemote = button.getAttribute('data-remote') === '1';
+
+                                if (source) {
+                                    clearActiveObjectUrl();
+                                    displayMedia(source, type, label);
+                                    return;
+                                }
+
+                                if (isRemote && remoteUrl) {
+                                    showLoading(label);
+
+                                    fetch(remoteUrl, {
+                                        credentials: 'same-origin',
+                                        cache: 'no-store',
+                                    })
+                                        .then(function(response) {
+                                            if (!response.ok) {
+                                                throw new Error('Network response was not ok');
+                                            }
+
+                                            const contentType = response.headers.get('Content-Type') || type || '';
+                                            return response.blob().then(function(blob) {
+                                                clearActiveObjectUrl();
+                                                activeObjectUrl = URL.createObjectURL(blob);
+                                                displayMedia(activeObjectUrl, contentType, label);
+                                            });
+                                        })
+                                        .catch(function() {
+                                            clearActiveObjectUrl();
+                                            showError(label);
+                                        });
+
+                                    return;
+                                }
+                        });
+                        });
+                    })();
+                </script>
+
+                <?php if ($can_request_refresh) : ?>
+                    <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" class="gms-guest-profile__refresh-form">
+                        <?php wp_nonce_field('gms_refresh_guest_verification_' . $guest_id); ?>
+                        <input type="hidden" name="action" value="gms_refresh_guest_verification">
+                        <input type="hidden" name="guest_id" value="<?php echo esc_attr($guest_id); ?>">
+                        <input type="hidden" name="session_id" value="<?php echo esc_attr($stripe_session_id); ?>">
+                        <?php submit_button(__('Request ID from Stripe', 'guest-management-system'), 'secondary', 'submit', false); ?>
+                    </form>
+                <?php endif; ?>
+            </div>
+
+            <div class="gms-guest-profile__section">
+                <h2><?php esc_html_e('Reservations', 'guest-management-system'); ?></h2>
+                <?php if (!empty($reservations)) : ?>
+                    <table class="widefat fixed striped">
+                        <thead>
+                            <tr>
+                                <th><?php esc_html_e('Reservation', 'guest-management-system'); ?></th>
+                                <th><?php esc_html_e('Check-In', 'guest-management-system'); ?></th>
+                                <th><?php esc_html_e('Check-Out', 'guest-management-system'); ?></th>
+                                <th><?php esc_html_e('Status', 'guest-management-system'); ?></th>
+                                <th><?php esc_html_e('Actions', 'guest-management-system'); ?></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($reservations as $reservation) :
+                                $reservation_id = intval($reservation['id'] ?? 0);
+                                $reservation_link = $reservation_id > 0
+                                    ? add_query_arg(
+                                        array(
+                                            'page' => 'guest-management-reservations',
+                                            'action' => 'edit',
+                                            'reservation_id' => $reservation_id,
+                                        ),
+                                        admin_url('admin.php')
+                                    )
+                                    : '';
+                                $booking_reference = isset($reservation['booking_reference']) ? $reservation['booking_reference'] : '';
+                                $checkin = isset($reservation['checkin_date']) ? $reservation['checkin_date'] : '';
+                                $checkout = isset($reservation['checkout_date']) ? $reservation['checkout_date'] : '';
+                                if ($checkin !== '') {
+                                    $checkin = function_exists('gms_format_datetime') ? gms_format_datetime($checkin) : date_i18n(get_option('date_format') . ' ' . get_option('time_format'), strtotime($checkin));
+                                }
+                                if ($checkout !== '') {
+                                    $checkout = function_exists('gms_format_datetime') ? gms_format_datetime($checkout) : date_i18n(get_option('date_format') . ' ' . get_option('time_format'), strtotime($checkout));
+                                }
+                                $status = isset($reservation['status']) ? sanitize_key($reservation['status']) : '';
+                                $status_label = $status !== '' ? ucwords(str_replace(['_', '-'], ' ', $status)) : esc_html__('Unknown', 'guest-management-system');
+                                ?>
+                                <tr>
+                                    <td>
+                                        <?php if ($booking_reference !== '') : ?>
+                                            <?php echo esc_html($booking_reference); ?>
+                                        <?php else : ?>
+                                            &mdash;
+                                        <?php endif; ?>
+                                    </td>
+                                    <td><?php echo $checkin !== '' ? esc_html($checkin) : '&mdash;'; ?></td>
+                                    <td><?php echo $checkout !== '' ? esc_html($checkout) : '&mdash;'; ?></td>
+                                    <td><?php echo esc_html($status_label); ?></td>
+                                    <td>
+                                        <?php if ($reservation_link) : ?>
+                                            <a class="button" href="<?php echo esc_url($reservation_link); ?>"><?php esc_html_e('View Reservation', 'guest-management-system'); ?></a>
+                                        <?php else : ?>
+                                            &mdash;
+                                        <?php endif; ?>
+                                    </td>
+                                </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                <?php else : ?>
+                    <p><?php esc_html_e('No reservations are linked to this guest profile.', 'guest-management-system'); ?></p>
+                <?php endif; ?>
+            </div>
+        </div>
+        <?php
+    }
+
+    public function handle_refresh_guest_verification() {
+        if (!current_user_can('manage_options')) {
+            wp_die(__('You do not have permission to refresh verification details.', 'guest-management-system'));
+        }
+
+        $guest_id = isset($_POST['guest_id']) ? absint(wp_unslash($_POST['guest_id'])) : 0;
+        $session_id = isset($_POST['session_id']) ? sanitize_text_field(wp_unslash($_POST['session_id'])) : '';
+
+        if ($guest_id <= 0) {
+            wp_die(__('Invalid guest selected for verification refresh.', 'guest-management-system'));
+        }
+
+        check_admin_referer('gms_refresh_guest_verification_' . $guest_id);
+
+        $redirect_url = add_query_arg(
+            array(
+                'page' => 'guest-management-guests',
+                'action' => 'view',
+                'guest_id' => $guest_id,
+            ),
+            admin_url('admin.php')
+        );
+
+        if ($session_id === '') {
+            $redirect_url = add_query_arg(
+                array(
+                    'gms_verification_refresh' => 'error',
+                    'gms_verification_error' => rawurlencode(__('Missing Stripe verification session identifier.', 'guest-management-system')),
+                ),
+                $redirect_url
+            );
+            wp_safe_redirect($redirect_url);
+            exit;
+        }
+
+        if (!class_exists('GMS_Stripe_Integration')) {
+            require_once plugin_dir_path(__FILE__) . 'class-stripe-integration.php';
+        }
+
+        $stripe = GMS_Stripe_Integration::instance();
+        $result = $stripe->refreshVerificationForSession($session_id);
+
+        if (is_wp_error($result)) {
+            $redirect_url = add_query_arg(
+                array(
+                    'gms_verification_refresh' => 'error',
+                    'gms_verification_error' => rawurlencode($result->get_error_message()),
+                ),
+                $redirect_url
+            );
+        } else {
+            $redirect_url = add_query_arg('gms_verification_refresh', 'success', $redirect_url);
+        }
+
+        wp_safe_redirect($redirect_url);
+        exit;
+    }
+
+    public function handle_view_verification_asset() {
+        if (!current_user_can('manage_options')) {
+            wp_die(__('You do not have permission to access verification assets.', 'guest-management-system'));
+        }
+
+        $file_id = isset($_GET['file']) ? sanitize_text_field(wp_unslash($_GET['file'])) : '';
+
+        if ($file_id === '') {
+            wp_die(__('Missing Stripe file identifier.', 'guest-management-system'));
+        }
+
+        $nonce = isset($_GET['_wpnonce']) ? wp_unslash($_GET['_wpnonce']) : '';
+
+        if (!wp_verify_nonce($nonce, 'gms_view_verification_asset_' . $file_id)) {
+            wp_die(__('Invalid or expired verification asset request.', 'guest-management-system'));
+        }
+
+        if (!class_exists('GMS_Stripe_Integration')) {
+            require_once plugin_dir_path(__FILE__) . 'class-stripe-integration.php';
+        }
+
+        $stripe = GMS_Stripe_Integration::instance();
+
+        $context = isset($_GET['context']) ? sanitize_key(wp_unslash($_GET['context'])) : '';
+        $prefer_stream = ($context === 'modal');
+
+        $file_link = '';
+        if (!$prefer_stream) {
+            $file_link = $stripe->generateFileLink($file_id);
+        }
+
+        if (!$prefer_stream && is_string($file_link) && $file_link !== '') {
+            wp_redirect(esc_url_raw($file_link));
+            exit;
+        }
+
+        $stream = $stripe->getFileStreamData($file_id);
+
+        if (is_wp_error($stream)) {
+            wp_die(esc_html($stream->get_error_message()), __('Stripe File Error', 'guest-management-system'));
+        }
+
+        $mime_type = isset($stream['mime_type']) ? sanitize_mime_type($stream['mime_type']) : 'application/octet-stream';
+        if ($mime_type === '') {
+            $mime_type = 'application/octet-stream';
+        }
+
+        $filename = isset($stream['filename']) ? sanitize_file_name($stream['filename']) : ($file_id . '.bin');
+        if ($filename === '') {
+            $filename = sanitize_file_name($file_id . '.bin');
+        }
+
+        $contents = isset($stream['contents']) ? $stream['contents'] : '';
+
+        if (!is_string($contents) || $contents === '') {
+            wp_die(__('Unable to render the requested Stripe file.', 'guest-management-system'), __('Stripe File Error', 'guest-management-system'));
+        }
+
+        if (!headers_sent()) {
+            nocache_headers();
+            header('Content-Type: ' . $mime_type);
+            header('Content-Length: ' . strlen($contents));
+            header('Content-Disposition: inline; filename="' . $filename . '"');
+            header('X-Content-Type-Options: nosniff');
+        }
+
+        echo $contents;
+        exit;
+    }
+
     public function handle_housekeeper_ical_export() {
         if (!current_user_can('manage_options')) {
             wp_die(__('You do not have permission to export this calendar.', 'guest-management-system'));
@@ -2428,7 +3221,7 @@ class GMS_Admin {
             <div class="gms-quick-actions">
                 <h2><?php esc_html_e('Quick Actions', 'guest-management-system'); ?></h2>
                 <a class="button button-primary" href="<?php echo esc_url($reservations_list_url); ?>"><?php esc_html_e('Manage Reservations', 'guest-management-system'); ?></a>
-                <a class="button" href="<?php echo esc_url(admin_url('admin.php?page=guest-management-guests')); ?>"><?php esc_html_e('View Guests', 'guest-management-system'); ?></a>
+                <a class="button" href="<?php echo esc_url(admin_url('admin.php?page=guest-management-guests')); ?>"><?php esc_html_e('View Guest Profiles', 'guest-management-system'); ?></a>
                 <a class="button" href="<?php echo esc_url(admin_url('admin.php?page=guest-management-communications')); ?>"><?php esc_html_e('Communications & Logs', 'guest-management-system'); ?></a>
                 <a class="button" href="<?php echo esc_url(admin_url('admin.php?page=guest-management-templates')); ?>"><?php esc_html_e('Edit Templates', 'guest-management-system'); ?></a>
                 <a class="button" href="<?php echo esc_url(admin_url('admin.php?page=guest-management-settings')); ?>"><?php esc_html_e('Open Settings', 'guest-management-system'); ?></a>
@@ -4901,6 +5694,12 @@ class GMS_Admin {
     public function render_guests_page() {
         $action = isset($_GET['action']) ? sanitize_key(wp_unslash($_GET['action'])) : '';
 
+        if ($action === 'view') {
+            $guest_id = isset($_GET['guest_id']) ? absint(wp_unslash($_GET['guest_id'])) : 0;
+            $this->render_guest_profile_page($guest_id);
+            return;
+        }
+
         if ($action === 'edit') {
             $guest_id = isset($_GET['guest_id']) ? absint(wp_unslash($_GET['guest_id'])) : 0;
             $this->render_guest_edit_page($guest_id);
@@ -4912,9 +5711,9 @@ class GMS_Admin {
 
         ?>
         <div class="wrap">
-            <h1 class="wp-heading-inline"><?php esc_html_e('Guests', 'guest-management-system'); ?></h1>
+            <h1 class="wp-heading-inline"><?php esc_html_e('Guest Profiles', 'guest-management-system'); ?></h1>
             <hr class="wp-header-end">
-            <p><?php esc_html_e('Manage guest records, contact information, and stay history from this section.', 'guest-management-system'); ?></p>
+            <p><?php esc_html_e('Review guest profiles, confirm identity documentation, and keep sensitive guest information separated and secure.', 'guest-management-system'); ?></p>
 
             <?php if (isset($_GET['gms_guest_updated'])) : ?>
                 <div class="notice notice-success is-dismissible">
@@ -4941,7 +5740,7 @@ class GMS_Admin {
 
             <form method="get">
                 <input type="hidden" name="page" value="guest-management-guests" />
-                <?php $guests_table->search_box(__('Search Guests', 'guest-management-system'), 'gms-guests'); ?>
+                <?php $guests_table->search_box(__('Search Guest Profiles', 'guest-management-system'), 'gms-guests'); ?>
                 <?php $guests_table->display(); ?>
             </form>
         </div>
@@ -4955,7 +5754,7 @@ class GMS_Admin {
             ?>
             <div class="wrap">
                 <h1 class="wp-heading-inline"><?php esc_html_e('Edit Guest', 'guest-management-system'); ?></h1>
-                <a href="<?php echo esc_url($list_url); ?>" class="page-title-action"><?php esc_html_e('Back to Guests', 'guest-management-system'); ?></a>
+                <a href="<?php echo esc_url($list_url); ?>" class="page-title-action"><?php esc_html_e('Back to Guest Profiles', 'guest-management-system'); ?></a>
                 <hr class="wp-header-end">
                 <div class="notice notice-error"><p><?php esc_html_e('The requested guest could not be found.', 'guest-management-system'); ?></p></div>
             </div>
@@ -4969,7 +5768,7 @@ class GMS_Admin {
             ?>
             <div class="wrap">
                 <h1 class="wp-heading-inline"><?php esc_html_e('Edit Guest', 'guest-management-system'); ?></h1>
-                <a href="<?php echo esc_url($list_url); ?>" class="page-title-action"><?php esc_html_e('Back to Guests', 'guest-management-system'); ?></a>
+                <a href="<?php echo esc_url($list_url); ?>" class="page-title-action"><?php esc_html_e('Back to Guest Profiles', 'guest-management-system'); ?></a>
                 <hr class="wp-header-end">
                 <div class="notice notice-error"><p><?php esc_html_e('The requested guest could not be found.', 'guest-management-system'); ?></p></div>
             </div>
@@ -5019,7 +5818,7 @@ class GMS_Admin {
         ?>
         <div class="wrap">
             <h1 class="wp-heading-inline"><?php esc_html_e('Edit Guest', 'guest-management-system'); ?></h1>
-            <a href="<?php echo esc_url($list_url); ?>" class="page-title-action"><?php esc_html_e('Back to Guests', 'guest-management-system'); ?></a>
+            <a href="<?php echo esc_url($list_url); ?>" class="page-title-action"><?php esc_html_e('Back to Guest Profiles', 'guest-management-system'); ?></a>
             <hr class="wp-header-end">
 
             <?php if (!empty($errors)) : ?>
@@ -5060,6 +5859,121 @@ class GMS_Admin {
             </form>
         </div>
         <?php
+    }
+
+    protected function format_guest_phone_display($phone) {
+        $phone = trim((string) $phone);
+
+        if ($phone === '') {
+            return '';
+        }
+
+        if (function_exists('gms_format_phone')) {
+            $formatted = gms_format_phone($phone);
+            if (!empty($formatted)) {
+                return $formatted;
+            }
+        }
+
+        return $phone;
+    }
+
+    private function build_verification_media_preview($relative_path, $mime_type, $file_id = '') {
+        $relative_path = (string) $relative_path;
+        $file_id = sanitize_text_field($file_id);
+
+        if (strpos($relative_path, 'stripe-file:') === 0) {
+            $file_id = sanitize_text_field(substr($relative_path, strlen('stripe-file:')));
+            $relative_path = '';
+        }
+
+        $mime = sanitize_mime_type($mime_type);
+
+        if ($relative_path !== '') {
+            $trimmed_path = ltrim($relative_path, '/');
+
+            $upload_dir = wp_upload_dir();
+            if (!empty($upload_dir['error'])) {
+                return null;
+            }
+
+            $base_dir = wp_normalize_path(trailingslashit($upload_dir['basedir']));
+            $full_path = wp_normalize_path($base_dir . $trimmed_path);
+
+            if (!str_starts_with($full_path, $base_dir)) {
+                return null;
+            }
+
+            if (!file_exists($full_path) || !is_file($full_path)) {
+                return null;
+            }
+
+            if ($mime === '') {
+                $filetype = wp_check_filetype($full_path);
+                if (!empty($filetype['type'])) {
+                    $mime = sanitize_mime_type($filetype['type']);
+                }
+            }
+
+            $contents = @file_get_contents($full_path);
+            if ($contents === false) {
+                return null;
+            }
+
+            if ($mime === '' || strpos($mime, 'image/') !== 0) {
+                return array(
+                    'type' => $mime !== '' ? $mime : 'application/octet-stream',
+                    'data_uri' => '',
+                );
+            }
+
+            $data_uri = 'data:' . $mime . ';base64,' . base64_encode($contents);
+
+            return array(
+                'type' => $mime,
+                'data_uri' => $data_uri,
+            );
+        }
+
+        if ($file_id === '') {
+            return null;
+        }
+
+        $view_url = $this->build_verification_asset_view_url($file_id);
+
+        if ($view_url === '') {
+            return null;
+        }
+
+        if ($mime === '') {
+            $mime = 'application/octet-stream';
+        }
+
+        return array(
+            'type' => $mime,
+            'data_uri' => '',
+            'view_url' => $view_url,
+        );
+    }
+
+    private function build_verification_asset_view_url($file_id) {
+        $file_id = sanitize_text_field($file_id);
+
+        if ($file_id === '') {
+            return '';
+        }
+
+        $nonce = wp_create_nonce('gms_view_verification_asset_' . $file_id);
+
+        return add_query_arg(
+            array(
+                'action' => 'gms_view_verification_asset',
+                'file' => $file_id,
+                '_wpnonce' => $nonce,
+                'context' => 'modal',
+            ),
+            admin_url('admin-post.php')
+        );
     }
 
     public function render_communications_page() {
