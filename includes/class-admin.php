@@ -2439,26 +2439,17 @@ class GMS_Admin {
             <?php endif; ?>
 
             <style>
-                .gms-guest-profile__media-grid {
+                .gms-guest-profile__media-actions {
                     display: flex;
                     flex-wrap: wrap;
-                    gap: 20px;
+                    gap: 12px;
                     margin: 1em 0;
                 }
 
-                .gms-guest-profile__media-grid figure {
-                    margin: 0;
-                    text-align: center;
-                }
-
-                .gms-guest-profile__media-grid img {
-                    display: block;
-                    max-width: 260px;
-                    height: auto;
-                    border: 1px solid #ccd0d4;
-                    border-radius: 4px;
-                    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
-                    margin-bottom: 0.5em;
+                .gms-guest-profile__media-actions .button {
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 6px;
                 }
 
                 .gms-guest-profile__section {
@@ -2467,6 +2458,76 @@ class GMS_Admin {
 
                 .gms-guest-profile__section h2 {
                     margin-top: 1.5em;
+                }
+
+                .gms-verification-modal {
+                    position: fixed;
+                    inset: 0;
+                    display: none;
+                    align-items: center;
+                    justify-content: center;
+                    background: rgba(0, 0, 0, 0.65);
+                    z-index: 100000;
+                    padding: 20px;
+                }
+
+                .gms-verification-modal.is-active {
+                    display: flex;
+                }
+
+                .gms-verification-modal__dialog {
+                    background: #fff;
+                    max-width: min(900px, 90vw);
+                    width: 100%;
+                    max-height: 90vh;
+                    border-radius: 8px;
+                    box-shadow: 0 18px 48px rgba(0, 0, 0, 0.35);
+                    overflow: hidden;
+                    position: relative;
+                    display: flex;
+                    flex-direction: column;
+                }
+
+                .gms-verification-modal__close {
+                    position: absolute;
+                    top: 12px;
+                    right: 12px;
+                    border: none;
+                    background: transparent;
+                    color: #1d2327;
+                    font-size: 28px;
+                    line-height: 1;
+                    cursor: pointer;
+                }
+
+                .gms-verification-modal__title {
+                    margin: 0;
+                    padding: 20px 48px 10px 20px;
+                    font-size: 18px;
+                    border-bottom: 1px solid #dcdcde;
+                }
+
+                .gms-verification-modal__body {
+                    padding: 20px;
+                    flex: 1;
+                    overflow: auto;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    background: #f6f7f7;
+                }
+
+                .gms-verification-modal__body img,
+                .gms-verification-modal__body iframe {
+                    max-width: 100%;
+                    max-height: calc(90vh - 140px);
+                    border: none;
+                    box-shadow: 0 4px 18px rgba(0, 0, 0, 0.25);
+                    background: #fff;
+                }
+
+                body.gms-verification-modal-open {
+                    overflow: hidden;
                 }
             </style>
 
@@ -2512,30 +2573,143 @@ class GMS_Admin {
                 </table>
 
                 <?php if (!empty($media_items)) : ?>
-                    <div class="gms-guest-profile__media-grid">
+                    <div class="gms-guest-profile__media-actions">
                         <?php foreach ($media_items as $item) :
                             $data_uri = isset($item['data_uri']) ? $item['data_uri'] : '';
                             $label = isset($item['label']) ? $item['label'] : '';
                             $mime_type = isset($item['type']) ? $item['type'] : '';
                             $view_url = isset($item['view_url']) ? $item['view_url'] : '';
+                            $source = $data_uri !== '' ? $data_uri : $view_url;
+
+                            if ($source === '') {
+                                continue;
+                            }
                             ?>
-                            <figure>
-                                <?php if ($data_uri !== '') : ?>
-                                    <img src="<?php echo esc_attr($data_uri); ?>" alt="<?php echo esc_attr($label); ?>" loading="lazy">
-                                <?php elseif ($view_url !== '') : ?>
-                                    <a class="button button-secondary" target="_blank" rel="noopener noreferrer" href="<?php echo esc_url($view_url); ?>">
-                                        <?php esc_html_e('Open secure Stripe link', 'guest-management-system'); ?>
-                                    </a>
-                                <?php else : ?>
-                                    <div><?php esc_html_e('Stored securely', 'guest-management-system'); ?></div>
-                                <?php endif; ?>
-                                <figcaption><?php echo esc_html($label); ?><?php if ($mime_type !== '' && strpos($mime_type, 'image/') !== 0) : ?> (<?php echo esc_html($mime_type); ?>)<?php endif; ?></figcaption>
-                            </figure>
+                            <button
+                                type="button"
+                                class="button button-secondary gms-verification-view-button"
+                                data-src="<?php echo esc_attr($source); ?>"
+                                data-type="<?php echo esc_attr($mime_type); ?>"
+                                data-label="<?php echo esc_attr($label); ?>"
+                            >
+                                <?php echo esc_html(sprintf(__('View %s', 'guest-management-system'), $label)); ?>
+                            </button>
                         <?php endforeach; ?>
                     </div>
                 <?php else : ?>
                     <p><?php esc_html_e('No ID images are stored for this guest yet.', 'guest-management-system'); ?></p>
                 <?php endif; ?>
+
+                <div id="gms-verification-modal" class="gms-verification-modal" aria-hidden="true">
+                    <div class="gms-verification-modal__dialog" role="dialog" aria-modal="true" aria-labelledby="gms-verification-modal-title">
+                        <button type="button" class="gms-verification-modal__close" data-gms-close-modal aria-label="<?php esc_attr_e('Close modal', 'guest-management-system'); ?>">&times;</button>
+                        <h3 class="gms-verification-modal__title" id="gms-verification-modal-title"></h3>
+                        <div class="gms-verification-modal__body"></div>
+                    </div>
+                </div>
+
+                <script>
+                    (function() {
+                        const modal = document.getElementById('gms-verification-modal');
+                        if (!modal) {
+                            return;
+                        }
+
+                        const modalBody = modal.querySelector('.gms-verification-modal__body');
+                        const modalTitle = modal.querySelector('.gms-verification-modal__title');
+                        const closeButton = modal.querySelector('.gms-verification-modal__close');
+                        const openButtons = document.querySelectorAll('.gms-verification-view-button');
+                        const fallbackTitle = '<?php echo esc_js(__('Verification Asset', 'guest-management-system')); ?>';
+                        let lastActiveElement = null;
+
+                        function closeModal() {
+                            modal.classList.remove('is-active');
+                            modal.setAttribute('aria-hidden', 'true');
+                            document.body.classList.remove('gms-verification-modal-open');
+                            if (modalBody) {
+                                modalBody.innerHTML = '';
+                            }
+                            if (lastActiveElement && typeof lastActiveElement.focus === 'function') {
+                                lastActiveElement.focus();
+                            }
+                            lastActiveElement = null;
+                        }
+
+                        function renderContent(source, type, label) {
+                            if (!modalBody) {
+                                return;
+                            }
+
+                            modalBody.innerHTML = '';
+
+                            const isImage = (type && type.indexOf('image/') === 0) || source.indexOf('data:image/') === 0;
+                            if (isImage) {
+                                const img = document.createElement('img');
+                                img.src = source;
+                                img.alt = label || fallbackTitle;
+                                img.loading = 'lazy';
+                                modalBody.appendChild(img);
+                                return;
+                            }
+
+                            const frame = document.createElement('iframe');
+                            frame.src = source;
+                            frame.setAttribute('frameborder', '0');
+                            frame.setAttribute('allowfullscreen', 'true');
+                            frame.title = label || fallbackTitle;
+                            modalBody.appendChild(frame);
+                        }
+
+                        function openModal(source, type, label) {
+                            if (!source) {
+                                return;
+                            }
+
+                            renderContent(source, type || '', label || '');
+                            modalTitle.textContent = label || fallbackTitle;
+                            modal.classList.add('is-active');
+                            modal.setAttribute('aria-hidden', 'false');
+                            document.body.classList.add('gms-verification-modal-open');
+                            if (closeButton) {
+                                closeButton.focus();
+                            }
+                        }
+
+                        if (closeButton) {
+                            closeButton.addEventListener('click', function(event) {
+                                event.preventDefault();
+                                closeModal();
+                            });
+                        }
+
+                        modal.addEventListener('click', function(event) {
+                            if (event.target === modal) {
+                                closeModal();
+                            }
+                        });
+
+                        document.addEventListener('keydown', function(event) {
+                            if (event.key === 'Escape' && modal.classList.contains('is-active')) {
+                                closeModal();
+                            }
+                        });
+
+                        openButtons.forEach(function(button) {
+                            button.addEventListener('click', function(event) {
+                                event.preventDefault();
+                                const source = button.getAttribute('data-src') || '';
+                                if (!source) {
+                                    return;
+                                }
+
+                                lastActiveElement = document.activeElement;
+                                const type = button.getAttribute('data-type') || '';
+                                const label = button.getAttribute('data-label') || '';
+                                openModal(source, type, label);
+                            });
+                        });
+                    })();
+                </script>
 
                 <?php if ($can_request_refresh) : ?>
                     <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" class="gms-guest-profile__refresh-form">
