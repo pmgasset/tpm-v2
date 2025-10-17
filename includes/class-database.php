@@ -12,7 +12,7 @@ if (!defined('ABSPATH')) {
 class GMS_Database {
 
     const GUEST_PLACEHOLDER_DOMAIN = 'guest.invalid';
-    const DB_VERSION = '1.5.0';
+    const DB_VERSION = '1.6.0';
     const OPTION_DB_VERSION = 'gms_db_version';
 
     public function __construct() {
@@ -44,6 +44,7 @@ class GMS_Database {
             verification_status varchar(50) NOT NULL DEFAULT 'pending',
             portal_token varchar(100) NOT NULL DEFAULT '',
             guest_profile_token varchar(100) NOT NULL DEFAULT '',
+            housekeeper_token varchar(100) NOT NULL DEFAULT '',
             guest_profile_short_link varchar(255) NOT NULL DEFAULT '',
             platform varchar(100) NOT NULL DEFAULT '',
             webhook_payload longtext NULL,
@@ -72,6 +73,10 @@ class GMS_Database {
             [
                 'name' => 'guest_profile_token',
                 'columns' => ['guest_profile_token'],
+            ],
+            [
+                'name' => 'housekeeper_token',
+                'columns' => ['housekeeper_token'],
             ],
             [
                 'name' => 'platform',
@@ -302,6 +307,67 @@ class GMS_Database {
             ],
         ]);
 
+        $table_checklists = $wpdb->prefix . 'gms_housekeeper_checklists';
+        $sql_checklists = "CREATE TABLE $table_checklists (
+            id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            reservation_id bigint(20) unsigned NOT NULL,
+            housekeeper_token varchar(100) NOT NULL DEFAULT '',
+            status varchar(50) NOT NULL DEFAULT 'submitted',
+            payload longtext NULL,
+            inventory_notes longtext NULL,
+            submitted_at datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
+            created_at datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
+            updated_at datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
+            PRIMARY KEY  (id)
+        ) $charset_collate;";
+        dbDelta($sql_checklists);
+        self::maybeAddIndexes($table_checklists, [
+            [
+                'name' => 'reservation_id',
+                'columns' => ['reservation_id'],
+            ],
+            [
+                'name' => 'housekeeper_token',
+                'columns' => ['housekeeper_token'],
+            ],
+            [
+                'name' => 'status',
+                'columns' => ['status'],
+            ],
+        ]);
+
+        $table_checklist_photos = $wpdb->prefix . 'gms_housekeeper_checklist_photos';
+        $sql_checklist_photos = "CREATE TABLE $table_checklist_photos (
+            id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            reservation_id bigint(20) unsigned NOT NULL,
+            submission_id bigint(20) unsigned NOT NULL,
+            task_key varchar(100) NOT NULL DEFAULT '',
+            attachment_id bigint(20) unsigned NOT NULL DEFAULT 0,
+            caption varchar(255) NOT NULL DEFAULT '',
+            created_at datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
+            updated_at datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
+            PRIMARY KEY  (id)
+        ) $charset_collate;";
+        dbDelta($sql_checklist_photos);
+        self::maybeAddIndexes($table_checklist_photos, [
+            [
+                'name' => 'reservation_id',
+                'columns' => ['reservation_id'],
+            ],
+            [
+                'name' => 'submission_id',
+                'columns' => ['submission_id'],
+            ],
+            [
+                'name' => 'task_key',
+                'columns' => ['task_key'],
+            ],
+            [
+                'name' => 'attachment_id',
+                'columns' => ['attachment_id'],
+            ],
+        ]);
+
         update_option(self::OPTION_DB_VERSION, self::DB_VERSION);
     }
 
@@ -316,6 +382,8 @@ class GMS_Database {
         self::migrateCommunicationsTable($installed);
         self::repairDuplicatePortalTokens($installed);
         self::maybeAddGuestProfileColumns($installed);
+        self::maybeAddHousekeeperTokenColumn($installed);
+        self::maybeCreateHousekeeperTables($installed);
         self::maybeSeedMessageTemplates();
 
         update_option(self::OPTION_DB_VERSION, self::DB_VERSION);
@@ -362,6 +430,161 @@ class GMS_Database {
         }
 
         self::backfillGuestProfileTokens($table_name);
+    }
+
+    private static function maybeAddHousekeeperTokenColumn($previous_version) {
+        global $wpdb;
+
+        if (!empty($previous_version) && version_compare($previous_version, '1.6.0', '>=')) {
+            return;
+        }
+
+        $table_name = $wpdb->prefix . 'gms_reservations';
+
+        if (!self::tableExists($table_name)) {
+            return;
+        }
+
+        $columns = self::getTableColumns($table_name);
+
+        if (!isset($columns['housekeeper_token'])) {
+            $after = 'guest_profile_token';
+            if (!isset($columns[$after])) {
+                $after = 'portal_token';
+            }
+
+            $wpdb->query(
+                "ALTER TABLE {$table_name} ADD housekeeper_token varchar(100) NOT NULL DEFAULT '' AFTER {$after}"
+            );
+
+            self::maybeAddIndexes($table_name, array(
+                array(
+                    'name' => 'housekeeper_token',
+                    'columns' => array('housekeeper_token'),
+                ),
+            ));
+        }
+
+        self::backfillHousekeeperTokens($table_name);
+    }
+
+    private static function maybeCreateHousekeeperTables($previous_version) {
+        global $wpdb;
+
+        if (!empty($previous_version) && version_compare($previous_version, '1.6.0', '>=')) {
+            return;
+        }
+
+        require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
+
+        $charset_collate = $wpdb->get_charset_collate();
+
+        $table_checklists = $wpdb->prefix . 'gms_housekeeper_checklists';
+        if (!self::tableExists($table_checklists)) {
+            $sql = "CREATE TABLE $table_checklists (
+                id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+                reservation_id bigint(20) unsigned NOT NULL,
+                housekeeper_token varchar(100) NOT NULL DEFAULT '',
+                status varchar(50) NOT NULL DEFAULT 'submitted',
+                payload longtext NULL,
+                inventory_notes longtext NULL,
+                submitted_at datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
+                created_at datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
+                updated_at datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
+                PRIMARY KEY  (id)
+            ) $charset_collate;";
+            dbDelta($sql);
+
+            self::maybeAddIndexes($table_checklists, array(
+                array(
+                    'name' => 'reservation_id',
+                    'columns' => array('reservation_id'),
+                ),
+                array(
+                    'name' => 'housekeeper_token',
+                    'columns' => array('housekeeper_token'),
+                ),
+                array(
+                    'name' => 'status',
+                    'columns' => array('status'),
+                ),
+            ));
+        }
+
+        $table_photos = $wpdb->prefix . 'gms_housekeeper_checklist_photos';
+        if (!self::tableExists($table_photos)) {
+            $sql = "CREATE TABLE $table_photos (
+                id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+                reservation_id bigint(20) unsigned NOT NULL,
+                submission_id bigint(20) unsigned NOT NULL,
+                task_key varchar(100) NOT NULL DEFAULT '',
+                attachment_id bigint(20) unsigned NOT NULL DEFAULT 0,
+                caption varchar(255) NOT NULL DEFAULT '',
+                created_at datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
+                updated_at datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
+                PRIMARY KEY  (id)
+            ) $charset_collate;";
+            dbDelta($sql);
+
+            self::maybeAddIndexes($table_photos, array(
+                array(
+                    'name' => 'reservation_id',
+                    'columns' => array('reservation_id'),
+                ),
+                array(
+                    'name' => 'submission_id',
+                    'columns' => array('submission_id'),
+                ),
+                array(
+                    'name' => 'task_key',
+                    'columns' => array('task_key'),
+                ),
+                array(
+                    'name' => 'attachment_id',
+                    'columns' => array('attachment_id'),
+                ),
+            ));
+        }
+    }
+
+    private static function backfillHousekeeperTokens($table_name) {
+        global $wpdb;
+
+        if (!self::tableExists($table_name)) {
+            return;
+        }
+
+        $batch_size = 100;
+
+        do {
+            $rows = $wpdb->get_results(
+                $wpdb->prepare(
+                    "SELECT id FROM {$table_name} WHERE housekeeper_token = '' LIMIT %d",
+                    max(1, (int) $batch_size)
+                ),
+                ARRAY_A
+            );
+
+            if (empty($rows)) {
+                break;
+            }
+
+            foreach ($rows as $row) {
+                $reservation_id = isset($row['id']) ? intval($row['id']) : 0;
+
+                if ($reservation_id <= 0) {
+                    continue;
+                }
+
+                $token = self::ensureUniqueHousekeeperToken('', $reservation_id);
+
+                if ($token === '') {
+                    continue;
+                }
+
+                self::updateReservation($reservation_id, array('housekeeper_token' => $token));
+            }
+        } while (!empty($rows));
     }
 
     private static function backfillGuestProfileTokens($table_name) {
@@ -1486,6 +1709,7 @@ class GMS_Database {
             'portal_token' => '',
             'guest_profile_token' => '',
             'guest_profile_short_link' => '',
+            'housekeeper_token' => '',
             'platform' => '',
             'webhook_data' => array(),
             'contact_info_confirmed_at' => '',
@@ -1495,6 +1719,7 @@ class GMS_Database {
 
         $portal_token = self::ensureUniquePortalToken($data['portal_token']);
         $guest_profile_token = self::ensureUniqueGuestProfileToken($data['guest_profile_token']);
+        $housekeeper_token = self::ensureUniqueHousekeeperToken($data['housekeeper_token']);
 
         $guest_phone = $data['guest_phone'];
         if (function_exists('gms_sanitize_phone')) {
@@ -1521,6 +1746,7 @@ class GMS_Database {
             'portal_token' => sanitize_text_field($portal_token),
             'guest_profile_token' => sanitize_text_field($guest_profile_token),
             'guest_profile_short_link' => esc_url_raw($data['guest_profile_short_link']),
+            'housekeeper_token' => sanitize_text_field($housekeeper_token),
             'platform' => sanitize_text_field($data['platform']),
             'webhook_payload' => self::maybeEncodeJson($data['webhook_data']),
             'contact_info_confirmed_at' => self::sanitizeDateTime($data['contact_info_confirmed_at']),
@@ -1528,7 +1754,7 @@ class GMS_Database {
             'updated_at' => current_time('mysql'),
         );
 
-        $formats = array('%d', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s');
+        $formats = array('%d', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s');
 
         $result = $wpdb->insert($table_name, $insert_data, $formats);
 
@@ -1545,6 +1771,27 @@ class GMS_Database {
         global $wpdb;
         $table_name = $wpdb->prefix . 'gms_reservations';
         $row = $wpdb->get_row($wpdb->prepare("SELECT * FROM $table_name WHERE id = %d", intval($reservation_id)), ARRAY_A);
+        return self::formatReservationRow($row);
+    }
+
+    public static function getReservationByHousekeeperToken($token) {
+        global $wpdb;
+
+        $token = sanitize_text_field((string) $token);
+
+        if ($token === '') {
+            return null;
+        }
+
+        $table_name = $wpdb->prefix . 'gms_reservations';
+        $row = $wpdb->get_row(
+            $wpdb->prepare(
+                "SELECT * FROM {$table_name} WHERE housekeeper_token = %s LIMIT 1",
+                $token
+            ),
+            ARRAY_A
+        );
+
         return self::formatReservationRow($row);
     }
 
@@ -1612,6 +1859,327 @@ class GMS_Database {
             'url' => $url,
             'short_link' => $short_link,
         );
+    }
+
+    public static function getHousekeeperLinkForReservation($reservation_id) {
+        $reservation_id = intval($reservation_id);
+
+        if ($reservation_id <= 0) {
+            return array(
+                'token' => '',
+                'url' => '',
+            );
+        }
+
+        $reservation = self::getReservationById($reservation_id);
+
+        if (!$reservation) {
+            return array(
+                'token' => '',
+                'url' => '',
+            );
+        }
+
+        $token = isset($reservation['housekeeper_token']) ? trim((string) $reservation['housekeeper_token']) : '';
+
+        if ($token === '') {
+            $token = self::ensureUniqueHousekeeperToken('', $reservation_id);
+
+            if ($token !== '') {
+                self::updateReservation($reservation_id, array('housekeeper_token' => $token));
+                $reservation['housekeeper_token'] = $token;
+            }
+        }
+
+        $url = '';
+
+        if ($token !== '' && function_exists('gms_build_housekeeper_url')) {
+            $built = gms_build_housekeeper_url($token);
+            if (is_string($built) && $built !== '') {
+                $url = $built;
+            }
+        }
+
+        if ($url === '' && function_exists('home_url')) {
+            $url = home_url('/');
+        }
+
+        return array(
+            'token' => $token,
+            'url' => $url,
+        );
+    }
+
+    public static function createHousekeeperSubmission($data) {
+        global $wpdb;
+
+        $table = $wpdb->prefix . 'gms_housekeeper_checklists';
+
+        $defaults = array(
+            'reservation_id' => 0,
+            'housekeeper_token' => '',
+            'status' => 'submitted',
+            'payload' => array(),
+            'inventory_notes' => '',
+            'submitted_at' => current_time('mysql'),
+        );
+
+        $data = wp_parse_args($data, $defaults);
+
+        $insert = array(
+            'reservation_id' => intval($data['reservation_id']),
+            'housekeeper_token' => sanitize_text_field($data['housekeeper_token']),
+            'status' => sanitize_key($data['status']),
+            'payload' => self::maybeEncodeJson($data['payload']),
+            'inventory_notes' => wp_kses_post($data['inventory_notes']),
+            'submitted_at' => self::sanitizeDateTime($data['submitted_at']),
+            'created_at' => current_time('mysql'),
+            'updated_at' => current_time('mysql'),
+        );
+
+        $formats = array('%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s');
+
+        $result = $wpdb->insert($table, $insert, $formats);
+
+        if ($result === false) {
+            return false;
+        }
+
+        return (int) $wpdb->insert_id;
+    }
+
+    public static function updateHousekeeperSubmission($submission_id, $data) {
+        global $wpdb;
+
+        $submission_id = intval($submission_id);
+
+        if ($submission_id <= 0) {
+            return false;
+        }
+
+        $table = $wpdb->prefix . 'gms_housekeeper_checklists';
+
+        $allowed = array('status', 'payload', 'inventory_notes', 'submitted_at', 'housekeeper_token');
+        $update = array();
+
+        foreach ($allowed as $field) {
+            if (!array_key_exists($field, $data)) {
+                continue;
+            }
+
+            switch ($field) {
+                case 'status':
+                    $update['status'] = sanitize_key($data[$field]);
+                    break;
+                case 'payload':
+                    $update['payload'] = self::maybeEncodeJson($data[$field]);
+                    break;
+                case 'inventory_notes':
+                    $update['inventory_notes'] = wp_kses_post($data[$field]);
+                    break;
+                case 'submitted_at':
+                    $update['submitted_at'] = self::sanitizeDateTime($data[$field]);
+                    break;
+                case 'housekeeper_token':
+                    $update['housekeeper_token'] = sanitize_text_field($data[$field]);
+                    break;
+            }
+        }
+
+        if (empty($update)) {
+            return true;
+        }
+
+        $update['updated_at'] = current_time('mysql');
+
+        $updated = $wpdb->update(
+            $table,
+            $update,
+            array('id' => $submission_id),
+            null,
+            array('%d')
+        );
+
+        return $updated !== false;
+    }
+
+    public static function getHousekeeperSubmission($submission_id) {
+        global $wpdb;
+
+        $submission_id = intval($submission_id);
+
+        if ($submission_id <= 0) {
+            return null;
+        }
+
+        $table = $wpdb->prefix . 'gms_housekeeper_checklists';
+        $row = $wpdb->get_row(
+            $wpdb->prepare("SELECT * FROM {$table} WHERE id = %d", $submission_id),
+            ARRAY_A
+        );
+
+        return self::formatHousekeeperSubmissionRow($row);
+    }
+
+    public static function getHousekeeperSubmissions($args = array()) {
+        global $wpdb;
+
+        $defaults = array(
+            'reservation_id' => 0,
+            'status' => '',
+            'housekeeper_token' => '',
+            'limit' => 50,
+            'order' => 'DESC',
+        );
+
+        $args = wp_parse_args($args, $defaults);
+
+        $table = $wpdb->prefix . 'gms_housekeeper_checklists';
+
+        $where = array('1=1');
+        $params = array();
+
+        if ($args['reservation_id'] > 0) {
+            $where[] = 'reservation_id = %d';
+            $params[] = intval($args['reservation_id']);
+        }
+
+        if ($args['status'] !== '') {
+            $where[] = 'status = %s';
+            $params[] = sanitize_key($args['status']);
+        }
+
+        if ($args['housekeeper_token'] !== '') {
+            $where[] = 'housekeeper_token = %s';
+            $params[] = sanitize_text_field($args['housekeeper_token']);
+        }
+
+        $order = strtoupper($args['order']) === 'ASC' ? 'ASC' : 'DESC';
+        $limit = max(1, intval($args['limit']));
+
+        $sql = "SELECT * FROM {$table} WHERE " . implode(' AND ', $where) . " ORDER BY submitted_at {$order}, id {$order} LIMIT %d";
+        $params[] = $limit;
+
+        $prepared = $wpdb->prepare($sql, $params);
+        $rows = $wpdb->get_results($prepared, ARRAY_A);
+
+        if (empty($rows)) {
+            return array();
+        }
+
+        return array_map(array(__CLASS__, 'formatHousekeeperSubmissionRow'), $rows);
+    }
+
+    public static function deleteHousekeeperSubmission($submission_id) {
+        global $wpdb;
+
+        $submission_id = intval($submission_id);
+
+        if ($submission_id <= 0) {
+            return false;
+        }
+
+        self::deleteHousekeeperPhotosBySubmission($submission_id);
+
+        $table = $wpdb->prefix . 'gms_housekeeper_checklists';
+
+        $deleted = $wpdb->delete($table, array('id' => $submission_id), array('%d'));
+
+        return $deleted !== false;
+    }
+
+    public static function addHousekeeperPhoto($data) {
+        global $wpdb;
+
+        $table = $wpdb->prefix . 'gms_housekeeper_checklist_photos';
+
+        $defaults = array(
+            'reservation_id' => 0,
+            'submission_id' => 0,
+            'task_key' => '',
+            'attachment_id' => 0,
+            'caption' => '',
+        );
+
+        $data = wp_parse_args($data, $defaults);
+
+        $insert = array(
+            'reservation_id' => intval($data['reservation_id']),
+            'submission_id' => intval($data['submission_id']),
+            'task_key' => sanitize_text_field($data['task_key']),
+            'attachment_id' => intval($data['attachment_id']),
+            'caption' => sanitize_text_field($data['caption']),
+            'created_at' => current_time('mysql'),
+            'updated_at' => current_time('mysql'),
+        );
+
+        $formats = array('%d', '%d', '%s', '%d', '%s', '%s', '%s');
+
+        $result = $wpdb->insert($table, $insert, $formats);
+
+        if ($result === false) {
+            return false;
+        }
+
+        return (int) $wpdb->insert_id;
+    }
+
+    public static function getHousekeeperPhotos($args = array()) {
+        global $wpdb;
+
+        $defaults = array(
+            'submission_id' => 0,
+            'reservation_id' => 0,
+            'task_key' => '',
+        );
+
+        $args = wp_parse_args($args, $defaults);
+
+        $table = $wpdb->prefix . 'gms_housekeeper_checklist_photos';
+        $where = array('1=1');
+        $params = array();
+
+        if ($args['submission_id'] > 0) {
+            $where[] = 'submission_id = %d';
+            $params[] = intval($args['submission_id']);
+        }
+
+        if ($args['reservation_id'] > 0) {
+            $where[] = 'reservation_id = %d';
+            $params[] = intval($args['reservation_id']);
+        }
+
+        if ($args['task_key'] !== '') {
+            $where[] = 'task_key = %s';
+            $params[] = sanitize_text_field($args['task_key']);
+        }
+
+        $sql = "SELECT * FROM {$table} WHERE " . implode(' AND ', $where) . ' ORDER BY created_at ASC, id ASC';
+
+        $prepared = empty($params) ? $sql : $wpdb->prepare($sql, $params);
+        $rows = $wpdb->get_results($prepared, ARRAY_A);
+
+        if (empty($rows)) {
+            return array();
+        }
+
+        return array_map(array(__CLASS__, 'formatHousekeeperPhotoRow'), $rows);
+    }
+
+    public static function deleteHousekeeperPhotosBySubmission($submission_id) {
+        global $wpdb;
+
+        $submission_id = intval($submission_id);
+
+        if ($submission_id <= 0) {
+            return false;
+        }
+
+        $table = $wpdb->prefix . 'gms_housekeeper_checklist_photos';
+
+        $deleted = $wpdb->delete($table, array('submission_id' => $submission_id), array('%d'));
+
+        return $deleted !== false;
     }
 
     public static function getActiveReservationForProperty($args = array()) {
@@ -1832,15 +2400,19 @@ class GMS_Database {
             'guest_id', 'guest_record_id', 'guest_name', 'guest_email', 'guest_phone', 'property_id', 'property_name',
             'booking_reference', 'door_code', 'checkin_date', 'checkout_date', 'status',
             'agreement_status', 'verification_status', 'portal_token', 'guest_profile_token', 'guest_profile_short_link',
+            'housekeeper_token',
             'platform', 'webhook_data', 'contact_info_confirmed_at'
         );
 
         $update_data = array();
         $previous_status = null;
         $track_status_change = false;
+        $previous_housekeeper_token = null;
+        $housekeeper_token_changed = false;
+        $existing = null;
 
         foreach ($allowed as $field) {
-            if (!isset($data[$field])) {
+            if (!array_key_exists($field, $data)) {
                 continue;
             }
 
@@ -1879,6 +2451,9 @@ class GMS_Database {
                 case 'guest_profile_short_link':
                     $update_data['guest_profile_short_link'] = esc_url_raw($data[$field]);
                     break;
+                case 'housekeeper_token':
+                    $update_data['housekeeper_token'] = self::ensureUniqueHousekeeperToken($data[$field], $reservation_id);
+                    break;
                 default:
                     $update_data[$field] = sanitize_text_field($data[$field]);
                     break;
@@ -1893,11 +2468,18 @@ class GMS_Database {
             return true;
         }
 
-        if ($track_status_change) {
+        if ($track_status_change || array_key_exists('housekeeper_token', $update_data)) {
             $existing = self::getReservationById($reservation_id);
-            if ($existing && isset($existing['status'])) {
-                $previous_status = sanitize_key($existing['status']);
-            }
+        }
+
+        if ($track_status_change && $existing && isset($existing['status'])) {
+            $previous_status = sanitize_key($existing['status']);
+        }
+
+        if (array_key_exists('housekeeper_token', $update_data)) {
+            $previous_housekeeper_token = isset($existing['housekeeper_token']) ? (string) $existing['housekeeper_token'] : '';
+            $new_housekeeper_token = (string) $update_data['housekeeper_token'];
+            $housekeeper_token_changed = $previous_housekeeper_token !== $new_housekeeper_token;
         }
 
         $update_data['updated_at'] = current_time('mysql');
@@ -1914,11 +2496,23 @@ class GMS_Database {
             return false;
         }
 
-        if ($track_status_change) {
+        if ($track_status_change && array_key_exists('status', $update_data)) {
             $new_status = sanitize_key($update_data['status']);
 
             if ($previous_status !== $new_status) {
                 do_action('gms_reservation_status_updated', $reservation_id, $new_status, $previous_status);
+            }
+        }
+
+        if ($housekeeper_token_changed) {
+            $updated_reservation = self::getReservationById($reservation_id);
+            if ($updated_reservation) {
+                $new_token = isset($updated_reservation['housekeeper_token']) ? (string) $updated_reservation['housekeeper_token'] : '';
+                do_action('gms_housekeeper_assignment_changed', $reservation_id, $new_token, $previous_housekeeper_token, $updated_reservation);
+
+                if ($previous_housekeeper_token === '' && $new_token !== '') {
+                    do_action('gms_housekeeper_assigned', $reservation_id, $new_token, $previous_housekeeper_token, $updated_reservation);
+                }
             }
         }
 
@@ -3943,6 +4537,10 @@ class GMS_Database {
         return strtolower(wp_generate_password(40, false, false));
     }
 
+    private static function generateHousekeeperToken() {
+        return strtolower(wp_generate_password(36, false, false));
+    }
+
     private static function resolvePortalTokenConflicts(array $rows) {
         if (count($rows) <= 1) {
             return;
@@ -4086,6 +4684,54 @@ class GMS_Database {
         return $token;
     }
 
+    private static function ensureUniqueHousekeeperToken($token, $exclude_id = 0) {
+        $token = sanitize_text_field((string) $token);
+        $token = trim($token);
+
+        $attempts = 0;
+        $max_attempts = 10;
+
+        if ($token === '') {
+            $token = self::generateHousekeeperToken();
+        }
+
+        while ($attempts < $max_attempts && self::housekeeperTokenExists($token, $exclude_id)) {
+            $token = self::generateHousekeeperToken();
+            $attempts++;
+        }
+
+        return $token;
+    }
+
+    private static function housekeeperTokenExists($token, $exclude_id = 0) {
+        global $wpdb;
+
+        $token = sanitize_text_field((string) $token);
+
+        if ($token === '') {
+            return false;
+        }
+
+        $table_name = $wpdb->prefix . 'gms_reservations';
+
+        if ($exclude_id > 0) {
+            $sql = $wpdb->prepare(
+                "SELECT id FROM {$table_name} WHERE housekeeper_token = %s AND id != %d LIMIT 1",
+                $token,
+                intval($exclude_id)
+            );
+        } else {
+            $sql = $wpdb->prepare(
+                "SELECT id FROM {$table_name} WHERE housekeeper_token = %s LIMIT 1",
+                $token
+            );
+        }
+
+        $result = $wpdb->get_var($sql);
+
+        return !empty($result);
+    }
+
     private static function guestProfileTokenExists($token, $exclude_id = 0) {
         global $wpdb;
 
@@ -4160,8 +4806,65 @@ class GMS_Database {
             $row['guest_profile_short_link'] = esc_url_raw($row['guest_profile_short_link']);
         }
 
+        if (isset($row['housekeeper_token'])) {
+            $row['housekeeper_token'] = trim((string) $row['housekeeper_token']);
+
+            if ($row['housekeeper_token'] !== '' && function_exists('gms_build_housekeeper_url')) {
+                $housekeeper_url = gms_build_housekeeper_url($row['housekeeper_token']);
+                $row['housekeeper_url'] = $housekeeper_url ? $housekeeper_url : '';
+            }
+        }
+
         if (isset($row['contact_info_confirmed_at'])) {
             $row['contact_info_confirmed_at'] = self::sanitizeDateTime($row['contact_info_confirmed_at']);
+        }
+
+        return $row;
+    }
+
+    private static function formatHousekeeperSubmissionRow($row) {
+        if (!$row) {
+            return null;
+        }
+
+        $row['id'] = isset($row['id']) ? intval($row['id']) : 0;
+        $row['reservation_id'] = isset($row['reservation_id']) ? intval($row['reservation_id']) : 0;
+        $row['housekeeper_token'] = isset($row['housekeeper_token']) ? sanitize_text_field($row['housekeeper_token']) : '';
+        $row['status'] = isset($row['status']) ? sanitize_key($row['status']) : 'submitted';
+        $row['inventory_notes'] = isset($row['inventory_notes']) ? wp_kses_post($row['inventory_notes']) : '';
+
+        if (isset($row['payload']) && $row['payload'] !== '') {
+            $decoded = json_decode($row['payload'], true);
+            if (json_last_error() === JSON_ERROR_NONE) {
+                $row['payload'] = $decoded;
+            }
+        }
+
+        foreach (array('submitted_at', 'created_at', 'updated_at') as $field) {
+            if (isset($row[$field])) {
+                $row[$field] = self::sanitizeDateTime($row[$field]);
+            }
+        }
+
+        return $row;
+    }
+
+    private static function formatHousekeeperPhotoRow($row) {
+        if (!$row) {
+            return null;
+        }
+
+        $row['id'] = isset($row['id']) ? intval($row['id']) : 0;
+        $row['reservation_id'] = isset($row['reservation_id']) ? intval($row['reservation_id']) : 0;
+        $row['submission_id'] = isset($row['submission_id']) ? intval($row['submission_id']) : 0;
+        $row['task_key'] = isset($row['task_key']) ? sanitize_key($row['task_key']) : '';
+        $row['attachment_id'] = isset($row['attachment_id']) ? intval($row['attachment_id']) : 0;
+        $row['caption'] = isset($row['caption']) ? sanitize_text_field($row['caption']) : '';
+
+        foreach (array('created_at', 'updated_at') as $field) {
+            if (isset($row[$field])) {
+                $row[$field] = self::sanitizeDateTime($row[$field]);
+            }
         }
 
         return $row;

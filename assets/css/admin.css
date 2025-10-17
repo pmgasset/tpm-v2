@@ -215,6 +215,273 @@
     gap: 16px;
 }
 
+.gms-housekeeper__checklists {
+    background: #ffffff;
+    border: 1px solid var(--gms-admin-border, rgba(148, 163, 184, 0.35));
+    border-radius: var(--gms-admin-radius, 14px);
+    padding: 24px;
+    box-shadow: 0 18px 36px rgba(15, 23, 42, 0.08);
+    display: grid;
+    gap: 24px;
+}
+
+.gms-housekeeper__checklists-header {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 16px;
+    align-items: flex-start;
+}
+
+.gms-housekeeper__checklists-description {
+    margin: 8px 0 0;
+    color: var(--gms-admin-muted, #4b5563);
+    max-width: 560px;
+}
+
+.gms-housekeeper__checklists-nav {
+    display: inline-flex;
+    gap: 8px;
+    background: var(--gms-admin-soft-bg, #f8fafc);
+    padding: 6px;
+    border-radius: 999px;
+}
+
+.gms-housekeeper__checklists-nav a {
+    display: inline-block;
+    padding: 6px 18px;
+    border-radius: 999px;
+    text-decoration: none;
+    font-weight: 500;
+    color: var(--gms-admin-muted, #4b5563);
+    transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+.gms-housekeeper__checklists-nav a:hover {
+    background: var(--gms-admin-accent-soft, rgba(29, 78, 216, 0.12));
+    color: var(--gms-admin-accent, #1d4ed8);
+}
+
+.gms-housekeeper__checklists-nav a.is-active {
+    background: var(--gms-admin-accent, #1d4ed8);
+    color: #ffffff;
+}
+
+.gms-housekeeper__checklists-empty {
+    margin: 0;
+    font-size: 0.95rem;
+    color: var(--gms-admin-muted, #4b5563);
+    background: var(--gms-admin-soft-bg, #f8fafc);
+    padding: 18px;
+    border-radius: 12px;
+}
+
+.gms-housekeeper__checklist-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 20px;
+}
+
+.gms-housekeeper-checklist-card {
+    background: #ffffff;
+    border: 1px solid var(--gms-admin-border, rgba(148, 163, 184, 0.35));
+    border-radius: 16px;
+    padding: 20px;
+    display: grid;
+    gap: 16px;
+    box-shadow: 0 20px 40px rgba(15, 23, 42, 0.08);
+}
+
+.gms-housekeeper-checklist-card__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+}
+
+.gms-housekeeper-checklist-card__title {
+    margin: 0;
+    font-size: 1.1rem;
+    color: #0f172a;
+}
+
+.gms-housekeeper-checklist-card__guest {
+    margin: 4px 0 0;
+    color: var(--gms-admin-muted, #4b5563);
+}
+
+.gms-housekeeper-checklist-card__submitted {
+    font-size: 0.85rem;
+    color: var(--gms-admin-muted, #4b5563);
+    white-space: nowrap;
+}
+
+.gms-housekeeper-checklist-card__inventory {
+    background: var(--gms-admin-soft-bg, #f8fafc);
+    padding: 12px 14px;
+    border-radius: 12px;
+    color: #0f172a;
+}
+
+.gms-housekeeper-checklist-card__sections {
+    display: grid;
+    gap: 12px;
+}
+
+.gms-housekeeper-checklist-section {
+    border: 1px solid var(--gms-admin-border, rgba(148, 163, 184, 0.35));
+    border-radius: 12px;
+    background: #f9fafb;
+}
+
+.gms-housekeeper-checklist-section > summary {
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 12px;
+    padding: 14px 16px;
+    font-weight: 600;
+    color: #0f172a;
+}
+
+.gms-housekeeper-checklist-section[open] > summary {
+    border-bottom: 1px solid rgba(148, 163, 184, 0.35);
+    background: rgba(29, 78, 216, 0.06);
+}
+
+.gms-housekeeper-checklist-section__phase {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--gms-admin-muted, #4b5563);
+}
+
+.gms-housekeeper-checklist-section__label {
+    flex: 1 1 auto;
+}
+
+.gms-housekeeper-checklist-tasks {
+    list-style: none;
+    margin: 0;
+    padding: 16px;
+    display: grid;
+    gap: 10px;
+    background: #ffffff;
+}
+
+.gms-housekeeper-checklist-tasks li {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    border-radius: 10px;
+    background: rgba(15, 23, 42, 0.03);
+}
+
+.gms-housekeeper-checklist-tasks li.is-complete {
+    background: rgba(34, 197, 94, 0.12);
+    color: #047857;
+}
+
+.gms-housekeeper-checklist-tasks li.is-missing {
+    background: rgba(248, 113, 113, 0.12);
+    color: #b91c1c;
+}
+
+.gms-housekeeper-checklist-tasks .dashicons {
+    font-size: 18px;
+}
+
+.gms-housekeeper-checklist-notes {
+    padding: 16px;
+    background: #ffffff;
+    border-top: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.gms-housekeeper-checklist-notes h4 {
+    margin: 0 0 6px;
+    font-size: 0.95rem;
+}
+
+.gms-housekeeper-checklist-notes p {
+    margin: 0 0 12px;
+    color: var(--gms-admin-muted, #4b5563);
+}
+
+.gms-housekeeper-checklist-notes p:last-child {
+    margin-bottom: 0;
+}
+
+.gms-housekeeper-checklist-photos {
+    display: grid;
+    gap: 12px;
+    padding: 16px;
+    background: #ffffff;
+    border-top: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.gms-housekeeper-checklist-photos a {
+    display: inline-flex;
+    border-radius: 12px;
+    overflow: hidden;
+    border: 1px solid rgba(148, 163, 184, 0.35);
+}
+
+.gms-housekeeper-checklist-thumb {
+    display: block;
+    width: 100%;
+    height: auto;
+    object-fit: cover;
+}
+
+.gms-housekeeper-checklist-card__footer {
+    display: flex;
+    justify-content: flex-end;
+}
+
+.gms-housekeeper-checklist-card__link {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--gms-admin-accent, #1d4ed8);
+    text-decoration: none;
+    font-weight: 600;
+}
+
+.gms-housekeeper-checklist-card__link:hover {
+    text-decoration: underline;
+}
+
+.gms-housekeeper-pending {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 12px;
+}
+
+.gms-housekeeper-pending li {
+    background: #ffffff;
+    border: 1px solid var(--gms-admin-border, rgba(148, 163, 184, 0.35));
+    border-radius: 12px;
+    padding: 16px;
+    display: grid;
+    gap: 8px;
+}
+
+.gms-housekeeper-pending__property {
+    font-weight: 600;
+    margin: 0;
+    color: #0f172a;
+}
+
+.gms-housekeeper-pending__meta {
+    margin: 0;
+    color: var(--gms-admin-muted, #4b5563);
+    font-size: 0.9rem;
+}
+
 .gms-housekeeper__summary-item {
     background: #ffffff;
     border: 1px solid var(--gms-admin-border, rgba(148, 163, 184, 0.35));

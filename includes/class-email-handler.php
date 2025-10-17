@@ -11,6 +11,7 @@ class GMS_Email_Handler {
     public function __construct() {
         add_filter('wp_mail_from', array($this, 'customMailFrom'));
         add_filter('wp_mail_from_name', array($this, 'customMailFromName'));
+        add_action('gms_housekeeper_assigned', array($this, 'handleHousekeeperAssignment'), 10, 4);
     }
     
     public function customMailFrom($email) {
@@ -207,6 +208,106 @@ class GMS_Email_Handler {
         ));
 
         return $result;
+    }
+
+    public function handleHousekeeperAssignment($reservation_id, $new_token, $previous_token, $reservation = null) {
+        if (empty($new_token) || !function_exists('gms_build_housekeeper_url')) {
+            return;
+        }
+
+        if (!is_array($reservation) || empty($reservation)) {
+            $reservation = GMS_Database::getReservationById($reservation_id);
+        }
+
+        if (!$reservation || !is_array($reservation)) {
+            return;
+        }
+
+        $link = gms_build_housekeeper_url($new_token);
+        if (!is_string($link) || $link === '') {
+            return;
+        }
+
+        $short_link = function_exists('gms_shorten_url') ? gms_shorten_url($link) : $link;
+        if (!is_string($short_link) || $short_link === '') {
+            $short_link = $link;
+        }
+
+        $contacts = function_exists('gms_get_housekeeper_contacts') ? gms_get_housekeeper_contacts($reservation) : array();
+        $emails = isset($contacts['emails']) ? array_filter((array) $contacts['emails']) : array();
+
+        if (empty($emails)) {
+            return;
+        }
+
+        $property_name = isset($reservation['property_name']) ? sanitize_text_field($reservation['property_name']) : '';
+        $checkin = isset($reservation['checkin_date']) ? $reservation['checkin_date'] : '';
+        $checkout = isset($reservation['checkout_date']) ? $reservation['checkout_date'] : '';
+        $timezone_format = get_option('date_format', 'F j, Y');
+        $time_format = get_option('time_format', 'g:i a');
+
+        $checkin_display = $checkin ? date_i18n($timezone_format, strtotime($checkin)) : '';
+        $checkin_time_display = $checkin ? date_i18n($time_format, strtotime($checkin)) : '';
+        $checkout_display = $checkout ? date_i18n($timezone_format, strtotime($checkout)) : '';
+        $checkout_time_display = $checkout ? date_i18n($time_format, strtotime($checkout)) : '';
+
+        $subject = $property_name !== ''
+            ? sprintf(__('Cleaning checklist ready for %s', 'guest-management-system'), $property_name)
+            : __('Cleaning checklist ready', 'guest-management-system');
+
+        $company_name = get_option('gms_company_name', get_option('blogname'));
+
+        $lines = array();
+        $lines[] = $property_name !== ''
+            ? sprintf(__('A new cleaning checklist is ready for %s.', 'guest-management-system'), $property_name)
+            : __('A new cleaning checklist is ready for your next assignment.', 'guest-management-system');
+
+        if ($checkin_display !== '') {
+            $checkin_parts = trim($checkin_display . ' ' . $checkin_time_display);
+            $lines[] = sprintf(__('Check-in: %s', 'guest-management-system'), $checkin_parts);
+        }
+
+        if ($checkout_display !== '') {
+            $checkout_parts = trim($checkout_display . ' ' . $checkout_time_display);
+            $lines[] = sprintf(__('Check-out: %s', 'guest-management-system'), $checkout_parts);
+        }
+
+        $lines[] = '';
+        $lines[] = sprintf(__('Checklist link: %s', 'guest-management-system'), $short_link);
+        $lines[] = __('Please review the tasks and submit the checklist once the turnover is complete.', 'guest-management-system');
+        $lines[] = '';
+        $lines[] = sprintf(__('Thank you, %s', 'guest-management-system'), $company_name);
+
+        $message = implode("\n", $lines);
+        $headers = array('Content-Type: text/html; charset=UTF-8');
+
+        foreach ($emails as $email) {
+            $recipient = sanitize_email($email);
+            if ($recipient === '' || !is_email($recipient)) {
+                continue;
+            }
+
+            $html_message = $this->wrapInEmailTemplate($message, $reservation);
+            $result = wp_mail($recipient, $subject, $html_message, $headers);
+
+            GMS_Database::logCommunication(array(
+                'reservation_id' => intval($reservation['id'] ?? $reservation_id),
+                'guest_id' => intval($reservation['guest_id'] ?? 0),
+                'type' => 'email',
+                'recipient' => $recipient,
+                'subject' => $subject,
+                'message' => $message,
+                'status' => $result ? 'sent' : 'failed',
+                'response_data' => array(
+                    'result' => $result,
+                    'context' => 'housekeeper_assignment',
+                    'housekeeper_link' => array(
+                        'url' => $link,
+                        'short' => $short_link,
+                    ),
+                ),
+            ));
+        }
     }
     
     public function sendEmail($to, $subject, $message, $headers = array()) {
