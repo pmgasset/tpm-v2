@@ -104,6 +104,101 @@ function gms_get_portal_url($reservation_id) {
     return gms_build_portal_url($reservation['portal_token']);
 }
 
+function gms_build_guest_profile_url($token) {
+    if (!is_scalar($token)) {
+        return false;
+    }
+
+    $token = trim((string) $token);
+
+    if ($token === '') {
+        return false;
+    }
+
+    global $wp_rewrite;
+
+    $encoded_token = rawurlencode($token);
+
+    if (is_object($wp_rewrite) && method_exists($wp_rewrite, 'using_permalinks') && $wp_rewrite->using_permalinks()) {
+        $path = 'guest-profile/' . $encoded_token;
+
+        return home_url(user_trailingslashit($path));
+    }
+
+    return add_query_arg(
+        array(
+            'guest_profile' => 1,
+            'guest_profile_token' => $encoded_token,
+        ),
+        home_url('/')
+    );
+}
+
+function gms_get_guest_profile_url($reservation_id) {
+    $access = GMS_Database::getGuestProfileLinkForReservation($reservation_id);
+
+    if (empty($access['url'])) {
+        return false;
+    }
+
+    return $access['url'];
+}
+
+function gms_shorten_url($url) {
+    $url = is_string($url) ? trim($url) : '';
+
+    if ($url === '') {
+        return '';
+    }
+
+    $api_token = trim(get_option('gms_shortener_api_token'));
+    if ($api_token === '') {
+        return $url;
+    }
+
+    $base_url = trim(apply_filters('gms_shortener_base_url', 'https://240jv.link'));
+    $base_url = esc_url_raw($base_url);
+    if ($base_url === '') {
+        $base_url = 'https://240jv.link';
+    }
+
+    $endpoint = rtrim($base_url, '/') . '/shorten';
+
+    $response = wp_remote_post($endpoint, array(
+        'headers' => array(
+            'Authorization' => 'Bearer ' . $api_token,
+            'Content-Type' => 'application/json',
+        ),
+        'body' => wp_json_encode(array('url' => $url)),
+        'timeout' => 15,
+    ));
+
+    if (is_wp_error($response)) {
+        return $url;
+    }
+
+    $status_code = wp_remote_retrieve_response_code($response);
+    if ((int) $status_code !== 200) {
+        return $url;
+    }
+
+    $body = wp_remote_retrieve_body($response);
+    $data = json_decode($body, true);
+
+    if (!is_array($data)) {
+        return $url;
+    }
+
+    if (isset($data['short_url']) && is_string($data['short_url'])) {
+        $short_url = esc_url_raw($data['short_url']);
+        if ($short_url !== '') {
+            return $short_url;
+        }
+    }
+
+    return $url;
+}
+
 /**
  * Send guest notifications
  */

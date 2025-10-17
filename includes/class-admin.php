@@ -17,6 +17,7 @@ class GMS_Reservations_List_Table extends WP_List_Table {
     protected $status_filter = '';
     protected $checkin_filter = '';
     protected $search_term = '';
+    protected $guest_profile_cache = array();
 
     public function __construct() {
         parent::__construct([
@@ -34,6 +35,7 @@ class GMS_Reservations_List_Table extends WP_List_Table {
             'checkin_date' => __('Check-in', 'guest-management-system'),
             'status' => __('Status', 'guest-management-system'),
             'booking_reference' => __('Booking Ref', 'guest-management-system'),
+            'guest_profile' => __('Guest Profile', 'guest-management-system'),
             'portal_link' => __('Guest Portal', 'guest-management-system'),
         ];
     }
@@ -76,7 +78,17 @@ class GMS_Reservations_List_Table extends WP_List_Table {
             ? $item['guest_name']
             : __('Unknown Guest', 'guest-management-system');
 
-        $value = '<strong>' . esc_html($guest_name) . '</strong>';
+        $profile_link = $this->get_guest_profile_link($reservation_id);
+
+        if (!empty($profile_link['url'])) {
+            $value = sprintf(
+                '<strong><a href="%s" target="_blank" rel="noopener noreferrer">%s</a></strong>',
+                esc_url($profile_link['url']),
+                esc_html($guest_name)
+            );
+        } else {
+            $value = '<strong>' . esc_html($guest_name) . '</strong>';
+        }
 
         if ($reservation_id) {
             $actions = [];
@@ -119,6 +131,28 @@ class GMS_Reservations_List_Table extends WP_List_Table {
         }
 
         return $value;
+    }
+
+    public function column_guest_profile($item) {
+        $reservation_id = isset($item['id']) ? absint($item['id']) : 0;
+
+        if ($reservation_id <= 0) {
+            return '&mdash;';
+        }
+
+        $profile_link = $this->get_guest_profile_link($reservation_id);
+
+        if (empty($profile_link['url'])) {
+            return '&mdash;';
+        }
+
+        $display = !empty($profile_link['short_link']) ? $profile_link['short_link'] : $profile_link['url'];
+
+        return sprintf(
+            '<a href="%s" target="_blank" rel="noopener noreferrer">%s</a>',
+            esc_url($profile_link['url']),
+            esc_html($display)
+        );
     }
 
     public function column_booking_reference($item) {
@@ -289,6 +323,20 @@ class GMS_Reservations_List_Table extends WP_List_Table {
             'total_items' => $total_items,
             'per_page' => $per_page,
         ]);
+    }
+
+    private function get_guest_profile_link($reservation_id) {
+        $reservation_id = absint($reservation_id);
+
+        if ($reservation_id <= 0) {
+            return array('url' => '', 'short_link' => '', 'token' => '');
+        }
+
+        if (!isset($this->guest_profile_cache[$reservation_id])) {
+            $this->guest_profile_cache[$reservation_id] = GMS_Database::getGuestProfileLinkForReservation($reservation_id);
+        }
+
+        return $this->guest_profile_cache[$reservation_id];
     }
 }
 
