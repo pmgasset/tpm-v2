@@ -12,7 +12,7 @@ if (!defined('ABSPATH')) {
 class GMS_Database {
 
     const GUEST_PLACEHOLDER_DOMAIN = 'guest.invalid';
-    const DB_VERSION = '1.4.2';
+    const DB_VERSION = '1.5.0';
     const OPTION_DB_VERSION = 'gms_db_version';
 
     public function __construct() {
@@ -42,6 +42,8 @@ class GMS_Database {
             agreement_status varchar(50) NOT NULL DEFAULT 'pending',
             verification_status varchar(50) NOT NULL DEFAULT 'pending',
             portal_token varchar(100) NOT NULL DEFAULT '',
+            guest_profile_token varchar(100) NOT NULL DEFAULT '',
+            guest_profile_short_link varchar(255) NOT NULL DEFAULT '',
             platform varchar(100) NOT NULL DEFAULT '',
             webhook_payload longtext NULL,
             created_at datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
@@ -65,6 +67,10 @@ class GMS_Database {
             [
                 'name' => 'portal_token',
                 'columns' => ['portal_token'],
+            ],
+            [
+                'name' => 'guest_profile_token',
+                'columns' => ['guest_profile_token'],
             ],
             [
                 'name' => 'platform',
@@ -308,9 +314,102 @@ class GMS_Database {
         self::createTables();
         self::migrateCommunicationsTable($installed);
         self::repairDuplicatePortalTokens($installed);
+        self::maybeAddGuestProfileColumns($installed);
         self::maybeSeedMessageTemplates();
 
         update_option(self::OPTION_DB_VERSION, self::DB_VERSION);
+    }
+
+    private static function maybeAddGuestProfileColumns($previous_version) {
+        global $wpdb;
+
+        if (!empty($previous_version) && version_compare($previous_version, '1.5.0', '>=')) {
+            return;
+        }
+
+        $table_name = $wpdb->prefix . 'gms_reservations';
+
+        if (!self::tableExists($table_name)) {
+            return;
+        }
+
+        $columns = self::getTableColumns($table_name);
+
+        $needs_token_column = !isset($columns['guest_profile_token']);
+        $needs_short_link_column = !isset($columns['guest_profile_short_link']);
+
+        if ($needs_token_column) {
+            $wpdb->query(
+                "ALTER TABLE {$table_name} ADD guest_profile_token varchar(100) NOT NULL DEFAULT '' AFTER portal_token"
+            );
+        }
+
+        if ($needs_short_link_column) {
+            $after = $needs_token_column ? 'guest_profile_token' : 'portal_token';
+            $wpdb->query(
+                "ALTER TABLE {$table_name} ADD guest_profile_short_link varchar(255) NOT NULL DEFAULT '' AFTER {$after}"
+            );
+        }
+
+        if ($needs_token_column) {
+            self::maybeAddIndexes($table_name, array(
+                array(
+                    'name' => 'guest_profile_token',
+                    'columns' => array('guest_profile_token'),
+                ),
+            ));
+        }
+
+        self::backfillGuestProfileTokens($table_name);
+    }
+
+    private static function backfillGuestProfileTokens($table_name) {
+        global $wpdb;
+
+        if (!self::tableExists($table_name)) {
+            return;
+        }
+
+        $batch_size = 100;
+
+        do {
+            $rows = $wpdb->get_results(
+                $wpdb->prepare(
+                    "SELECT id FROM {$table_name} WHERE guest_profile_token = '' LIMIT %d",
+                    max(1, (int) $batch_size)
+                ),
+                ARRAY_A
+            );
+
+            if (empty($rows)) {
+                break;
+            }
+
+            foreach ($rows as $row) {
+                $reservation_id = isset($row['id']) ? intval($row['id']) : 0;
+
+                if ($reservation_id <= 0) {
+                    continue;
+                }
+
+                $token = self::ensureUniqueGuestProfileToken('', $reservation_id);
+
+                if ($token === '') {
+                    continue;
+                }
+
+                $wpdb->update(
+                    $table_name,
+                    array(
+                        'guest_profile_token' => $token,
+                        'updated_at' => current_time('mysql'),
+                    ),
+                    array('id' => $reservation_id),
+                    array('%s', '%s'),
+                    array('%d')
+                );
+            }
+        } while (!empty($rows));
     }
 
     private static function migrateCommunicationsTable($previous_version) {
@@ -615,6 +714,27 @@ class GMS_Database {
         $result = $wpdb->get_var($sql);
 
         return $result === $table_name;
+    }
+
+    private static function getTableColumns($table_name) {
+        global $wpdb;
+
+        if (!self::tableExists($table_name)) {
+            return array();
+        }
+
+        $columns = array();
+        $results = $wpdb->get_results("SHOW COLUMNS FROM {$table_name}", ARRAY_A);
+
+        if (is_array($results)) {
+            foreach ($results as $column) {
+                if (isset($column['Field'])) {
+                    $columns[$column['Field']] = $column;
+                }
+            }
+        }
+
+        return $columns;
     }
 
     private static function normalizeTemplateContent($content) {
@@ -1068,6 +1188,30 @@ class GMS_Database {
         return self::formatReservationRow($rows[0]);
     }
 
+    public static function getReservationByGuestProfileToken($token) {
+        global $wpdb;
+
+        $sanitized_token = sanitize_text_field($token);
+
+        if ($sanitized_token === '') {
+            return null;
+        }
+
+        $table_name = $wpdb->prefix . 'gms_reservations';
+        $sql = $wpdb->prepare(
+            "SELECT * FROM {$table_name} WHERE guest_profile_token = %s ORDER BY created_at DESC, id DESC LIMIT 1",
+            $sanitized_token
+        );
+
+        $row = $wpdb->get_row($sql, ARRAY_A);
+
+        if (!$row) {
+            return null;
+        }
+
+        return self::formatReservationRow($row);
+    }
+
     public static function ensure_guest_user($guest_id, $guest_profile = array(), $force_create = false) {
         return self::syncGuestToUser($guest_id, $guest_profile, $force_create);
     }
@@ -1339,6 +1483,8 @@ class GMS_Database {
             'agreement_status' => 'pending',
             'verification_status' => 'pending',
             'portal_token' => '',
+            'guest_profile_token' => '',
+            'guest_profile_short_link' => '',
             'platform' => '',
             'webhook_data' => array(),
         );
@@ -1346,6 +1492,7 @@ class GMS_Database {
         $data = wp_parse_args($data, $defaults);
 
         $portal_token = self::ensureUniquePortalToken($data['portal_token']);
+        $guest_profile_token = self::ensureUniqueGuestProfileToken($data['guest_profile_token']);
 
         $guest_phone = $data['guest_phone'];
         if (function_exists('gms_sanitize_phone')) {
@@ -1370,13 +1517,15 @@ class GMS_Database {
             'agreement_status' => sanitize_text_field($data['agreement_status']),
             'verification_status' => sanitize_text_field($data['verification_status']),
             'portal_token' => sanitize_text_field($portal_token),
+            'guest_profile_token' => sanitize_text_field($guest_profile_token),
+            'guest_profile_short_link' => esc_url_raw($data['guest_profile_short_link']),
             'platform' => sanitize_text_field($data['platform']),
             'webhook_payload' => self::maybeEncodeJson($data['webhook_data']),
             'created_at' => current_time('mysql'),
             'updated_at' => current_time('mysql'),
         );
 
-        $formats = array('%d', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s');
+        $formats = array('%d', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s');
 
         $result = $wpdb->insert($table_name, $insert_data, $formats);
 
@@ -1394,6 +1543,72 @@ class GMS_Database {
         $table_name = $wpdb->prefix . 'gms_reservations';
         $row = $wpdb->get_row($wpdb->prepare("SELECT * FROM $table_name WHERE id = %d", intval($reservation_id)), ARRAY_A);
         return self::formatReservationRow($row);
+    }
+
+    public static function getGuestProfileLinkForReservation($reservation_id) {
+        $reservation_id = intval($reservation_id);
+
+        if ($reservation_id <= 0) {
+            return array(
+                'token' => '',
+                'url' => '',
+                'short_link' => '',
+            );
+        }
+
+        $reservation = self::getReservationById($reservation_id);
+
+        if (!$reservation) {
+            return array(
+                'token' => '',
+                'url' => '',
+                'short_link' => '',
+            );
+        }
+
+        $token = isset($reservation['guest_profile_token']) ? trim((string) $reservation['guest_profile_token']) : '';
+
+        if ($token === '') {
+            $token = self::ensureUniqueGuestProfileToken('', $reservation_id);
+
+            if ($token !== '') {
+                self::updateReservation($reservation_id, array('guest_profile_token' => $token));
+                $reservation['guest_profile_token'] = $token;
+            }
+        }
+
+        $url = '';
+        if ($token !== '' && function_exists('gms_build_guest_profile_url')) {
+            $built = gms_build_guest_profile_url($token);
+            if (is_string($built) && $built !== '') {
+                $url = $built;
+            }
+        }
+
+        $short_link = isset($reservation['guest_profile_short_link'])
+            ? trim((string) $reservation['guest_profile_short_link'])
+            : '';
+
+        if ($url !== '' && $short_link === '' && function_exists('gms_shorten_url')) {
+            $maybe_short = gms_shorten_url($url);
+            if (is_string($maybe_short) && $maybe_short !== '') {
+                $short_link = esc_url_raw($maybe_short);
+
+                if ($short_link !== '') {
+                    self::updateReservation($reservation_id, array('guest_profile_short_link' => $short_link));
+                }
+            }
+        }
+
+        if ($short_link === '') {
+            $short_link = $url;
+        }
+
+        return array(
+            'token' => $token,
+            'url' => $url,
+            'short_link' => $short_link,
+        );
     }
 
     public static function getActiveReservationForProperty($args = array()) {
@@ -1613,7 +1828,8 @@ class GMS_Database {
         $allowed = array(
             'guest_id', 'guest_record_id', 'guest_name', 'guest_email', 'guest_phone', 'property_id', 'property_name',
             'booking_reference', 'door_code', 'checkin_date', 'checkout_date', 'status',
-            'agreement_status', 'verification_status', 'portal_token', 'platform', 'webhook_data'
+            'agreement_status', 'verification_status', 'portal_token', 'guest_profile_token', 'guest_profile_short_link',
+            'platform', 'webhook_data'
         );
 
         $update_data = array();
@@ -1652,6 +1868,12 @@ class GMS_Database {
                     break;
                 case 'portal_token':
                     $update_data['portal_token'] = self::ensureUniquePortalToken($data[$field], $reservation_id);
+                    break;
+                case 'guest_profile_token':
+                    $update_data['guest_profile_token'] = self::ensureUniqueGuestProfileToken($data[$field], $reservation_id);
+                    break;
+                case 'guest_profile_short_link':
+                    $update_data['guest_profile_short_link'] = esc_url_raw($data[$field]);
                     break;
                 default:
                     $update_data[$field] = sanitize_text_field($data[$field]);
@@ -3713,6 +3935,10 @@ class GMS_Database {
         return strtolower(wp_generate_password(32, false, false));
     }
 
+    private static function generateGuestProfileToken() {
+        return strtolower(wp_generate_password(40, false, false));
+    }
+
     private static function resolvePortalTokenConflicts(array $rows) {
         if (count($rows) <= 1) {
             return;
@@ -3837,6 +4063,54 @@ class GMS_Database {
         return !empty($result);
     }
 
+    private static function ensureUniqueGuestProfileToken($token, $exclude_id = 0) {
+        $token = sanitize_text_field((string) $token);
+        $token = trim($token);
+
+        $attempts = 0;
+        $max_attempts = 10;
+
+        if ($token === '') {
+            $token = self::generateGuestProfileToken();
+        }
+
+        while ($attempts < $max_attempts && self::guestProfileTokenExists($token, $exclude_id)) {
+            $token = self::generateGuestProfileToken();
+            $attempts++;
+        }
+
+        return $token;
+    }
+
+    private static function guestProfileTokenExists($token, $exclude_id = 0) {
+        global $wpdb;
+
+        $token = sanitize_text_field((string) $token);
+
+        if ($token === '') {
+            return false;
+        }
+
+        $table_name = $wpdb->prefix . 'gms_reservations';
+
+        if ($exclude_id > 0) {
+            $sql = $wpdb->prepare(
+                "SELECT id FROM {$table_name} WHERE guest_profile_token = %s AND id != %d LIMIT 1",
+                $token,
+                intval($exclude_id)
+            );
+        } else {
+            $sql = $wpdb->prepare(
+                "SELECT id FROM {$table_name} WHERE guest_profile_token = %s LIMIT 1",
+                $token
+            );
+        }
+
+        $result = $wpdb->get_var($sql);
+
+        return !empty($result);
+    }
+
     private static function formatReservationRow($row) {
         if (!$row) {
             return null;
@@ -3867,6 +4141,19 @@ class GMS_Database {
 
         if (isset($row['door_code'])) {
             $row['door_code'] = trim($row['door_code']);
+        }
+
+        if (isset($row['guest_profile_token'])) {
+            $row['guest_profile_token'] = trim((string) $row['guest_profile_token']);
+
+            if ($row['guest_profile_token'] !== '' && function_exists('gms_build_guest_profile_url')) {
+                $profile_url = gms_build_guest_profile_url($row['guest_profile_token']);
+                $row['guest_profile_url'] = $profile_url ? $profile_url : '';
+            }
+        }
+
+        if (isset($row['guest_profile_short_link'])) {
+            $row['guest_profile_short_link'] = esc_url_raw($row['guest_profile_short_link']);
         }
 
         return $row;

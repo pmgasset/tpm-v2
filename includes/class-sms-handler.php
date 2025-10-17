@@ -991,52 +991,13 @@ class GMS_SMS_Handler implements GMS_Messaging_Channel_Interface {
     }
 
     private function shortenUrl($url) {
-        $api_token = trim(get_option('gms_shortener_api_token'));
-        if (empty($api_token)) {
+        $shortened = gms_shorten_url($url);
+
+        if (!is_string($shortened) || $shortened === '') {
             return $url;
         }
 
-        $base_url = trim(apply_filters('gms_shortener_base_url', 'https://240jv.link'));
-        $base_url = esc_url_raw($base_url);
-        if (empty($base_url)) {
-            $base_url = 'https://240jv.link';
-        }
-
-        $endpoint = rtrim($base_url, '/') . '/shorten';
-
-        $response = wp_remote_post($endpoint, array(
-            'headers' => array(
-                'Authorization' => 'Bearer ' . $api_token,
-                'Content-Type' => 'application/json',
-            ),
-            'body' => wp_json_encode(array('url' => $url)),
-            'timeout' => 15,
-        ));
-
-        if (is_wp_error($response)) {
-            return $url;
-        }
-
-        $status_code = wp_remote_retrieve_response_code($response);
-        if ($status_code !== 200) {
-            return $url;
-        }
-
-        $body = wp_remote_retrieve_body($response);
-        $data = json_decode($body, true);
-
-        if (!is_array($data)) {
-            return $url;
-        }
-
-        if (isset($data['short_url']) && is_string($data['short_url'])) {
-            $short_url = esc_url_raw($data['short_url']);
-            if (!empty($short_url)) {
-                return $short_url;
-            }
-        }
-
-        return $url;
+        return $shortened;
     }
 
     public function formatPhoneNumber($phone) {
