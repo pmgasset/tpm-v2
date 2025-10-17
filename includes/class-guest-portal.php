@@ -76,6 +76,14 @@ class GMS_Guest_Portal {
             ? gms_sanitize_phone($contact_phone)
             : preg_replace('/[^0-9+]/', '', $contact_phone);
 
+        $contact_info_confirmed_at = isset($reservation['contact_info_confirmed_at'])
+            ? trim((string) $reservation['contact_info_confirmed_at'])
+            : '';
+
+        $contact_info_confirmed = $contact_info_confirmed_at !== ''
+            && $contact_info_confirmed_at !== '0000-00-00 00:00:00'
+            && strtotime($contact_info_confirmed_at) !== false;
+
         $contact_full_name = trim($contact_first_name . ' ' . $contact_last_name);
 
         if ($contact_full_name !== '') {
@@ -90,7 +98,11 @@ class GMS_Guest_Portal {
             $reservation['guest_phone'] = $contact_phone;
         }
 
-        $contact_info_complete = $contact_first_name !== '' && $contact_last_name !== '' && $contact_email !== '' && $contact_phone !== '';
+        $contact_info_complete = $contact_info_confirmed
+            && $contact_first_name !== ''
+            && $contact_last_name !== ''
+            && $contact_email !== ''
+            && $contact_phone !== '';
 
         $contact_phone_display = $contact_phone;
         if ($contact_phone_display !== '' && function_exists('gms_format_phone')) {
@@ -494,6 +506,10 @@ class GMS_Guest_Portal {
 
                 .text-muted {
                     color: #64748b;
+                }
+
+                .contact-info-note {
+                    margin-bottom: 1rem;
                 }
 
                 .form-grid {
@@ -905,7 +921,7 @@ class GMS_Guest_Portal {
                             </summary>
                             <div class="portal-card__body" id="contact-section">
                                 <div class="contact-summary <?php echo $contact_info_complete ? '' : 'hidden'; ?>" id="contact-info-summary">
-                                    <p class="text-muted" style="margin-bottom: 0.75rem;"><?php esc_html_e('We\'ll use these details to send arrival information and timely updates about your stay.', 'gms'); ?></p>
+                                    <p class="text-muted" style="margin-bottom: 0.75rem;"><?php esc_html_e('We\'ll use your confirmed details to send arrival information and timely updates about your stay.', 'gms'); ?></p>
                                     <ul>
                                         <li><strong><?php esc_html_e('Name:', 'gms'); ?></strong> <span id="contact-summary-name"><?php echo esc_html($reservation['guest_name']); ?></span></li>
                                         <li><strong><?php esc_html_e('Email:', 'gms'); ?></strong> <span id="contact-summary-email"><?php echo esc_html($reservation['guest_email']); ?></span></li>
@@ -917,11 +933,12 @@ class GMS_Guest_Portal {
                                     if ($contact_info_complete) {
                                         esc_html_e('Need to make a change? Update your contact details below.', 'gms');
                                     } else {
-                                        esc_html_e('We need your legal name and contact information before we can confirm the reservation. The remaining steps will unlock once this is saved.', 'gms');
+                                        esc_html_e('Please share your legal name, direct email, and mobile number so we can reach you even if your booking site hides your real contact details. The remaining steps will unlock once you confirm them.', 'gms');
                                     }
                                 ?></p>
 
                                 <form id="contact-info-form" novalidate>
+                                    <p class="text-muted contact-info-note"><?php esc_html_e('Some booking partners send us cloaked contact details that forward to you. Confirm the best email address and mobile number where we can reach you directly. We use this information only for important updates about this reservation.', 'gms'); ?></p>
                                     <div class="form-grid">
                                         <div class="form-group">
                                             <label for="guest-first-name"><?php esc_html_e('First name', 'gms'); ?></label>
@@ -940,7 +957,7 @@ class GMS_Guest_Portal {
                                             <input type="tel" id="guest-phone" name="phone" value="<?php echo esc_attr($reservation['guest_phone']); ?>" required autocomplete="tel">
                                         </div>
                                     </div>
-                                    <button id="save-contact-info" class="btn btn-primary" type="submit"><?php echo esc_html($contact_info_complete ? __('Update details', 'gms') : __('Save & continue', 'gms')); ?></button>
+                                    <button id="save-contact-info" class="btn btn-primary" type="submit"><?php echo esc_html($contact_info_complete ? __('Update details', 'gms') : __('Confirm & Continue', 'gms')); ?></button>
                                     <div id="contact-info-message"></div>
                                 </form>
                             </div>
@@ -1074,15 +1091,15 @@ class GMS_Guest_Portal {
                 const guestNonce = '<?php echo wp_create_nonce('gms_guest_nonce'); ?>';
                 const contactHelperMessages = {
                     complete: '<?php echo esc_js(__('Need to make a change? Update your contact details below.', 'gms')); ?>',
-                    incomplete: '<?php echo esc_js(__('We need your legal name and contact information before we can confirm the reservation. The remaining steps will unlock once this is saved.', 'gms')); ?>'
+                    incomplete: '<?php echo esc_js(__('Please share your legal name, direct email, and mobile number so we can reach you even if your booking site hides your real contact details. The remaining steps will unlock once you confirm them.', 'gms')); ?>'
                 };
-                const contactSavingMessage = '<?php echo esc_js(__('Saving your details…', 'gms')); ?>';
+                const contactSavingMessage = '<?php echo esc_js(__('Confirming your details…', 'gms')); ?>';
                 const contactButtonLabels = {
-                    save: '<?php echo esc_js(__('Save & Continue', 'gms')); ?>',
+                    save: '<?php echo esc_js(__('Confirm & Continue', 'gms')); ?>',
                     update: '<?php echo esc_js(__('Update Details', 'gms')); ?>',
                     saving: contactSavingMessage
                 };
-                const contactSuccessMessage = '<?php echo esc_js(__('Contact information saved. You can move on to the next step.', 'gms')); ?>';
+                const contactSuccessMessage = '<?php echo esc_js(__('Contact information confirmed. You can move on to the next step.', 'gms')); ?>';
                 const contactFailureMessage = '<?php echo esc_js(__('Unable to save contact information. Please try again.', 'gms')); ?>';
                 const contactNetworkErrorMessage = '<?php echo esc_js(__('We could not save your details due to a network error. Please try again.', 'gms')); ?>';
                 const contactMissingConfigMessage = '<?php echo esc_js(__('We could not save your details because the portal is missing required configuration.', 'gms')); ?>';
@@ -1775,7 +1792,18 @@ class GMS_Guest_Portal {
         if (!$reservation) {
             wp_send_json_error('Invalid reservation');
         }
-        
+
+        $contact_confirmed_at = isset($reservation['contact_info_confirmed_at'])
+            ? trim((string) $reservation['contact_info_confirmed_at'])
+            : '';
+        $contact_confirmed = $contact_confirmed_at !== ''
+            && $contact_confirmed_at !== '0000-00-00 00:00:00'
+            && strtotime($contact_confirmed_at) !== false;
+
+        if (!$contact_confirmed) {
+            wp_send_json_error(__('Please confirm your contact information before signing the agreement.', 'gms'));
+        }
+
         // Check if agreement already signed
         $existing_agreement = GMS_Database::getAgreementByReservation($reservation_id);
         if ($existing_agreement && $existing_agreement['status'] === 'signed') {
@@ -1888,10 +1916,13 @@ class GMS_Guest_Portal {
             $guest_id = intval($reservation['guest_id']);
         }
 
+        $confirmed_at = current_time('mysql');
+
         $update_data = array(
             'guest_name' => $full_name,
             'guest_email' => $email,
             'guest_phone' => $phone,
+            'contact_info_confirmed_at' => $confirmed_at,
         );
 
         if ($guest_id > 0) {
@@ -1935,6 +1966,7 @@ class GMS_Guest_Portal {
             'guest_phone' => $phone,
             'display_phone' => $display_phone,
             'agreement_html' => $agreement_html,
+            'contact_info_confirmed_at' => $confirmed_at,
         ));
     }
 
@@ -1949,7 +1981,18 @@ class GMS_Guest_Portal {
         if (!$reservation) {
             wp_send_json_error('Invalid reservation');
         }
-        
+
+        $contact_confirmed_at = isset($reservation['contact_info_confirmed_at'])
+            ? trim((string) $reservation['contact_info_confirmed_at'])
+            : '';
+        $contact_confirmed = $contact_confirmed_at !== ''
+            && $contact_confirmed_at !== '0000-00-00 00:00:00'
+            && strtotime($contact_confirmed_at) !== false;
+
+        if (!$contact_confirmed) {
+            wp_send_json_error(__('Please confirm your contact information before starting verification.', 'gms'));
+        }
+
         $stripe_integration = new GMS_Stripe_Integration();
         $session = $stripe_integration->createVerificationSession($reservation);
         

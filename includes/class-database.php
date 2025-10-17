@@ -32,6 +32,7 @@ class GMS_Database {
             guest_name varchar(255) NOT NULL DEFAULT '',
             guest_email varchar(255) NOT NULL DEFAULT '',
             guest_phone varchar(50) NOT NULL DEFAULT '',
+            contact_info_confirmed_at datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
             property_id varchar(100) NOT NULL DEFAULT '',
             property_name varchar(255) NOT NULL DEFAULT '',
             booking_reference varchar(191) NOT NULL DEFAULT '',
@@ -1487,6 +1488,7 @@ class GMS_Database {
             'guest_profile_short_link' => '',
             'platform' => '',
             'webhook_data' => array(),
+            'contact_info_confirmed_at' => '',
         );
 
         $data = wp_parse_args($data, $defaults);
@@ -1521,11 +1523,12 @@ class GMS_Database {
             'guest_profile_short_link' => esc_url_raw($data['guest_profile_short_link']),
             'platform' => sanitize_text_field($data['platform']),
             'webhook_payload' => self::maybeEncodeJson($data['webhook_data']),
+            'contact_info_confirmed_at' => self::sanitizeDateTime($data['contact_info_confirmed_at']),
             'created_at' => current_time('mysql'),
             'updated_at' => current_time('mysql'),
         );
 
-        $formats = array('%d', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s');
+        $formats = array('%d', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s');
 
         $result = $wpdb->insert($table_name, $insert_data, $formats);
 
@@ -1829,7 +1832,7 @@ class GMS_Database {
             'guest_id', 'guest_record_id', 'guest_name', 'guest_email', 'guest_phone', 'property_id', 'property_name',
             'booking_reference', 'door_code', 'checkin_date', 'checkout_date', 'status',
             'agreement_status', 'verification_status', 'portal_token', 'guest_profile_token', 'guest_profile_short_link',
-            'platform', 'webhook_data'
+            'platform', 'webhook_data', 'contact_info_confirmed_at'
         );
 
         $update_data = array();
@@ -1861,6 +1864,7 @@ class GMS_Database {
                     break;
                 case 'checkin_date':
                 case 'checkout_date':
+                case 'contact_info_confirmed_at':
                     $update_data[$field] = self::sanitizeDateTime($data[$field]);
                     break;
                 case 'webhook_data':
@@ -4154,6 +4158,10 @@ class GMS_Database {
 
         if (isset($row['guest_profile_short_link'])) {
             $row['guest_profile_short_link'] = esc_url_raw($row['guest_profile_short_link']);
+        }
+
+        if (isset($row['contact_info_confirmed_at'])) {
+            $row['contact_info_confirmed_at'] = self::sanitizeDateTime($row['contact_info_confirmed_at']);
         }
 
         return $row;
