@@ -144,6 +144,190 @@ function gms_get_guest_profile_url($reservation_id) {
     return $access['url'];
 }
 
+function gms_build_housekeeper_url($token) {
+    if (!is_scalar($token)) {
+        return false;
+    }
+
+    $token = trim((string) $token);
+
+    if ($token === '') {
+        return false;
+    }
+
+    global $wp_rewrite;
+
+    $encoded_token = rawurlencode($token);
+
+    if (is_object($wp_rewrite) && method_exists($wp_rewrite, 'using_permalinks') && $wp_rewrite->using_permalinks()) {
+        $path = 'housekeeper/' . $encoded_token;
+
+        return home_url(user_trailingslashit($path));
+    }
+
+    return add_query_arg(
+        array(
+            'gms_housekeeper' => 1,
+            'gms_housekeeper_token' => $encoded_token,
+        ),
+        home_url('/')
+    );
+}
+
+function gms_get_housekeeper_url($reservation_id) {
+    $access = GMS_Database::getHousekeeperLinkForReservation($reservation_id);
+
+    if (empty($access['url'])) {
+        return false;
+    }
+
+    return $access['url'];
+}
+
+function gms_get_housekeeper_contacts($reservation) {
+    $reservation = is_array($reservation) ? $reservation : array();
+
+    $emails = array();
+    $phones = array();
+
+    $email_keys = array('housekeeper_email', 'housekeeping_email', 'cleaner_email', 'cleaning_email');
+    $phone_keys = array('housekeeper_phone', 'housekeeping_phone', 'cleaner_phone', 'cleaning_phone');
+
+    foreach ($email_keys as $key) {
+        if (empty($reservation[$key])) {
+            continue;
+        }
+        $emails = array_merge($emails, (array) $reservation[$key]);
+    }
+
+    foreach ($phone_keys as $key) {
+        if (empty($reservation[$key])) {
+            continue;
+        }
+        $phones = array_merge($phones, (array) $reservation[$key]);
+    }
+
+    if (!empty($reservation['webhook_data']) && is_array($reservation['webhook_data'])) {
+        $webhook = $reservation['webhook_data'];
+
+        foreach ($email_keys as $key) {
+            if (empty($webhook[$key])) {
+                continue;
+            }
+            $emails = array_merge($emails, (array) $webhook[$key]);
+        }
+
+        foreach ($phone_keys as $key) {
+            if (empty($webhook[$key])) {
+                continue;
+            }
+            $phones = array_merge($phones, (array) $webhook[$key]);
+        }
+
+        $composite_keys = array('housekeeper', 'housekeeping', 'cleaner', 'cleaning_team');
+
+        foreach ($composite_keys as $composite_key) {
+            if (empty($webhook[$composite_key])) {
+                continue;
+            }
+
+            $record = $webhook[$composite_key];
+
+            if (is_array($record)) {
+                if (!empty($record['email'])) {
+                    $emails = array_merge($emails, (array) $record['email']);
+                }
+                if (!empty($record['emails'])) {
+                    $emails = array_merge($emails, (array) $record['emails']);
+                }
+                if (!empty($record['phone'])) {
+                    $phones = array_merge($phones, (array) $record['phone']);
+                }
+                if (!empty($record['phones'])) {
+                    $phones = array_merge($phones, (array) $record['phones']);
+                }
+            } elseif (is_string($record)) {
+                $segments = preg_split('/[;,]/', $record);
+                if ($segments && is_array($segments)) {
+                    foreach ($segments as $segment) {
+                        $segment = trim($segment);
+                        if ($segment === '') {
+                            continue;
+                        }
+                        if (is_email($segment)) {
+                            $emails[] = $segment;
+                        } elseif (!preg_match('/[^0-9+\s\-().]/', $segment)) {
+                            $phones[] = $segment;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    $emails = array_filter(array_unique(array_map('sanitize_email', $emails))); 
+    $emails = array_values(array_filter($emails, 'is_email'));
+
+    $phones = array_map(function($value) {
+        if (!is_scalar($value)) {
+            return '';
+        }
+
+        $value = trim((string) $value);
+        if ($value === '') {
+            return '';
+        }
+
+        if (function_exists('gms_sanitize_phone')) {
+            return gms_sanitize_phone($value);
+        }
+
+        return preg_replace('/[^0-9+]/', '', $value);
+    }, $phones);
+
+    $phones = array_values(array_filter(array_unique($phones)));
+
+    $contacts = array(
+        'emails' => $emails,
+        'phones' => $phones,
+    );
+
+    $filtered = apply_filters('gms_housekeeper_contacts', $contacts, $reservation);
+    if (!is_array($filtered)) {
+        $filtered = $contacts;
+    }
+
+    $merged_emails = array_merge($emails, isset($filtered['emails']) ? (array) $filtered['emails'] : array());
+    $merged_phones = array_merge($phones, isset($filtered['phones']) ? (array) $filtered['phones'] : array());
+
+    $merged_emails = array_filter(array_unique(array_map('sanitize_email', $merged_emails)));
+    $merged_emails = array_values(array_filter($merged_emails, 'is_email'));
+
+    $merged_phones = array_map(function($value) {
+        if (!is_scalar($value)) {
+            return '';
+        }
+
+        $value = trim((string) $value);
+        if ($value === '') {
+            return '';
+        }
+
+        if (function_exists('gms_sanitize_phone')) {
+            return gms_sanitize_phone($value);
+        }
+
+        return preg_replace('/[^0-9+]/', '', $value);
+    }, $merged_phones);
+
+    $merged_phones = array_values(array_filter(array_unique($merged_phones)));
+
+    return array(
+        'emails' => $merged_emails,
+        'phones' => $merged_phones,
+    );
+}
+
 function gms_shorten_url($url) {
     $url = is_string($url) ? trim($url) : '';
 

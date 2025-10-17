@@ -25,6 +25,7 @@ class GMS_SMS_Handler implements GMS_Messaging_Channel_Interface {
         add_filter('cron_schedules', array($this, 'registerCronSchedules'));
         add_action(self::CRON_HOOK, array($this, 'syncProviderInbox'));
         add_action('init', array($this, 'maybeScheduleInboxSync'));
+        add_action('gms_housekeeper_assigned', array($this, 'handleHousekeeperAssignment'), 10, 4);
 
         if (defined('WP_CLI') && WP_CLI) {
             \WP_CLI::add_command('gms sync-messages', array($this, 'cliSyncProviderInbox'));
@@ -808,6 +809,83 @@ class GMS_SMS_Handler implements GMS_Messaging_Channel_Interface {
         ));
 
         return $result;
+    }
+
+    public function handleHousekeeperAssignment($reservation_id, $new_token, $previous_token, $reservation = null) {
+        if (empty($new_token) || !function_exists('gms_build_housekeeper_url')) {
+            return;
+        }
+
+        if (!is_array($reservation) || empty($reservation)) {
+            $reservation = GMS_Database::getReservationById($reservation_id);
+        }
+
+        if (!$reservation || !is_array($reservation)) {
+            return;
+        }
+
+        $link = gms_build_housekeeper_url($new_token);
+        if (!is_string($link) || $link === '') {
+            return;
+        }
+
+        $short_link = function_exists('gms_shorten_url') ? gms_shorten_url($link) : $link;
+        if (!is_string($short_link) || $short_link === '') {
+            $short_link = $link;
+        }
+
+        $contacts = function_exists('gms_get_housekeeper_contacts') ? gms_get_housekeeper_contacts($reservation) : array();
+        $phones = isset($contacts['phones']) ? array_filter((array) $contacts['phones']) : array();
+
+        if (empty($phones)) {
+            return;
+        }
+
+        $property_name = isset($reservation['property_name']) ? sanitize_text_field($reservation['property_name']) : '';
+        $checkin = isset($reservation['checkin_date']) ? $reservation['checkin_date'] : '';
+        $checkin_display = $checkin ? date_i18n(get_option('date_format', 'M j'), strtotime($checkin)) : '';
+        $checkin_time_display = $checkin ? date_i18n(get_option('time_format', 'g:i a'), strtotime($checkin)) : '';
+        $company_name = get_option('gms_company_name', get_option('blogname'));
+
+        $parts = array();
+        $parts[] = $property_name !== ''
+            ? sprintf(__('Checklist ready for %s.', 'guest-management-system'), $property_name)
+            : __('Cleaning checklist ready.', 'guest-management-system');
+
+        if ($checkin_display !== '') {
+            $parts[] = sprintf(__('Check-in %s', 'guest-management-system'), trim($checkin_display . ' ' . $checkin_time_display));
+        }
+
+        $parts[] = $short_link;
+        $parts[] = $company_name;
+
+        $message = $this->prepareMessageForSending(implode(' ', $parts));
+
+        foreach ($phones as $phone) {
+            $validation = $this->validatePhoneNumber($phone);
+            if (!$validation['is_valid']) {
+                continue;
+            }
+
+            $result = $this->sendSMS($validation['sanitized'], $message);
+
+            GMS_Database::logCommunication(array(
+                'reservation_id' => intval($reservation['id'] ?? $reservation_id),
+                'guest_id' => intval($reservation['guest_id'] ?? 0),
+                'type' => 'sms',
+                'recipient' => $validation['sanitized'],
+                'message' => $message,
+                'status' => $result ? 'sent' : 'failed',
+                'response_data' => array(
+                    'result' => $result,
+                    'context' => 'housekeeper_assignment',
+                    'housekeeper_link' => array(
+                        'url' => $link,
+                        'short' => $short_link,
+                    ),
+                ),
+            ));
+        }
     }
 
     public function sendSMS($to, $message) {

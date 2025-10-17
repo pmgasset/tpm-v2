@@ -741,6 +741,7 @@ class GMS_Admin {
         add_action('admin_post_gms_housekeeper_ical', array($this, 'handle_housekeeper_ical_export'));
         add_action('admin_post_gms_refresh_guest_verification', array($this, 'handle_refresh_guest_verification'));
         add_action('admin_post_gms_view_verification_asset', array($this, 'handle_view_verification_asset'));
+        add_action('admin_notices', array($this, 'maybe_show_housekeeper_submission_notice'));
     }
 
     private function build_reservations_redirect_url() {
@@ -2020,8 +2021,62 @@ class GMS_Admin {
         }
 
         $reservations = $this->get_housekeeper_reservations();
+        $blueprint = GMS_Housekeeper_Checklist_View::getBlueprint();
+        $checklist_view = isset($_GET['gms_checklist_view']) ? sanitize_key(wp_unslash($_GET['gms_checklist_view'])) : 'completed';
+        if (!in_array($checklist_view, array('completed', 'pending'), true)) {
+            $checklist_view = 'completed';
+        }
+
+        $submissions = GMS_Database::getHousekeeperSubmissions(array(
+            'limit' => 50,
+            'order' => 'DESC',
+        ));
+        $submissions_by_reservation = array();
+        $latest_submission_id = 0;
+
+        foreach ($submissions as &$submission) {
+            if (!is_array($submission['payload'])) {
+                $submission['payload'] = array();
+            }
+
+            $submission['photos'] = GMS_Database::getHousekeeperPhotos(array(
+                'submission_id' => intval($submission['id']),
+            ));
+
+            $latest_submission_id = max($latest_submission_id, intval($submission['id']));
+
+            $reservation_id = isset($submission['reservation_id']) ? intval($submission['reservation_id']) : 0;
+            if ($reservation_id > 0 && !isset($submissions_by_reservation[$reservation_id])) {
+                $submissions_by_reservation[$reservation_id] = $submission;
+            }
+        }
+        unset($submission);
+
+        $reservation_map = array();
+        foreach ($reservations as $reservation_item) {
+            $reservation_map[$reservation_item['id']] = $reservation_item;
+        }
+
+        $now_timestamp = current_time('timestamp');
+        $pending_reservations = array();
+
+        foreach ($reservations as $reservation_item) {
+            $reservation_id = $reservation_item['id'];
+
+            if (isset($submissions_by_reservation[$reservation_id])) {
+                continue;
+            }
+
+            if ($reservation_item['checkout_ts'] <= $now_timestamp) {
+                $pending_reservations[] = $reservation_item;
+            }
+        }
+
+        $pending_count = count($pending_reservations);
+        $blueprint_index = $this->index_housekeeper_blueprint($blueprint);
+
         $timezone = wp_timezone();
-        $current_timestamp = current_time('timestamp');
+        $current_timestamp = $now_timestamp;
         $default_month = wp_date('Y-m', $current_timestamp, $timezone);
 
         $requested_month = isset($_GET['gms_housekeeper_month']) ? sanitize_text_field(wp_unslash($_GET['gms_housekeeper_month'])) : '';
@@ -2113,7 +2168,11 @@ class GMS_Admin {
             }
         }
 
-        $base_url = add_query_arg(array('page' => 'guest-management-housekeeper'), admin_url('admin.php'));
+        $base_url_args = array('page' => 'guest-management-housekeeper');
+        if ($checklist_view !== 'completed') {
+            $base_url_args['gms_checklist_view'] = $checklist_view;
+        }
+        $base_url = add_query_arg($base_url_args, admin_url('admin.php'));
         $prev_month_url = add_query_arg('gms_housekeeper_month', $prev_month_value, $base_url);
         $next_month_url = add_query_arg('gms_housekeeper_month', $next_month_value, $base_url);
 
@@ -2140,7 +2199,134 @@ class GMS_Admin {
                         <span class="gms-housekeeper__summary-value"><?php echo esc_html(number_format_i18n($upcoming_week_count)); ?></span>
                         <span class="gms-housekeeper__summary-label"><?php esc_html_e('Check-ins in the next 7 days', 'guest-management-system'); ?></span>
                     </div>
+                    <div class="gms-housekeeper__summary-item">
+                        <span class="gms-housekeeper__summary-value"><?php echo esc_html(number_format_i18n($pending_count)); ?></span>
+                        <span class="gms-housekeeper__summary-label"><?php esc_html_e('Pending cleanings', 'guest-management-system'); ?></span>
+                    </div>
                 </div>
+
+                <section class="gms-housekeeper__checklists" aria-labelledby="gms-housekeeper-checklists-title">
+                    <header class="gms-housekeeper__checklists-header">
+                        <div>
+                            <h2 id="gms-housekeeper-checklists-title"><?php esc_html_e('Cleaning checklists', 'guest-management-system'); ?></h2>
+                            <p class="gms-housekeeper__checklists-description"><?php esc_html_e('Review submitted reports or follow up on turnovers waiting for confirmation.', 'guest-management-system'); ?></p>
+                        </div>
+                        <nav class="gms-housekeeper__checklists-nav" aria-label="<?php esc_attr_e('Checklist filters', 'guest-management-system'); ?>">
+                            <a href="<?php echo esc_url(add_query_arg('gms_checklist_view', 'completed', $base_url)); ?>" class="<?php echo $checklist_view === 'completed' ? 'is-active' : ''; ?>"><?php esc_html_e('Completed', 'guest-management-system'); ?></a>
+                            <a href="<?php echo esc_url(add_query_arg('gms_checklist_view', 'pending', $base_url)); ?>" class="<?php echo $checklist_view === 'pending' ? 'is-active' : ''; ?>"><?php esc_html_e('Pending follow-up', 'guest-management-system'); ?></a>
+                        </nav>
+                    </header>
+                    <?php if ($checklist_view === 'completed') : ?>
+                        <?php if (empty($submissions)) : ?>
+                            <p class="gms-housekeeper__checklists-empty"><?php esc_html_e('No cleaning checklists have been submitted yet.', 'guest-management-system'); ?></p>
+                        <?php else : ?>
+                            <div class="gms-housekeeper__checklist-grid">
+                                <?php foreach ($submissions as $submission_item) :
+                                    $reservation_id = isset($submission_item['reservation_id']) ? intval($submission_item['reservation_id']) : 0;
+                                    $reservation_details = isset($reservation_map[$reservation_id]) ? $reservation_map[$reservation_id] : GMS_Database::getReservationById($reservation_id);
+                                    $property_label = isset($reservation_details['property_name']) ? $reservation_details['property_name'] : '';
+                                    $guest_label = isset($reservation_details['guest_name']) ? $reservation_details['guest_name'] : '';
+                                    $submitted_at = isset($submission_item['submitted_at']) ? $submission_item['submitted_at'] : '';
+                                    $submitted_at_display = $submitted_at && $submitted_at !== '0000-00-00 00:00:00' ? wp_date(get_option('date_format', 'M j, Y') . ' ' . get_option('time_format', 'g:i a'), strtotime($submitted_at), $timezone) : '';
+                                    $sections = $this->build_housekeeper_submission_sections($blueprint, $submission_item);
+                                    $checklist_link = GMS_Database::getHousekeeperLinkForReservation($reservation_id);
+                                    ?>
+                                    <article class="gms-housekeeper-checklist-card">
+                                        <header class="gms-housekeeper-checklist-card__header">
+                                            <div>
+                                                <?php if ($property_label !== '') : ?>
+                                                    <h3 class="gms-housekeeper-checklist-card__title"><?php echo esc_html($property_label); ?></h3>
+                                                <?php endif; ?>
+                                                <?php if ($guest_label !== '') : ?>
+                                                    <p class="gms-housekeeper-checklist-card__guest"><?php echo esc_html($guest_label); ?></p>
+                                                <?php endif; ?>
+                                            </div>
+                                            <?php if ($submitted_at_display !== '') : ?>
+                                                <time datetime="<?php echo esc_attr($submitted_at); ?>" class="gms-housekeeper-checklist-card__submitted"><?php echo esc_html(sprintf(__('Submitted %s', 'guest-management-system'), $submitted_at_display)); ?></time>
+                                            <?php endif; ?>
+                                        </header>
+                                        <?php if (!empty($submission_item['inventory_notes'])) : ?>
+                                            <div class="gms-housekeeper-checklist-card__inventory">
+                                                <strong><?php esc_html_e('Inventory notes', 'guest-management-system'); ?>:</strong>
+                                                <p><?php echo wp_kses_post($submission_item['inventory_notes']); ?></p>
+                                            </div>
+                                        <?php endif; ?>
+                                        <?php if (!empty($sections)) : ?>
+                                            <div class="gms-housekeeper-checklist-card__sections">
+                                                <?php foreach ($sections as $section_view) : ?>
+                                                    <details class="gms-housekeeper-checklist-section" <?php echo $section_view['expanded'] ? 'open' : ''; ?>>
+                                                        <summary>
+                                                            <span class="gms-housekeeper-checklist-section__phase"><?php echo esc_html($section_view['phase']); ?></span>
+                                                            <span class="gms-housekeeper-checklist-section__label"><?php echo esc_html($section_view['label']); ?></span>
+                                                        </summary>
+                                                        <?php if (!empty($section_view['tasks'])) : ?>
+                                                            <ul class="gms-housekeeper-checklist-tasks">
+                                                                <?php foreach ($section_view['tasks'] as $task_view) : ?>
+                                                                    <li class="<?php echo $task_view['complete'] ? 'is-complete' : 'is-missing'; ?>">
+                                                                        <span class="dashicons <?php echo $task_view['complete'] ? 'dashicons-yes-alt' : 'dashicons-no-alt'; ?>" aria-hidden="true"></span>
+                                                                        <span><?php echo esc_html($task_view['label']); ?></span>
+                                                                    </li>
+                                                                <?php endforeach; ?>
+                                                            </ul>
+                                                        <?php endif; ?>
+                                                        <?php if (!empty($section_view['notes'])) : ?>
+                                                            <div class="gms-housekeeper-checklist-notes">
+                                                                <?php foreach ($section_view['notes'] as $note_view) : ?>
+                                                                    <h4><?php echo esc_html($note_view['label']); ?></h4>
+                                                                    <p><?php echo wp_kses_post($note_view['value']); ?></p>
+                                                                <?php endforeach; ?>
+                                                            </div>
+                                                        <?php endif; ?>
+                                                        <?php if (!empty($section_view['photos'])) : ?>
+                                                            <div class="gms-housekeeper-checklist-photos">
+                                                                <?php foreach ($section_view['photos'] as $photo_view) :
+                                                                    $full_url = wp_get_attachment_url($photo_view['attachment_id']);
+                                                                    $thumbnail = wp_get_attachment_image($photo_view['attachment_id'], 'medium', false, array('class' => 'gms-housekeeper-checklist-thumb'));
+                                                                    if (!$full_url) {
+                                                                        continue;
+                                                                    }
+                                                                    ?>
+                                                                    <a href="<?php echo esc_url($full_url); ?>" class="thickbox" rel="gms-housekeeper-gallery-<?php echo esc_attr($submission_item['id']); ?>" title="<?php echo esc_attr($photo_view['label']); ?>">
+                                                                        <?php echo $thumbnail ? $thumbnail : esc_html($photo_view['label']); ?>
+                                                                    </a>
+                                                                <?php endforeach; ?>
+                                                            </div>
+                                                        <?php endif; ?>
+                                                    </details>
+                                                <?php endforeach; ?>
+                                            </div>
+                                        <?php endif; ?>
+                                        <?php if (!empty($checklist_link['url'])) : ?>
+                                            <footer class="gms-housekeeper-checklist-card__footer">
+                                                <a class="gms-housekeeper-checklist-card__link" href="<?php echo esc_url($checklist_link['url']); ?>" target="_blank" rel="noopener noreferrer"><?php esc_html_e('Open housekeeper link', 'guest-management-system'); ?></a>
+                                            </footer>
+                                        <?php endif; ?>
+                                    </article>
+                                <?php endforeach; ?>
+                            </div>
+                        <?php endif; ?>
+                    <?php else : ?>
+                        <?php if (empty($pending_reservations)) : ?>
+                            <p class="gms-housekeeper__checklists-empty"><?php esc_html_e('No pending cleanings require attention.', 'guest-management-system'); ?></p>
+                        <?php else : ?>
+                            <ul class="gms-housekeeper-pending">
+                                <?php foreach ($pending_reservations as $pending) :
+                                    $link = GMS_Database::getHousekeeperLinkForReservation($pending['id']);
+                                    ?>
+                                    <li>
+                                        <div>
+                                            <p class="gms-housekeeper-pending__property"><?php echo esc_html($pending['property_name']); ?></p>
+                                            <p class="gms-housekeeper-pending__meta"><?php echo esc_html(sprintf(__('Checked out %s', 'guest-management-system'), $pending['checkout_datetime_label'])); ?></p>
+                                        </div>
+                                        <?php if (!empty($link['url'])) : ?>
+                                            <a class="button button-secondary" href="<?php echo esc_url($link['url']); ?>" target="_blank" rel="noopener noreferrer"><?php esc_html_e('Open checklist', 'guest-management-system'); ?></a>
+                                        <?php endif; ?>
+                                    </li>
+                                <?php endforeach; ?>
+                            </ul>
+                        <?php endif; ?>
+                    <?php endif; ?>
+                </section>
 
                 <div class="gms-housekeeper__toolbar">
                     <div class="gms-housekeeper__toolbar-group">
@@ -2316,6 +2502,206 @@ class GMS_Admin {
             </div>
         </div>
         <?php
+        if ($checklist_view === 'completed' && $latest_submission_id > 0) {
+            update_user_meta(get_current_user_id(), 'gms_last_seen_housekeeper_submission', $latest_submission_id);
+        }
+    }
+
+    public function maybe_show_housekeeper_submission_notice() {
+        if (!current_user_can('manage_options')) {
+            return;
+        }
+
+        $screen = function_exists('get_current_screen') ? get_current_screen() : null;
+
+        if (!$screen || strpos($screen->id, 'guest-management') === false) {
+            return;
+        }
+
+        $recent = GMS_Database::getHousekeeperSubmissions(array(
+            'limit' => 20,
+            'order' => 'DESC',
+        ));
+
+        if (empty($recent)) {
+            return;
+        }
+
+        $latest_id = intval($recent[0]['id']);
+        $user_id = get_current_user_id();
+        $last_seen = intval(get_user_meta($user_id, 'gms_last_seen_housekeeper_submission', true));
+
+        $new_count = 0;
+        foreach ($recent as $submission) {
+            if (intval($submission['id']) > $last_seen) {
+                $new_count++;
+            }
+        }
+
+        if ($new_count === 0) {
+            return;
+        }
+
+        $link = add_query_arg(
+            array(
+                'page' => 'guest-management-housekeeper',
+                'gms_checklist_view' => 'completed',
+            ),
+            admin_url('admin.php')
+        );
+
+        printf(
+            '<div class="notice notice-info is-dismissible"><p>%s <a href="%s">%s</a></p></div>',
+            esc_html(
+                sprintf(
+                    _n('%d new cleaning checklist has been submitted.', '%d new cleaning checklists have been submitted.', $new_count, 'guest-management-system'),
+                    $new_count
+                )
+            ),
+            esc_url($link),
+            esc_html__('Review now', 'guest-management-system')
+        );
+
+        if ($latest_id > $last_seen && $screen->id === 'guest-management_page_guest-management-housekeeper') {
+            update_user_meta($user_id, 'gms_last_seen_housekeeper_submission', $latest_id);
+        }
+    }
+
+    private function index_housekeeper_blueprint(array $blueprint) {
+        $index = array(
+            'sections' => array(),
+            'tasks' => array(),
+            'photos' => array(),
+            'notes' => array(),
+        );
+
+        foreach ($blueprint['phases'] as $phase) {
+            $phase_label = isset($phase['label']) ? $phase['label'] : '';
+
+            foreach ($phase['sections'] as $section) {
+                $section_key = $section['key'];
+                $section_label = isset($section['label']) ? $section['label'] : $section_key;
+
+                $index['sections'][$section_key] = array(
+                    'label' => $section_label,
+                    'phase' => $phase_label,
+                );
+
+                if (!empty($section['tasks'])) {
+                    foreach ($section['tasks'] as $task) {
+                        $index['tasks'][$task['key']] = array(
+                            'label' => $task['label'],
+                            'section' => $section_key,
+                            'phase' => $phase_label,
+                        );
+                    }
+                }
+
+                if (!empty($section['notes'])) {
+                    foreach ($section['notes'] as $note) {
+                        $index['notes'][$note['key']] = array(
+                            'label' => $note['label'],
+                            'section' => $section_key,
+                            'phase' => $phase_label,
+                        );
+                    }
+                }
+
+                if (!empty($section['photos'])) {
+                    foreach ($section['photos'] as $photo) {
+                        $index['photos'][$section_key . ':' . $photo['key']] = array(
+                            'label' => $photo['label'],
+                            'section' => $section_key,
+                            'phase' => $phase_label,
+                        );
+                    }
+                }
+            }
+        }
+
+        return $index;
+    }
+
+    private function build_housekeeper_submission_sections(array $blueprint, array $submission) {
+        $sections = array();
+        $payload = isset($submission['payload']) && is_array($submission['payload']) ? $submission['payload'] : array();
+        $task_payload = isset($payload['tasks']) && is_array($payload['tasks']) ? $payload['tasks'] : array();
+        $note_payload = isset($payload['notes']) && is_array($payload['notes']) ? $payload['notes'] : array();
+        $photos = isset($submission['photos']) && is_array($submission['photos']) ? $submission['photos'] : array();
+        $photo_groups = array();
+
+        foreach ($photos as $photo) {
+            $task_key = isset($photo['task_key']) ? $photo['task_key'] : '';
+            if ($task_key === '') {
+                continue;
+            }
+            $photo_groups[$task_key][] = $photo;
+        }
+
+        foreach ($blueprint['phases'] as $phase) {
+            $phase_label = isset($phase['label']) ? $phase['label'] : '';
+            foreach ($phase['sections'] as $section) {
+                $section_key = $section['key'];
+                $section_label = isset($section['label']) ? $section['label'] : $section_key;
+                $section_data = array(
+                    'phase' => $phase_label,
+                    'label' => $section_label,
+                    'tasks' => array(),
+                    'notes' => array(),
+                    'photos' => array(),
+                    'expanded' => false,
+                );
+
+                if (!empty($section['tasks'])) {
+                    foreach ($section['tasks'] as $task) {
+                        $task_key = $task['key'];
+                        $section_data['tasks'][] = array(
+                            'label' => $task['label'],
+                            'complete' => !empty($task_payload[$task_key]),
+                        );
+                    }
+                }
+
+                if (!empty($section['notes'])) {
+                    foreach ($section['notes'] as $note) {
+                        $note_key = $note['key'];
+                        $value = isset($note_payload[$note_key]) ? $note_payload[$note_key] : '';
+                        if ($value === '' && $note_key === 'inventory_notes' && !empty($submission['inventory_notes'])) {
+                            $value = $submission['inventory_notes'];
+                        }
+                        if ($value !== '') {
+                            $section_data['notes'][] = array(
+                                'label' => $note['label'],
+                                'value' => $value,
+                            );
+                        }
+                    }
+                }
+
+                if (!empty($section['photos'])) {
+                    foreach ($section['photos'] as $photo_slot) {
+                        $task_key = $section_key . ':' . $photo_slot['key'];
+                        if (empty($photo_groups[$task_key])) {
+                            continue;
+                        }
+                        foreach ($photo_groups[$task_key] as $photo) {
+                            $section_data['photos'][] = array(
+                                'attachment_id' => isset($photo['attachment_id']) ? intval($photo['attachment_id']) : 0,
+                                'label' => $photo_slot['label'],
+                                'task_key' => $task_key,
+                            );
+                        }
+                    }
+                }
+
+                if (!empty($section_data['tasks']) || !empty($section_data['notes']) || !empty($section_data['photos'])) {
+                    $section_data['expanded'] = !empty($section_data['notes']) || !empty($section_data['photos']);
+                    $sections[] = $section_data;
+                }
+            }
+        }
+
+        return $sections;
     }
 
     protected function render_guest_profile_page($guest_id) {

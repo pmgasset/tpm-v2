@@ -29,6 +29,7 @@ class GuestManagementSystem {
     private static $instance = null;
     private $portal_request = null;
     private $guest_profile_request = null;
+    private $housekeeper_request = null;
     
     public static function getInstance() {
         if (self::$instance === null) {
@@ -57,6 +58,7 @@ class GuestManagementSystem {
         new GMS_Roku_Integration();
         new GMS_Agreement_Handler(); // Initialize the new agreement handler
         new GMS_AJAX_Handler();
+        GMS_Housekeeper_Checklist_View::init();
 
         GMS_Database::maybeScheduleGuestBackfill();
 
@@ -90,6 +92,7 @@ class GuestManagementSystem {
             'class-stripe-integration.php',
             'class-ajax-handler.php',
             'class-agreement-handler.php', // Load the new agreement handler class
+            'class-housekeeper-checklist-view.php',
             'functions.php'
         );
         
@@ -172,6 +175,12 @@ class GuestManagementSystem {
             'index.php?guest_profile=1&guest_profile_token=$matches[1]',
             'top'
         );
+
+        add_rewrite_rule(
+            '^housekeeper/([^/]+)/?$',
+            'index.php?gms_housekeeper=1&gms_housekeeper_token=$matches[1]',
+            'top'
+        );
     }
 
     public function addQueryVars($vars) {
@@ -179,6 +188,8 @@ class GuestManagementSystem {
         $vars[] = 'guest_token';
         $vars[] = 'guest_profile';
         $vars[] = 'guest_profile_token';
+        $vars[] = 'gms_housekeeper';
+        $vars[] = 'gms_housekeeper_token';
         return $vars;
     }
     
@@ -202,11 +213,28 @@ class GuestManagementSystem {
 
         $profile_context = $this->resolveGuestProfileRequest();
 
-        if (!$profile_context['is_profile']) {
+        if ($profile_context['is_profile']) {
+            $this->synchronizeGuestProfileQueryState($profile_context['token']);
+
+            if (function_exists('status_header')) {
+                status_header(200);
+            }
+
+            if (function_exists('nocache_headers')) {
+                nocache_headers();
+            }
+
+            GMS_Guest_Profile_View::displayProfile($profile_context['token']);
+            exit;
+        }
+
+        $housekeeper_context = $this->resolveHousekeeperRequest();
+
+        if (!$housekeeper_context['is_housekeeper']) {
             return;
         }
 
-        $this->synchronizeGuestProfileQueryState($profile_context['token']);
+        $this->synchronizeHousekeeperQueryState($housekeeper_context['token']);
 
         if (function_exists('status_header')) {
             status_header(200);
@@ -216,7 +244,7 @@ class GuestManagementSystem {
             nocache_headers();
         }
 
-        GMS_Guest_Profile_View::displayProfile($profile_context['token']);
+        GMS_Housekeeper_Checklist_View::displayChecklist($housekeeper_context['token']);
         exit;
     }
 
@@ -241,11 +269,29 @@ class GuestManagementSystem {
 
         $profile_context = $this->resolveGuestProfileRequest();
 
-        if (!$profile_context['is_profile']) {
+        if ($profile_context['is_profile']) {
+            $this->synchronizeGuestProfileQueryState($profile_context['token'], $wp_query);
+
+            add_filter('redirect_canonical', '__return_false', 10, 2);
+
+            if (function_exists('status_header')) {
+                status_header(200);
+            }
+
+            if (function_exists('nocache_headers')) {
+                nocache_headers();
+            }
+
+            return false;
+        }
+
+        $housekeeper_context = $this->resolveHousekeeperRequest();
+
+        if (!$housekeeper_context['is_housekeeper']) {
             return $preempt;
         }
 
-        $this->synchronizeGuestProfileQueryState($profile_context['token'], $wp_query);
+        $this->synchronizeHousekeeperQueryState($housekeeper_context['token'], $wp_query);
 
         add_filter('redirect_canonical', '__return_false', 10, 2);
 
@@ -263,23 +309,29 @@ class GuestManagementSystem {
     public function enqueueScripts() {
         $portal_context = $this->resolvePortalRequest();
 
-        if (!$portal_context['is_portal']) {
+        if ($portal_context['is_portal']) {
+            wp_enqueue_script('stripe-js', 'https://js.stripe.com/v3/', [], null, true);
+            wp_enqueue_script('gms-guest-portal', GMS_PLUGIN_URL . 'assets/js/guest-portal.js', ['jquery', 'stripe-js'], GMS_VERSION, true);
+            wp_enqueue_style('gms-guest-portal', GMS_PLUGIN_URL . 'assets/css/guest-portal.css', [], GMS_VERSION);
+
+            $reservation = GMS_Database::getReservationByToken($portal_context['token']);
+
+            // Pass data from PHP to JavaScript securely
+            wp_localize_script('gms-guest-portal', 'gmsConfig', array(
+                'ajaxUrl' => admin_url('admin-ajax.php'),
+                'nonce' => wp_create_nonce('gms_guest_nonce'),
+                'stripeKey' => get_option('gms_stripe_pk'),
+                'reservationId' => $reservation ? $reservation['id'] : 0
+            ));
+
             return;
         }
 
-        wp_enqueue_script('stripe-js', 'https://js.stripe.com/v3/', [], null, true);
-        wp_enqueue_script('gms-guest-portal', GMS_PLUGIN_URL . 'assets/js/guest-portal.js', ['jquery', 'stripe-js'], GMS_VERSION, true);
-        wp_enqueue_style('gms-guest-portal', GMS_PLUGIN_URL . 'assets/css/guest-portal.css', [], GMS_VERSION);
+        $housekeeper_context = $this->resolveHousekeeperRequest();
 
-        $reservation = GMS_Database::getReservationByToken($portal_context['token']);
-
-        // Pass data from PHP to JavaScript securely
-        wp_localize_script('gms-guest-portal', 'gmsConfig', array(
-            'ajaxUrl' => admin_url('admin-ajax.php'),
-            'nonce' => wp_create_nonce('gms_guest_nonce'),
-            'stripeKey' => get_option('gms_stripe_pk'),
-            'reservationId' => $reservation ? $reservation['id'] : 0
-        ));
+        if ($housekeeper_context['is_housekeeper']) {
+            GMS_Housekeeper_Checklist_View::enqueueAssets($housekeeper_context['token']);
+        }
     }
     
     public function enqueueAdminScripts($hook) {
@@ -301,6 +353,16 @@ class GuestManagementSystem {
         wp_enqueue_media(); // For handling media uploads in settings (e.g., logo)
 
         $is_messaging_screen = $hook === 'guest-management_page_guest-management-communications';
+        $is_housekeeper_screen = $hook === 'guest-management_page_guest-management-housekeeper';
+
+        if ($is_housekeeper_screen) {
+            if (function_exists('add_thickbox')) {
+                add_thickbox();
+            } else {
+                wp_enqueue_style('thickbox');
+                wp_enqueue_script('thickbox');
+            }
+        }
 
         if ($is_messaging_screen) {
             wp_enqueue_style('gms-messaging', GMS_PLUGIN_URL . 'assets/css/messaging.css', [], GMS_VERSION);
@@ -513,6 +575,64 @@ class GuestManagementSystem {
         return $this->guest_profile_request;
     }
 
+    private function resolveHousekeeperRequest() {
+        if ($this->housekeeper_request !== null) {
+            return $this->housekeeper_request;
+        }
+
+        $is_housekeeper = false;
+        $token = '';
+
+        $query_flag = get_query_var('gms_housekeeper');
+
+        if (!empty($query_flag)) {
+            $token = (string) get_query_var('gms_housekeeper_token');
+            if ($token !== '') {
+                $is_housekeeper = true;
+            }
+        }
+
+        if (!$is_housekeeper && isset($_GET['gms_housekeeper'])) {
+            $raw_flag = strtolower(trim(wp_unslash($_GET['gms_housekeeper'])));
+            $truthy_flags = array('1', 'true', 'yes', 'on');
+
+            if (in_array($raw_flag, $truthy_flags, true)) {
+                $token = isset($_GET['gms_housekeeper_token']) ? wp_unslash($_GET['gms_housekeeper_token']) : '';
+                if ($token !== '') {
+                    $is_housekeeper = true;
+                }
+            }
+        }
+
+        if (!$is_housekeeper && isset($_SERVER['REQUEST_URI'])) {
+            $extracted = $this->extractHousekeeperTokenFromPath(wp_unslash($_SERVER['REQUEST_URI']));
+            if ($extracted !== '') {
+                $token = $extracted;
+                $is_housekeeper = true;
+            }
+        }
+
+        if ($is_housekeeper) {
+            $token = sanitize_text_field($token);
+
+            if ($token === '') {
+                $is_housekeeper = false;
+            }
+        }
+
+        if ($is_housekeeper && function_exists('set_query_var')) {
+            set_query_var('gms_housekeeper', 1);
+            set_query_var('gms_housekeeper_token', $token);
+        }
+
+        $this->housekeeper_request = array(
+            'is_housekeeper' => $is_housekeeper,
+            'token' => $is_housekeeper ? $token : ''
+        );
+
+        return $this->housekeeper_request;
+    }
+
     private function synchronizePortalQueryState($token, $primary_query = null) {
         $queries = array();
 
@@ -621,6 +741,60 @@ class GuestManagementSystem {
         }
     }
 
+    private function synchronizeHousekeeperQueryState($token, $primary_query = null) {
+        $queries = array();
+
+        if ($primary_query instanceof WP_Query) {
+            $queries[] = $primary_query;
+        }
+
+        global $wp_query, $wp_the_query;
+
+        if ($wp_query instanceof WP_Query) {
+            $queries[] = $wp_query;
+        }
+
+        if ($wp_the_query instanceof WP_Query) {
+            $queries[] = $wp_the_query;
+        }
+
+        foreach ($queries as $query_obj) {
+            if (!$query_obj instanceof WP_Query) {
+                continue;
+            }
+
+            $query_obj->is_404 = false;
+            $query_obj->is_home = false;
+            $query_obj->is_page = false;
+            $query_obj->is_archive = false;
+            $query_obj->is_singular = false;
+            $query_obj->query['error'] = '';
+            $query_obj->query_vars['error'] = '';
+            $query_obj->set('gms_housekeeper', 1);
+            $query_obj->set('gms_housekeeper_token', $token);
+        }
+
+        if (function_exists('set_query_var')) {
+            set_query_var('gms_housekeeper', 1);
+            set_query_var('gms_housekeeper_token', $token);
+        }
+
+        global $wp;
+
+        if ($wp instanceof WP) {
+            $wp->query_vars['gms_housekeeper'] = 1;
+            $wp->query_vars['gms_housekeeper_token'] = $token;
+
+            if (isset($wp->query_vars['error'])) {
+                unset($wp->query_vars['error']);
+            }
+
+            if (isset($wp->query) && is_array($wp->query) && isset($wp->query['error'])) {
+                unset($wp->query['error']);
+            }
+        }
+    }
+
     private function extractPortalTokenFromPath($request_uri) {
         if ($request_uri === '') {
             return '';
@@ -694,6 +868,52 @@ class GuestManagementSystem {
         }
 
         $prefix = 'guest-profile/';
+
+        if (strpos($path, $prefix) !== 0) {
+            return '';
+        }
+
+        $token = substr($path, strlen($prefix));
+        $token = trim($token, '/');
+
+        if ($token === '') {
+            return '';
+        }
+
+        if (strpos($token, '/') !== false) {
+            return '';
+        }
+
+        return rawurldecode($token);
+    }
+
+    private function extractHousekeeperTokenFromPath($request_uri) {
+        if ($request_uri === '') {
+            return '';
+        }
+
+        $parsed_request = wp_parse_url($request_uri);
+        $path = isset($parsed_request['path']) ? trim($parsed_request['path'], '/') : '';
+
+        if ($path === '') {
+            return '';
+        }
+
+        $home_path = '';
+        $home_parts = wp_parse_url(home_url('/'));
+        if ($home_parts && !empty($home_parts['path'])) {
+            $home_path = trim($home_parts['path'], '/');
+        }
+
+        if ($home_path !== '' && strpos($path, $home_path) === 0) {
+            $path = trim(substr($path, strlen($home_path)), '/');
+        }
+
+        if ($path === '') {
+            return '';
+        }
+
+        $prefix = 'housekeeper/';
 
         if (strpos($path, $prefix) !== 0) {
             return '';
