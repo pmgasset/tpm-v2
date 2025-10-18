@@ -3336,12 +3336,12 @@ class GMS_Database {
         $reservations_table = $wpdb->prefix . 'gms_reservations';
         $guests_table = $wpdb->prefix . 'gms_guests';
 
-        $where = array("c.thread_key <> ''");
+        $where = array("latest.thread_key <> ''");
         $params = array();
 
         if ($search !== '') {
             $like = '%' . $wpdb->esc_like($search) . '%';
-            $where[] = "(TRIM(CONCAT_WS(' ', g.first_name, g.last_name)) LIKE %s OR g.email LIKE %s OR g.phone LIKE %s OR r.guest_name LIKE %s OR r.guest_email LIKE %s OR r.property_name LIKE %s OR c.to_number LIKE %s OR c.from_number LIKE %s)";
+            $where[] = "(TRIM(CONCAT_WS(' ', g.first_name, g.last_name)) LIKE %s OR g.email LIKE %s OR g.phone LIKE %s OR r.guest_name LIKE %s OR r.guest_email LIKE %s OR r.property_name LIKE %s OR latest.to_number LIKE %s OR latest.from_number LIKE %s)";
             $params = array_merge($params, array_fill(0, 8, $like));
         }
 
@@ -3354,36 +3354,56 @@ class GMS_Database {
             $where_sql = $wpdb->prepare($where_sql, $params);
         }
 
-        $join_sql = "LEFT JOIN {$reservations_table} r ON r.id = c.reservation_id LEFT JOIN {$guests_table} g ON g.id = c.guest_id";
+        $join_sql = "LEFT JOIN {$reservations_table} r ON r.id = latest.reservation_id LEFT JOIN {$guests_table} g ON g.id = latest.guest_id";
 
-        $total_sql = "SELECT COUNT(*) FROM (SELECT c.thread_key FROM {$table} c {$join_sql} {$where_sql} GROUP BY c.thread_key) threads";
+        $latest_messages_sql = "
+            SELECT c1.*
+            FROM {$table} c1
+            INNER JOIN (
+                SELECT thread_key, MAX(CONCAT(sent_at, '|||', LPAD(id, 20, '0'))) AS sort_key
+                FROM {$table}
+                WHERE thread_key <> ''
+                GROUP BY thread_key
+            ) latest_keys ON latest_keys.thread_key = c1.thread_key
+            WHERE CONCAT(c1.sent_at, '|||', LPAD(c1.id, 20, '0')) = latest_keys.sort_key
+        ";
+
+        $unread_counts_sql = "
+            SELECT thread_key, SUM(CASE WHEN direction = 'inbound' AND (read_at IS NULL OR read_at = '' OR read_at = '0000-00-00 00:00:00') THEN 1 ELSE 0 END) AS unread_count
+            FROM {$table}
+            WHERE thread_key <> ''
+            GROUP BY thread_key
+        ";
+
+        $total_sql = "SELECT COUNT(*) FROM ({$latest_messages_sql}) latest {$join_sql} {$where_sql}";
         $total = (int) $wpdb->get_var($total_sql);
 
         $threads_sql = "
             SELECT
-                c.thread_key,
-                MAX(c.channel) AS channel,
-                MAX(c.reservation_id) AS reservation_id,
-                MAX(c.guest_id) AS guest_id,
-                MAX(r.property_name) AS property_name,
-                MAX(r.guest_name) AS reservation_guest_name,
-                MAX(r.guest_email) AS reservation_guest_email,
-                MAX(r.guest_phone) AS reservation_guest_phone,
-                MAX(TRIM(CONCAT_WS(' ', g.first_name, g.last_name))) AS guest_name,
-                MAX(g.email) AS guest_email,
-                MAX(g.phone) AS guest_phone,
-                SUM(CASE WHEN c.direction = 'inbound' AND (c.read_at IS NULL OR c.read_at = '' OR c.read_at = '0000-00-00 00:00:00') THEN 1 ELSE 0 END) AS unread_count,
-                MAX(c.sent_at) AS last_message_at,
-                SUBSTRING_INDEX(MAX(CONCAT(c.sent_at, '|||', c.message)), '|||', -1) AS last_message,
-                MAX(CASE WHEN c.direction = 'outbound' THEN c.from_number ELSE c.to_number END) AS service_number,
-                MAX(CASE WHEN c.direction = 'outbound' THEN c.from_number_e164 ELSE c.to_number_e164 END) AS service_number_e164,
-                MAX(CASE WHEN c.direction = 'outbound' THEN c.to_number ELSE c.from_number END) AS guest_number,
-                MAX(CASE WHEN c.direction = 'outbound' THEN c.to_number_e164 ELSE c.from_number_e164 END) AS guest_number_e164
-            FROM {$table} c
+                latest.thread_key,
+                latest.channel,
+                latest.reservation_id,
+                latest.guest_id,
+                r.property_name,
+                r.guest_name AS reservation_guest_name,
+                r.guest_email AS reservation_guest_email,
+                r.guest_phone AS reservation_guest_phone,
+                COALESCE(NULLIF(TRIM(CONCAT_WS(' ', g.first_name, g.last_name)), ''), r.guest_name) AS guest_name,
+                COALESCE(NULLIF(g.email, ''), r.guest_email) AS guest_email,
+                COALESCE(NULLIF(g.phone, ''), r.guest_phone) AS guest_phone,
+                COALESCE(unread.unread_count, 0) AS unread_count,
+                latest.sent_at AS last_message_at,
+                latest.message AS last_message,
+                CASE WHEN latest.direction = 'outbound' THEN latest.from_number ELSE latest.to_number END AS service_number,
+                CASE WHEN latest.direction = 'outbound' THEN latest.from_number_e164 ELSE latest.to_number_e164 END AS service_number_e164,
+                CASE WHEN latest.direction = 'outbound' THEN latest.to_number ELSE latest.from_number END AS guest_number,
+                CASE WHEN latest.direction = 'outbound' THEN latest.to_number_e164 ELSE latest.from_number_e164 END AS guest_number_e164,
+                latest.direction
+            FROM ({$latest_messages_sql}) latest
             {$join_sql}
+            LEFT JOIN ({$unread_counts_sql}) unread ON unread.thread_key = latest.thread_key
             {$where_sql}
-            GROUP BY c.thread_key
-            ORDER BY last_message_at DESC
+            ORDER BY latest.sent_at DESC, latest.id DESC
         ";
 
         $threads_sql .= $wpdb->prepare(' LIMIT %d OFFSET %d', $per_page, $offset);
