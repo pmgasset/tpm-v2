@@ -520,11 +520,18 @@ class GMS_Webhook_Handler {
         }
         
         // Convert dates to proper format
-        if (isset($parsed['checkin_date'])) {
-            $parsed['checkin_date'] = date('Y-m-d H:i:s', strtotime($parsed['checkin_date']));
-        }
-        if (isset($parsed['checkout_date'])) {
-            $parsed['checkout_date'] = date('Y-m-d H:i:s', strtotime($parsed['checkout_date']));
+        foreach (array('checkin_date', 'checkout_date') as $date_field) {
+            if (!isset($parsed[$date_field])) {
+                continue;
+            }
+
+            $normalized = $this->normalizeDateToLocalDateTime($parsed[$date_field]);
+
+            if ($normalized === null) {
+                unset($parsed[$date_field]);
+            } else {
+                $parsed[$date_field] = $normalized;
+            }
         }
         
         // Validate required fields
@@ -636,18 +643,56 @@ class GMS_Webhook_Handler {
 
         // Convert dates
         foreach (array('checkin_date', 'checkout_date') as $date_field) {
-            if (isset($parsed[$date_field])) {
-                $timestamp = strtotime($parsed[$date_field]);
+            if (!isset($parsed[$date_field])) {
+                continue;
+            }
 
-                if ($timestamp === false) {
-                    unset($parsed[$date_field]);
-                } else {
-                    $parsed[$date_field] = date('Y-m-d H:i:s', $timestamp);
-                }
+            $normalized = $this->normalizeDateToLocalDateTime($parsed[$date_field]);
+
+            if ($normalized === null) {
+                unset($parsed[$date_field]);
+            } else {
+                $parsed[$date_field] = $normalized;
             }
         }
 
         return $parsed;
+    }
+
+    private function normalizeDateToLocalDateTime($raw_date) {
+        if (!is_string($raw_date) || trim($raw_date) === '') {
+            return null;
+        }
+
+        $raw_date = trim($raw_date);
+
+        if (!function_exists('wp_timezone') || !function_exists('wp_date')) {
+            $timestamp = strtotime($raw_date);
+
+            if ($timestamp === false) {
+                return null;
+            }
+
+            return date('Y-m-d H:i:s', $timestamp);
+        }
+
+        $timezone = wp_timezone();
+
+        try {
+            $datetime = new DateTimeImmutable($raw_date, $timezone);
+        } catch (Exception $exception) {
+            $timestamp = strtotime($raw_date);
+
+            if ($timestamp === false) {
+                return null;
+            }
+
+            return wp_date('Y-m-d H:i:s', $timestamp, $timezone);
+        }
+
+        $datetime = $datetime->setTimezone($timezone);
+
+        return wp_date('Y-m-d H:i:s', $datetime->getTimestamp(), $timezone);
     }
 
     private function shouldSkipDateFieldMatch($target_field, $source_key) {
