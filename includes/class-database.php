@@ -3162,7 +3162,11 @@ class GMS_Database {
                 if (!empty($reservation['guest_record_id'])) {
                     $guest = self::get_guest_by_id($reservation['guest_record_id']);
                 } elseif (!empty($reservation['guest_id'])) {
-                    $guest = self::get_guest_by_id($reservation['guest_id']);
+                    $guest = self::get_guest_by_wp_user_id($reservation['guest_id']);
+
+                    if (!$guest) {
+                        $guest = self::get_guest_by_id($reservation['guest_id']);
+                    }
                 }
             }
 
@@ -3190,9 +3194,9 @@ class GMS_Database {
 
         if (!empty($reservation['guest_record_id'])) {
             $guest_id = intval($reservation['guest_record_id']);
-        } elseif (!empty($reservation['guest_id'])) {
-            $guest_id = intval($reservation['guest_id']);
-        } elseif (!empty($guest['id'])) {
+        }
+
+        if (!empty($guest['id'])) {
             $guest_id = intval($guest['id']);
         }
 
