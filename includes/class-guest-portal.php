@@ -82,7 +82,7 @@ class GMS_Guest_Portal {
 
         $contact_info_confirmed = $contact_info_confirmed_at !== ''
             && $contact_info_confirmed_at !== '0000-00-00 00:00:00'
-            && strtotime($contact_info_confirmed_at) !== false;
+            && self::getPortalTimestamp($contact_info_confirmed_at) !== false;
 
         $contact_full_name = trim($contact_first_name . ' ' . $contact_last_name);
 
@@ -144,15 +144,17 @@ class GMS_Guest_Portal {
             }
         }
 
-        $checkin_timestamp = !empty($reservation['checkin_date']) ? strtotime($reservation['checkin_date']) : false;
-        $checkout_timestamp = !empty($reservation['checkout_date']) ? strtotime($reservation['checkout_date']) : false;
+        $portal_timezone = self::getPortalTimezone();
 
-        $checkin_date_display = $checkin_timestamp ? date('M j, Y', $checkin_timestamp) : '';
-        $checkin_time_display = $checkin_timestamp ? date('g:i A', $checkin_timestamp) : '';
-        $checkin_day_long = $checkin_timestamp ? date('l, F j', $checkin_timestamp) : '';
+        $checkin_timestamp = self::getPortalTimestamp($reservation['checkin_date'] ?? '');
+        $checkout_timestamp = self::getPortalTimestamp($reservation['checkout_date'] ?? '');
 
-        $checkout_date_display = $checkout_timestamp ? date('M j, Y', $checkout_timestamp) : '';
-        $checkout_time_display = $checkout_timestamp ? date('g:i A', $checkout_timestamp) : '';
+        $checkin_date_display = $checkin_timestamp ? wp_date('M j, Y', $checkin_timestamp, $portal_timezone) : '';
+        $checkin_time_display = $checkin_timestamp ? wp_date('g:i A', $checkin_timestamp, $portal_timezone) : '';
+        $checkin_day_long = $checkin_timestamp ? wp_date('l, F j', $checkin_timestamp, $portal_timezone) : '';
+
+        $checkout_date_display = $checkout_timestamp ? wp_date('M j, Y', $checkout_timestamp, $portal_timezone) : '';
+        $checkout_time_display = $checkout_timestamp ? wp_date('g:i A', $checkout_timestamp, $portal_timezone) : '';
 
         ?>
         <!DOCTYPE html>
@@ -992,7 +994,10 @@ class GMS_Guest_Portal {
                                 <div class="portal-card__body">
                                     <h3><?php esc_html_e('Agreement signed successfully', 'gms'); ?></h3>
                                     <p class="portal-card__copy"><?php
-                                        printf(esc_html__('Signed on %s. A copy is on the way to your phone.', 'gms'), esc_html(date('F j, Y 	 g:i A', strtotime($agreement['signed_at']))));
+                                        printf(
+                                            esc_html__('Signed on %s. A copy is on the way to your phone.', 'gms'),
+                                            esc_html(self::formatPortalDateTime($agreement['signed_at'] ?? '', 'F j, Y g:i A'))
+                                        );
                                     ?></p>
                                     <a href="<?php echo esc_url($agreement['pdf_url']); ?>" class="btn btn-success" download="<?php echo esc_attr($reservation['booking_reference']); ?>.pdf"><?php esc_html_e('Download signed agreement (PDF)', 'gms'); ?></a>
                                 </div>
@@ -1679,6 +1684,43 @@ class GMS_Guest_Portal {
         <?php
     }
     
+    private static function getPortalTimezone() {
+        return wp_timezone();
+    }
+
+    private static function getPortalTimestamp($datetime_value) {
+        $datetime_value = trim((string) $datetime_value);
+
+        if ($datetime_value === '' || $datetime_value === '0000-00-00 00:00:00') {
+            return false;
+        }
+
+        $timezone = self::getPortalTimezone();
+        $datetime = date_create_immutable($datetime_value, $timezone);
+
+        if ($datetime instanceof DateTimeImmutable) {
+            return $datetime->getTimestamp();
+        }
+
+        $timestamp = strtotime($datetime_value);
+
+        if ($timestamp === false) {
+            return false;
+        }
+
+        return $timestamp;
+    }
+
+    private static function formatPortalDateTime($datetime_value, $format) {
+        $timestamp = self::getPortalTimestamp($datetime_value);
+
+        if ($timestamp === false) {
+            return '';
+        }
+
+        return wp_date($format, $timestamp, self::getPortalTimezone());
+    }
+
     private static function splitGuestName($name) {
         $name = trim((string) $name);
 
@@ -1703,17 +1745,14 @@ class GMS_Guest_Portal {
             return $agreement_template;
         }
 
-        $checkin_timestamp = !empty($reservation['checkin_date']) ? strtotime($reservation['checkin_date']) : false;
-        $checkout_timestamp = !empty($reservation['checkout_date']) ? strtotime($reservation['checkout_date']) : false;
-
         $replacements = array(
             '{guest_name}' => isset($reservation['guest_name']) ? $reservation['guest_name'] : '',
             '{guest_email}' => isset($reservation['guest_email']) ? $reservation['guest_email'] : '',
             '{guest_phone}' => isset($reservation['guest_phone']) ? $reservation['guest_phone'] : '',
             '{property_name}' => isset($reservation['property_name']) ? $reservation['property_name'] : '',
             '{booking_reference}' => isset($reservation['booking_reference']) ? $reservation['booking_reference'] : '',
-            '{checkin_date}' => $checkin_timestamp ? date('F j, Y', $checkin_timestamp) : '',
-            '{checkout_date}' => $checkout_timestamp ? date('F j, Y', $checkout_timestamp) : '',
+            '{checkin_date}' => self::formatPortalDateTime($reservation['checkin_date'] ?? '', 'F j, Y'),
+            '{checkout_date}' => self::formatPortalDateTime($reservation['checkout_date'] ?? '', 'F j, Y'),
             '{checkin_time}' => isset($reservation['checkin_time']) ? $reservation['checkin_time'] : '3:00 PM',
             '{checkout_time}' => isset($reservation['checkout_time']) ? $reservation['checkout_time'] : '11:00 AM',
             '{company_name}' => $company_name,
@@ -1798,7 +1837,7 @@ class GMS_Guest_Portal {
             : '';
         $contact_confirmed = $contact_confirmed_at !== ''
             && $contact_confirmed_at !== '0000-00-00 00:00:00'
-            && strtotime($contact_confirmed_at) !== false;
+            && self::getPortalTimestamp($contact_confirmed_at) !== false;
 
         if (!$contact_confirmed) {
             wp_send_json_error(__('Please confirm your contact information before signing the agreement.', 'gms'));
@@ -1987,7 +2026,7 @@ class GMS_Guest_Portal {
             : '';
         $contact_confirmed = $contact_confirmed_at !== ''
             && $contact_confirmed_at !== '0000-00-00 00:00:00'
-            && strtotime($contact_confirmed_at) !== false;
+            && self::getPortalTimestamp($contact_confirmed_at) !== false;
 
         if (!$contact_confirmed) {
             wp_send_json_error(__('Please confirm your contact information before starting verification.', 'gms'));
