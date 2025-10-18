@@ -5008,9 +5008,14 @@ class GMS_Admin {
             return '';
         }
 
-        $timestamp = strtotime($datetime);
-        if ($timestamp === false) {
-            return '';
+        $wp_datetime = $this->create_wp_datetime($datetime);
+        if ($wp_datetime instanceof \DateTimeImmutable) {
+            $timestamp = $wp_datetime->getTimestamp();
+        } else {
+            $timestamp = strtotime($datetime);
+            if ($timestamp === false) {
+                return '';
+            }
         }
 
         return $this->format_timestamp_for_admin($timestamp);
