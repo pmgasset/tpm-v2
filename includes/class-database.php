@@ -417,6 +417,7 @@ class GMS_Database {
         self::maybeAddHousekeeperTokenColumn($installed);
         self::maybeCreateHousekeeperTables($installed);
         self::maybeSeedMessageTemplates();
+        self::recalculateAllCommunicationContexts();
 
         update_option(self::OPTION_DB_VERSION, self::DB_VERSION);
     }
@@ -696,6 +697,158 @@ class GMS_Database {
 
         self::backfillCommunicationNumbers($table_name);
         self::backfillCommunicationThreads($table_name);
+    }
+
+    public static function recalculateAllCommunicationContexts($batch_size = 200) {
+        global $wpdb;
+
+        $table = $wpdb->prefix . 'gms_communications';
+
+        if (!self::tableExists($table)) {
+            return;
+        }
+
+        if (function_exists('set_time_limit')) {
+            @set_time_limit(0);
+        }
+
+        $batch_size = max(1, intval($batch_size));
+        $last_id = 0;
+
+        do {
+            $rows = $wpdb->get_results(
+                $wpdb->prepare(
+                    "SELECT id, reservation_id, guest_id, channel, direction, from_number, to_number, from_number_e164, to_number_e164, recipient, thread_key, response_data FROM {$table} WHERE id > %d ORDER BY id ASC LIMIT %d",
+                    $last_id,
+                    $batch_size
+                ),
+                ARRAY_A
+            );
+
+            if (empty($rows)) {
+                break;
+            }
+
+            foreach ($rows as $row) {
+                $id = intval($row['id']);
+                if ($id > $last_id) {
+                    $last_id = $id;
+                }
+
+                $channel = sanitize_key($row['channel'] ?? '');
+                $direction = sanitize_key($row['direction'] ?? '');
+                if ($direction !== 'outbound') {
+                    $direction = 'inbound';
+                }
+
+                $from_source = (string) ($row['from_number'] ?? '');
+                if ($from_source === '' && !empty($row['from_number_e164'])) {
+                    $from_source = (string) $row['from_number_e164'];
+                }
+
+                $to_source = (string) ($row['to_number'] ?? '');
+                if ($to_source === '') {
+                    if (!empty($row['recipient'])) {
+                        $to_source = (string) $row['recipient'];
+                    } elseif (!empty($row['to_number_e164'])) {
+                        $to_source = (string) $row['to_number_e164'];
+                    }
+                }
+
+                $context = self::resolveMessageContext($channel, $from_source, $to_source, $direction);
+
+                $conversation_channels = array('sms', 'whatsapp');
+                $from_e164 = in_array($channel, $conversation_channels, true) ? self::normalizePhoneNumber($from_source) : '';
+                if ($from_e164 === '' && in_array($channel, $conversation_channels, true)) {
+                    $from_e164 = self::normalizePhoneNumber($row['from_number_e164'] ?? '');
+                }
+
+                $to_e164 = in_array($channel, $conversation_channels, true) ? self::normalizePhoneNumber($to_source) : '';
+                if ($to_e164 === '' && in_array($channel, $conversation_channels, true)) {
+                    $to_e164 = self::normalizePhoneNumber($row['to_number_e164'] ?? '');
+                }
+
+                $new_reservation_id = intval($context['reservation_id'] ?? 0);
+                $new_guest_id = intval($context['guest_id'] ?? 0);
+                $new_thread_key = '';
+                if (self::isConversationalChannel($channel)) {
+                    $new_thread_key = sanitize_text_field($context['thread_key'] ?? '');
+                }
+                $new_thread_key = substr($new_thread_key, 0, 191);
+
+                $updates = array();
+                $formats = array();
+
+                if ($new_reservation_id !== intval($row['reservation_id'] ?? 0)) {
+                    $updates['reservation_id'] = $new_reservation_id;
+                    $formats[] = '%d';
+                }
+
+                if ($new_guest_id !== intval($row['guest_id'] ?? 0)) {
+                    $updates['guest_id'] = $new_guest_id;
+                    $formats[] = '%d';
+                }
+
+                if ($new_thread_key !== (string) ($row['thread_key'] ?? '')) {
+                    $updates['thread_key'] = $new_thread_key;
+                    $formats[] = '%s';
+                }
+
+                $sanitized_from_e164 = sanitize_text_field($from_e164);
+                if ($sanitized_from_e164 !== (string) ($row['from_number_e164'] ?? '')) {
+                    $updates['from_number_e164'] = $sanitized_from_e164;
+                    $formats[] = '%s';
+                }
+
+                $sanitized_to_e164 = sanitize_text_field($to_e164);
+                if ($sanitized_to_e164 !== (string) ($row['to_number_e164'] ?? '')) {
+                    $updates['to_number_e164'] = $sanitized_to_e164;
+                    $formats[] = '%s';
+                }
+
+                $decoded_response = self::maybeDecodeJson($row['response_data'] ?? '');
+                $response_updates = null;
+
+                $response_context = array(
+                    'matched' => !empty($context['matched']),
+                    'status' => !empty($context['status']) ? sanitize_key($context['status']) : (!empty($context['matched']) ? 'matched' : 'unmatched'),
+                    'guest_number' => $context['guest_number_e164'] ?? '',
+                    'service_number' => $context['service_number_e164'] ?? '',
+                );
+
+                if (!empty($context['thread_key'])) {
+                    $response_context['thread_key'] = sanitize_text_field($context['thread_key']);
+                }
+
+                if ($new_reservation_id > 0) {
+                    $response_context['reservation_id'] = $new_reservation_id;
+                }
+
+                if ($new_guest_id > 0) {
+                    $response_context['guest_id'] = $new_guest_id;
+                }
+
+                if ($decoded_response['decoded'] && is_array($decoded_response['value'])) {
+                    $response_updates = $decoded_response['value'];
+                    $response_updates['context'] = $response_context;
+                } elseif (($row['response_data'] ?? '') === '' && self::isConversationalChannel($channel)) {
+                    $response_updates = array('context' => $response_context);
+                }
+
+                if (is_array($response_updates)) {
+                    $encoded = self::maybeEncodeJson($response_updates);
+                    if ($encoded !== (string) ($row['response_data'] ?? '')) {
+                        $updates['response_data'] = $encoded;
+                        $formats[] = '%s';
+                    }
+                }
+
+                if (!empty($updates)) {
+                    $where = array('id' => $id);
+                    $wpdb->update($table, $updates, $where, $formats, array('%d'));
+                }
+            }
+        } while (!empty($rows));
     }
 
     private static function repairDuplicatePortalTokens($previous_version) {

@@ -7,7 +7,94 @@ if (!defined('ARRAY_A')) {
 }
 
 if (!defined('ABSPATH')) {
-    define('ABSPATH', __DIR__ . '/../');
+    define('ABSPATH', __DIR__ . '/wp-stubs/');
+}
+
+if (!function_exists('apply_filters')) {
+    function apply_filters($tag, $value) {
+        return $value;
+    }
+}
+
+if (!function_exists('get_option')) {
+    function get_option($name, $default = null) {
+        global $gms_test_options;
+
+        return array_key_exists($name, $gms_test_options) ? $gms_test_options[$name] : $default;
+    }
+}
+
+if (!function_exists('update_option')) {
+    function update_option($name, $value) {
+        global $gms_test_options;
+
+        $gms_test_options[$name] = $value;
+
+        return true;
+    }
+}
+
+if (!function_exists('add_option')) {
+    function add_option($name, $value) {
+        global $gms_test_options;
+
+        if (!array_key_exists($name, $gms_test_options)) {
+            $gms_test_options[$name] = $value;
+
+            return true;
+        }
+
+        return false;
+    }
+}
+
+if (!function_exists('delete_option')) {
+    function delete_option($name) {
+        global $gms_test_options;
+
+        if (array_key_exists($name, $gms_test_options)) {
+            unset($gms_test_options[$name]);
+        }
+
+        return true;
+    }
+}
+
+if (!function_exists('sanitize_email')) {
+    function sanitize_email($email) {
+        return trim((string) $email);
+    }
+}
+
+if (!function_exists('wp_kses_post')) {
+    function wp_kses_post($value) {
+        return $value;
+    }
+}
+
+if (!function_exists('wp_html_excerpt')) {
+    function wp_html_excerpt($text, $length, $more = '') {
+        $text = (string) $text;
+        $length = max(0, (int) $length);
+
+        if (function_exists('mb_substr')) {
+            $slice = mb_substr($text, 0, $length);
+        } else {
+            $slice = substr($text, 0, $length);
+        }
+
+        if ($slice === $text) {
+            return $slice;
+        }
+
+        return $slice . (string) $more;
+    }
+}
+
+if (!function_exists('__')) {
+    function __($text, $domain = null) {
+        return $text;
+    }
 }
 
 if (!function_exists('sanitize_text_field')) {
@@ -89,11 +176,25 @@ if (!function_exists('substr_compare')) {
     }
 }
 
+$gms_test_options = array(
+    'gms_db_version' => '1.5.0',
+    'gms_voipms_did' => '+15550001111',
+);
+
 class WPDB_Phone_Ambiguity_Stub {
     public $prefix = 'wp_';
     public $reservations = array();
     public $guests = array();
     public $communications = array();
+    public $existing_tables = array();
+
+    public function __construct() {
+        $this->existing_tables = array(
+            $this->prefix . 'gms_reservations' => true,
+            $this->prefix . 'gms_guests' => true,
+            $this->prefix . 'gms_communications' => true,
+        );
+    }
 
     public function prepare($query, $args = null) {
         if ($args === null) {
@@ -115,6 +216,22 @@ class WPDB_Phone_Ambiguity_Stub {
 
     public function get_var($prepared) {
         list($query, $args) = $this->parsePrepared($prepared);
+
+        if (stripos($query, 'SHOW TABLES LIKE') !== false) {
+            $needle = (string) ($args[0] ?? '');
+
+            foreach ($this->existing_tables as $table => $exists) {
+                if (!$exists) {
+                    continue;
+                }
+
+                if ($needle === $table || $needle === $this->esc_like($table)) {
+                    return $table;
+                }
+            }
+
+            return null;
+        }
 
         if (strpos($query, 'COUNT(DISTINCT') !== false) {
             $source = array();
@@ -229,10 +346,170 @@ class WPDB_Phone_Ambiguity_Stub {
         }
 
         if (strpos($query, 'gms_communications') !== false) {
-            return array();
+            if (stripos($query, 'SHOW INDEX') !== false) {
+                return array();
+            }
+
+            if (stripos($query, 'WHERE id > %d') !== false) {
+                $min_id = (int) ($args[0] ?? 0);
+                $limit = max(0, (int) ($args[1] ?? 0));
+
+                $results = array();
+                foreach ($this->communications as $row) {
+                    if ((int) ($row['id'] ?? 0) > $min_id) {
+                        $results[] = $row;
+                    }
+                }
+
+                usort($results, static function ($a, $b) {
+                    return (int) ($a['id'] ?? 0) <=> (int) ($b['id'] ?? 0);
+                });
+
+                if ($limit > 0 && count($results) > $limit) {
+                    $results = array_slice($results, 0, $limit);
+                }
+
+                return $results;
+            }
+
+            if (stripos($query, 'ORDER BY sent_at DESC') !== false) {
+                $channel = (string) ($args[0] ?? '');
+                $guest_number = (string) ($args[1] ?? '');
+                $service_number = (string) ($args[2] ?? '');
+                $service_alt = (string) ($args[3] ?? '');
+                $guest_alt = (string) ($args[4] ?? '');
+
+                $matches = array();
+                foreach ($this->communications as $row) {
+                    if (($row['channel'] ?? '') !== $channel) {
+                        continue;
+                    }
+
+                    $from = (string) ($row['from_number_e164'] ?? '');
+                    $to = (string) ($row['to_number_e164'] ?? '');
+
+                    $pair_matches = ($from === $guest_number && $to === $service_number) || ($from === $service_alt && $to === $guest_alt);
+
+                    if ($pair_matches) {
+                        $matches[] = array(
+                            'reservation_id' => $row['reservation_id'] ?? 0,
+                            'guest_id' => $row['guest_id'] ?? 0,
+                            'thread_key' => $row['thread_key'] ?? '',
+                            'sent_at' => $row['sent_at'] ?? '',
+                            'id' => $row['id'] ?? 0,
+                        );
+                    }
+                }
+
+                usort($matches, static function ($a, $b) {
+                    $sent_cmp = strcmp((string) ($b['sent_at'] ?? ''), (string) ($a['sent_at'] ?? ''));
+                    if ($sent_cmp !== 0) {
+                        return $sent_cmp;
+                    }
+
+                    return (int) ($b['id'] ?? 0) <=> (int) ($a['id'] ?? 0);
+                });
+
+                return array_map(static function ($row) {
+                    return array(
+                        'reservation_id' => $row['reservation_id'],
+                        'guest_id' => $row['guest_id'],
+                        'thread_key' => $row['thread_key'],
+                    );
+                }, array_slice($matches, 0, 1));
+            }
+
+            if (stripos($query, 'from_number_e164') !== false && stripos($query, 'to_number_e164') !== false && stripos($query, 'channel =') !== false) {
+                $channel = (string) ($args[0] ?? '');
+                $limit = max(0, (int) ($args[1] ?? 0));
+
+                $results = array();
+                foreach ($this->communications as $row) {
+                    if ($channel !== '' && ($row['channel'] ?? '') !== $channel) {
+                        continue;
+                    }
+
+                    $needs_from = ($row['from_number'] ?? '') !== '' && (($row['from_number_e164'] ?? '') === '' || $row['from_number_e164'] === null);
+                    $needs_to = ($row['to_number'] ?? '') !== '' && (($row['to_number_e164'] ?? '') === '' || $row['to_number_e164'] === null);
+
+                    if ($needs_from || $needs_to) {
+                        $results[] = $row;
+                    }
+                }
+
+                if ($limit > 0 && count($results) > $limit) {
+                    $results = array_slice($results, 0, $limit);
+                }
+
+                return $results;
+            }
+
+            if (stripos($query, 'thread_key') !== false && stripos($query, 'LIMIT %d') !== false) {
+                $limit = max(0, (int) ($args[0] ?? 0));
+
+                $results = array();
+                foreach ($this->communications as $row) {
+                    $thread = (string) ($row['thread_key'] ?? '');
+                    if ($thread === '') {
+                        $results[] = $row;
+                    }
+                }
+
+                if ($limit > 0 && count($results) > $limit) {
+                    $results = array_slice($results, 0, $limit);
+                }
+
+                return $results;
+            }
+
+            return $this->communications;
         }
 
         return array();
+    }
+
+    public function update($table, $data, $where, $format = null, $where_format = null) {
+        if (isset($where['id'])) {
+            $id = (int) $where['id'];
+
+            if ($table === $this->prefix . 'gms_communications') {
+                foreach ($this->communications as $index => $row) {
+                    if ((int) ($row['id'] ?? 0) === $id) {
+                        foreach ($data as $key => $value) {
+                            $this->communications[$index][$key] = $value;
+                        }
+
+                        return 1;
+                    }
+                }
+            }
+
+            if ($table === $this->prefix . 'gms_reservations') {
+                foreach ($this->reservations as $index => $row) {
+                    if ((int) ($row['id'] ?? 0) === $id) {
+                        foreach ($data as $key => $value) {
+                            $this->reservations[$index][$key] = $value;
+                        }
+
+                        return 1;
+                    }
+                }
+            }
+        }
+
+        return 0;
+    }
+
+    public function query($sql) {
+        return 0;
+    }
+
+    public function get_charset_collate() {
+        return 'DEFAULT CHARSET utf8mb4';
+    }
+
+    public function esc_like($text) {
+        return addcslashes((string) $text, '_%');
     }
 
     private function formatGuestRow(array $row) {
@@ -328,10 +605,83 @@ $wpdb->guests = array(
         'updated_at' => '2024-06-02 00:00:00',
     ),
 );
+$wpdb->communications = array(
+    array(
+        'id' => 9001,
+        'reservation_id' => 0,
+        'guest_id' => 0,
+        'channel' => 'sms',
+        'direction' => 'inbound',
+        'from_number' => '+1 (123) 456-7890',
+        'to_number' => '',
+        'from_number_e164' => '',
+        'to_number_e164' => '',
+        'recipient' => '+15550001111',
+        'thread_key' => '',
+        'response_data' => json_encode(array(
+            'provider' => 'legacy',
+            'context' => array(
+                'matched' => false,
+                'status' => 'unmatched',
+            ),
+        )),
+        'sent_at' => '2024-06-12 12:00:00',
+    ),
+);
 
 $GLOBALS['wpdb'] = $wpdb;
 
 require_once __DIR__ . '/../includes/class-database.php';
+
+GMS_Database::maybeRunMigrations();
+
+$recalculated = $wpdb->communications[0];
+if ((int) ($recalculated['reservation_id'] ?? 0) !== 701) {
+    throw new RuntimeException('Recalculated reservation mismatch: ' . json_encode($recalculated));
+}
+
+if ((int) ($recalculated['guest_id'] ?? 0) !== 8001) {
+    throw new RuntimeException('Recalculated guest mismatch: ' . json_encode($recalculated));
+}
+
+$thread_key = (string) ($recalculated['thread_key'] ?? '');
+if ($thread_key === '') {
+    throw new RuntimeException('Recalculated thread key missing: ' . json_encode($recalculated));
+}
+
+if ((string) ($recalculated['from_number_e164'] ?? '') !== '+11234567890') {
+    throw new RuntimeException('From number normalization failed: ' . json_encode($recalculated));
+}
+
+if ((string) ($recalculated['to_number_e164'] ?? '') !== '+15550001111') {
+    throw new RuntimeException('To number normalization failed: ' . json_encode($recalculated));
+}
+
+$response_payload = json_decode((string) ($recalculated['response_data'] ?? ''), true);
+if (!is_array($response_payload) || !isset($response_payload['context'])) {
+    throw new RuntimeException('Response context missing: ' . json_encode($recalculated));
+}
+
+$reprocessed_context = $response_payload['context'];
+if (empty($reprocessed_context['matched'])) {
+    throw new RuntimeException('Reprocessed context should be matched: ' . json_encode($reprocessed_context));
+}
+
+if (($reprocessed_context['status'] ?? '') !== 'matched') {
+    throw new RuntimeException('Reprocessed context status mismatch: ' . json_encode($reprocessed_context));
+}
+
+if (($reprocessed_context['guest_number'] ?? '') !== '+11234567890') {
+    throw new RuntimeException('Reprocessed guest number mismatch: ' . json_encode($reprocessed_context));
+}
+
+if (($reprocessed_context['service_number'] ?? '') !== '+15550001111') {
+    throw new RuntimeException('Reprocessed service number mismatch: ' . json_encode($reprocessed_context));
+}
+
+if (($gms_test_options[GMS_Database::OPTION_DB_VERSION] ?? '') !== GMS_Database::DB_VERSION) {
+    throw new RuntimeException('Database version option was not updated.');
+}
 
 $us_context = GMS_Database::resolveMessageContext('sms', '+11234567890', '+15550001111', 'inbound');
 if ((int) ($us_context['reservation_id'] ?? 0) !== 701) {

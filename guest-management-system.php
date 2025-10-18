@@ -148,6 +148,8 @@ class GuestManagementSystem {
                 add_option($key, $value);
             }
         }
+
+        GMS_Database::recalculateAllCommunicationContexts();
     }
     
     public function deactivate() {
