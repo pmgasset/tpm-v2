@@ -447,8 +447,19 @@ class GMS_SMS_Handler implements GMS_Messaging_Channel_Interface {
             'service_number' => $context['service_number_e164'],
         );
 
-        if (!$context['matched']) {
+        if (!empty($context['status'])) {
+            $response_context['status'] = $context['status'];
+        } elseif ($context['matched']) {
+            $response_context['status'] = 'matched';
+        } else {
             $response_context['status'] = 'unmatched';
+        }
+
+        if (!$context['matched']) {
+            $context['reservation_id'] = 0;
+            $context['guest_id'] = 0;
+            $context['reservation'] = null;
+            $context['guest'] = null;
         }
 
         $log_data = array(

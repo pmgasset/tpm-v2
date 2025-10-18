@@ -143,6 +143,7 @@ if (!function_exists('apply_filters')) {
 if (!class_exists('GMS_Database')) {
     class GMS_Database {
         public static $last_log = null;
+        public static $mock_context = null;
 
         public static function normalizePhoneNumber($number) {
             $number = preg_replace('/[^0-9+]/', '', (string) $number);
@@ -163,12 +164,19 @@ if (!class_exists('GMS_Database')) {
         }
 
         public static function resolveMessageContext($channel, $from, $to, $direction) {
+            if (is_array(self::$mock_context)) {
+                return self::$mock_context;
+            }
+
             return array(
                 'matched' => true,
+                'status' => 'matched',
                 'guest_number_e164' => self::normalizePhoneNumber($direction === 'inbound' ? $from : $to),
                 'service_number_e164' => self::normalizePhoneNumber($direction === 'inbound' ? $to : $from),
                 'reservation_id' => 0,
                 'guest_id' => 0,
+                'reservation' => null,
+                'guest' => null,
                 'thread_key' => 'test-thread',
             );
         }
@@ -281,6 +289,7 @@ if ($normalized['timestamp'] !== $expected_timestamp) {
 }
 
 GMS_Database::$last_log = null;
+GMS_Database::$mock_context = null;
 
 $persist = invoke_sms_handler_private($handler, 'persistNormalizedMessage', array($normalized));
 
@@ -303,6 +312,55 @@ if (!is_string(GMS_Database::$last_log['to_number']) || GMS_Database::$last_log[
 if (GMS_Database::$last_log['sent_at'] !== $expected_timestamp) {
     throw new RuntimeException('sent_at did not match expected timestamp.');
 }
+
+if (($persist['context']['status'] ?? '') !== 'matched') {
+    throw new RuntimeException('Persisted context missing matched status: ' . json_encode($persist['context']));
+}
+
+$logged_context = GMS_Database::$last_log['response_data']['context'] ?? array();
+if (($logged_context['status'] ?? '') !== 'matched') {
+    throw new RuntimeException('Log context status mismatch: ' . json_encode($logged_context));
+}
+
+GMS_Database::$mock_context = array(
+    'matched' => false,
+    'status' => 'unmatched',
+    'guest_number_e164' => '+12223334444',
+    'service_number_e164' => '+15550001111',
+    'reservation_id' => 0,
+    'guest_id' => 0,
+    'reservation' => null,
+    'guest' => null,
+    'thread_key' => 'test-thread',
+);
+
+GMS_Database::$last_log = null;
+
+$persist_unmatched = invoke_sms_handler_private($handler, 'persistNormalizedMessage', array($normalized));
+
+if (!empty($persist_unmatched['context']['matched'])) {
+    throw new RuntimeException('Unmatched context reported as matched: ' . json_encode($persist_unmatched['context']));
+}
+
+$unmatched_context = $persist_unmatched['context'];
+if (($unmatched_context['status'] ?? '') !== 'unmatched') {
+    throw new RuntimeException('Unmatched context missing status: ' . json_encode($unmatched_context));
+}
+
+if ($unmatched_context['reservation'] !== null || $unmatched_context['guest'] !== null) {
+    throw new RuntimeException('Unmatched context should not include guest or reservation data.');
+}
+
+$logged_unmatched = GMS_Database::$last_log['response_data']['context'] ?? array();
+if (($logged_unmatched['status'] ?? '') !== 'unmatched') {
+    throw new RuntimeException('Log context should record unmatched status: ' . json_encode($logged_unmatched));
+}
+
+if ((int) (GMS_Database::$last_log['reservation_id'] ?? -1) !== 0 || (int) (GMS_Database::$last_log['guest_id'] ?? -1) !== 0) {
+    throw new RuntimeException('Reservation/guest IDs should be zero when unmatched: ' . json_encode(GMS_Database::$last_log));
+}
+
+GMS_Database::$mock_context = null;
 
 $handler->sent_messages = array();
 

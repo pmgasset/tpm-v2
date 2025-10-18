@@ -3025,36 +3025,61 @@ class GMS_Database {
 
         $table_reservations = $wpdb->prefix . 'gms_reservations';
 
-        $conditions = array();
-        $params = array();
+        if (!empty($variations['normalized'])) {
+            $placeholders = implode(', ', array_fill(0, count($variations['normalized']), '%s'));
+            $sql = "SELECT * FROM {$table_reservations} WHERE guest_phone IN ({$placeholders}) ORDER BY updated_at DESC, checkin_date DESC";
 
-        foreach ($variations['normalized'] as $value) {
-            $conditions[] = 'guest_phone = %s';
-            $params[] = $value;
-        }
+            $rows = $wpdb->get_results($wpdb->prepare($sql, $variations['normalized']), ARRAY_A);
 
-        if (!empty($variations['digits'])) {
-            $sanitized_guest_phone = "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(guest_phone, '+', ''), '-', ''), ' ', ''), '(', ''), ')', ''), '.', '')";
-
-            foreach ($variations['digits'] as $digits) {
-                $conditions[] = $sanitized_guest_phone . ' LIKE %s';
-                $params[] = '%' . $digits . '%';
+            if (!empty($rows)) {
+                return self::formatReservationRow($rows[0]);
             }
         }
 
-        if (empty($conditions)) {
+        if (empty($variations['digits'])) {
             return null;
         }
 
-        $where = implode(' OR ', array_map(static function ($condition) {
-            return '(' . $condition . ')';
-        }, $conditions));
+        $sanitized_guest_phone = "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(guest_phone, '+', ''), '-', ''), ' ', ''), '(', ''), ')', ''), '.', '')";
 
-        $sql = "SELECT * FROM {$table_reservations} WHERE {$where} ORDER BY updated_at DESC, checkin_date DESC LIMIT 1";
+        $digit_variations = $variations['digits'];
+        $full_digits = array_shift($digit_variations);
 
-        $row = $wpdb->get_row($wpdb->prepare($sql, $params), ARRAY_A);
+        if (!empty($full_digits)) {
+            $exact_sql = "SELECT * FROM {$table_reservations} WHERE {$sanitized_guest_phone} = %s ORDER BY updated_at DESC, checkin_date DESC";
+            $rows = $wpdb->get_results($wpdb->prepare($exact_sql, $full_digits), ARRAY_A);
 
-        return $row ? self::formatReservationRow($row) : null;
+            if (!empty($rows)) {
+                return self::formatReservationRow($rows[0]);
+            }
+        }
+
+        foreach ($digit_variations as $digits) {
+            if ($digits === '') {
+                continue;
+            }
+
+            $like = '%' . $digits;
+            $ambiguity_sql = "SELECT COUNT(DISTINCT {$sanitized_guest_phone}) FROM {$table_reservations} WHERE {$sanitized_guest_phone} LIKE %s";
+            $distinct_matches = intval($wpdb->get_var($wpdb->prepare($ambiguity_sql, $like)));
+
+            if ($distinct_matches === 0) {
+                continue;
+            }
+
+            if ($distinct_matches > 1) {
+                return null;
+            }
+
+            $sql = "SELECT * FROM {$table_reservations} WHERE {$sanitized_guest_phone} LIKE %s ORDER BY updated_at DESC, checkin_date DESC LIMIT 1";
+            $row = $wpdb->get_row($wpdb->prepare($sql, $like), ARRAY_A);
+
+            if ($row) {
+                return self::formatReservationRow($row);
+            }
+        }
+
+        return null;
     }
 
     public static function findGuestByPhone($phone) {
@@ -3068,50 +3093,97 @@ class GMS_Database {
 
         $table_guests = $wpdb->prefix . 'gms_guests';
 
-        $conditions = array();
-        $params = array();
+        if (!empty($variations['normalized'])) {
+            $placeholders = implode(', ', array_fill(0, count($variations['normalized']), '%s'));
+            $sql = "SELECT * FROM {$table_guests} WHERE phone IN ({$placeholders}) ORDER BY updated_at DESC, created_at DESC";
 
-        foreach ($variations['normalized'] as $value) {
-            $conditions[] = 'phone = %s';
-            $params[] = $value;
-        }
+            $rows = $wpdb->get_results($wpdb->prepare($sql, $variations['normalized']), ARRAY_A);
 
-        if (!empty($variations['digits'])) {
-            $sanitized_guest_phone = "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(phone, '+', ''), '-', ''), ' ', ''), '(', ''), ')', ''), '.', '')";
+            if (!empty($rows)) {
+                $row = $rows[0];
 
-            foreach ($variations['digits'] as $digits) {
-                $conditions[] = $sanitized_guest_phone . ' LIKE %s';
-                $params[] = '%' . $digits . '%';
+                if (isset($row['name'])) {
+                    $row['name'] = trim($row['name']);
+                } else {
+                    $row['name'] = trim(trim($row['first_name'] ?? '') . ' ' . trim($row['last_name'] ?? ''));
+                }
+
+                if (!empty($row['email']) && str_ends_with($row['email'], '@' . self::GUEST_PLACEHOLDER_DOMAIN)) {
+                    $row['email'] = '';
+                }
+
+                return $row;
             }
         }
 
-        if (empty($conditions)) {
+        if (empty($variations['digits'])) {
             return null;
         }
 
-        $where = implode(' OR ', array_map(static function ($condition) {
-            return '(' . $condition . ')';
-        }, $conditions));
+        $sanitized_guest_phone = "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(phone, '+', ''), '-', ''), ' ', ''), '(', ''), ')', ''), '.', '')";
 
-        $sql = "SELECT * FROM {$table_guests} WHERE {$where} ORDER BY updated_at DESC, created_at DESC LIMIT 1";
+        $digit_variations = $variations['digits'];
+        $full_digits = array_shift($digit_variations);
 
-        $row = $wpdb->get_row($wpdb->prepare($sql, $params), ARRAY_A);
+        if (!empty($full_digits)) {
+            $exact_sql = "SELECT * FROM {$table_guests} WHERE {$sanitized_guest_phone} = %s ORDER BY updated_at DESC, created_at DESC";
+            $rows = $wpdb->get_results($wpdb->prepare($exact_sql, $full_digits), ARRAY_A);
 
-        if (!$row) {
-            return null;
+            if (!empty($rows)) {
+                $row = $rows[0];
+
+                if (isset($row['name'])) {
+                    $row['name'] = trim($row['name']);
+                } else {
+                    $row['name'] = trim(trim($row['first_name'] ?? '') . ' ' . trim($row['last_name'] ?? ''));
+                }
+
+                if (!empty($row['email']) && str_ends_with($row['email'], '@' . self::GUEST_PLACEHOLDER_DOMAIN)) {
+                    $row['email'] = '';
+                }
+
+                return $row;
+            }
         }
 
-        if (isset($row['name'])) {
-            $row['name'] = trim($row['name']);
-        } else {
-            $row['name'] = trim(trim($row['first_name'] ?? '') . ' ' . trim($row['last_name'] ?? ''));
+        foreach ($digit_variations as $digits) {
+            if ($digits === '') {
+                continue;
+            }
+
+            $like = '%' . $digits;
+            $ambiguity_sql = "SELECT COUNT(DISTINCT {$sanitized_guest_phone}) FROM {$table_guests} WHERE {$sanitized_guest_phone} LIKE %s";
+            $distinct_matches = intval($wpdb->get_var($wpdb->prepare($ambiguity_sql, $like)));
+
+            if ($distinct_matches === 0) {
+                continue;
+            }
+
+            if ($distinct_matches > 1) {
+                return null;
+            }
+
+            $sql = "SELECT * FROM {$table_guests} WHERE {$sanitized_guest_phone} LIKE %s ORDER BY updated_at DESC, created_at DESC LIMIT 1";
+            $row = $wpdb->get_row($wpdb->prepare($sql, $like), ARRAY_A);
+
+            if (!$row) {
+                continue;
+            }
+
+            if (isset($row['name'])) {
+                $row['name'] = trim($row['name']);
+            } else {
+                $row['name'] = trim(trim($row['first_name'] ?? '') . ' ' . trim($row['last_name'] ?? ''));
+            }
+
+            if (!empty($row['email']) && str_ends_with($row['email'], '@' . self::GUEST_PLACEHOLDER_DOMAIN)) {
+                $row['email'] = '';
+            }
+
+            return $row;
         }
 
-        if (!empty($row['email']) && str_ends_with($row['email'], '@' . self::GUEST_PLACEHOLDER_DOMAIN)) {
-            $row['email'] = '';
-        }
-
-        return $row;
+        return null;
     }
 
     public static function findRecentCommunicationContext($guest_number_e164, $service_number_e164, $channel = 'sms') {
@@ -3202,6 +3274,8 @@ class GMS_Database {
 
         $thread_key = self::generateThreadKey($channel, $reservation_id, $guest_id, $service_number, $guest_number);
 
+        $matched = ($reservation_id > 0 || $guest_id > 0);
+
         return array(
             'reservation_id' => $reservation_id,
             'guest_id' => $guest_id,
@@ -3210,7 +3284,8 @@ class GMS_Database {
             'guest_number_e164' => $guest_number,
             'service_number_e164' => $service_number,
             'thread_key' => $thread_key,
-            'matched' => ($reservation_id > 0 || $guest_id > 0)
+            'matched' => $matched,
+            'status' => $matched ? 'matched' : 'unmatched',
         );
     }
 
