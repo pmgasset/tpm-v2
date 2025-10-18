@@ -3025,21 +3025,29 @@ class GMS_Database {
 
         $table_reservations = $wpdb->prefix . 'gms_reservations';
 
+        if (!empty($variations['normalized'])) {
+            $placeholders = implode(', ', array_fill(0, count($variations['normalized']), '%s'));
+            $sql = "SELECT * FROM {$table_reservations} WHERE guest_phone IN ({$placeholders}) ORDER BY updated_at DESC, checkin_date DESC";
+
+            $rows = $wpdb->get_results($wpdb->prepare($sql, $variations['normalized']), ARRAY_A);
+
+            if (!empty($rows)) {
+                return self::formatReservationRow($rows[0]);
+            }
+        }
+
+        if (empty($variations['digits'])) {
+            return null;
+        }
+
+        $sanitized_guest_phone = "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(guest_phone, '+', ''), '-', ''), ' ', ''), '(', ''), ')', ''), '.', '')";
+
         $conditions = array();
         $params = array();
 
-        foreach ($variations['normalized'] as $value) {
-            $conditions[] = 'guest_phone = %s';
-            $params[] = $value;
-        }
-
-        if (!empty($variations['digits'])) {
-            $sanitized_guest_phone = "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(guest_phone, '+', ''), '-', ''), ' ', ''), '(', ''), ')', ''), '.', '')";
-
-            foreach ($variations['digits'] as $digits) {
-                $conditions[] = $sanitized_guest_phone . ' LIKE %s';
-                $params[] = '%' . $digits . '%';
-            }
+        foreach ($variations['digits'] as $digits) {
+            $conditions[] = $sanitized_guest_phone . ' LIKE %s';
+            $params[] = '%' . $digits;
         }
 
         if (empty($conditions)) {
@@ -3049,6 +3057,17 @@ class GMS_Database {
         $where = implode(' OR ', array_map(static function ($condition) {
             return '(' . $condition . ')';
         }, $conditions));
+
+        $ambiguity_sql = "SELECT COUNT(DISTINCT {$sanitized_guest_phone}) FROM {$table_reservations} WHERE {$where}";
+        $distinct_matches = intval($wpdb->get_var($wpdb->prepare($ambiguity_sql, $params)));
+
+        if ($distinct_matches === 0) {
+            return null;
+        }
+
+        if ($distinct_matches > 1) {
+            return null;
+        }
 
         $sql = "SELECT * FROM {$table_reservations} WHERE {$where} ORDER BY updated_at DESC, checkin_date DESC LIMIT 1";
 
@@ -3068,21 +3087,41 @@ class GMS_Database {
 
         $table_guests = $wpdb->prefix . 'gms_guests';
 
+        if (!empty($variations['normalized'])) {
+            $placeholders = implode(', ', array_fill(0, count($variations['normalized']), '%s'));
+            $sql = "SELECT * FROM {$table_guests} WHERE phone IN ({$placeholders}) ORDER BY updated_at DESC, created_at DESC";
+
+            $rows = $wpdb->get_results($wpdb->prepare($sql, $variations['normalized']), ARRAY_A);
+
+            if (!empty($rows)) {
+                $row = $rows[0];
+
+                if (isset($row['name'])) {
+                    $row['name'] = trim($row['name']);
+                } else {
+                    $row['name'] = trim(trim($row['first_name'] ?? '') . ' ' . trim($row['last_name'] ?? ''));
+                }
+
+                if (!empty($row['email']) && str_ends_with($row['email'], '@' . self::GUEST_PLACEHOLDER_DOMAIN)) {
+                    $row['email'] = '';
+                }
+
+                return $row;
+            }
+        }
+
+        if (empty($variations['digits'])) {
+            return null;
+        }
+
+        $sanitized_guest_phone = "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(phone, '+', ''), '-', ''), ' ', ''), '(', ''), ')', ''), '.', '')";
+
         $conditions = array();
         $params = array();
 
-        foreach ($variations['normalized'] as $value) {
-            $conditions[] = 'phone = %s';
-            $params[] = $value;
-        }
-
-        if (!empty($variations['digits'])) {
-            $sanitized_guest_phone = "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(phone, '+', ''), '-', ''), ' ', ''), '(', ''), ')', ''), '.', '')";
-
-            foreach ($variations['digits'] as $digits) {
-                $conditions[] = $sanitized_guest_phone . ' LIKE %s';
-                $params[] = '%' . $digits . '%';
-            }
+        foreach ($variations['digits'] as $digits) {
+            $conditions[] = $sanitized_guest_phone . ' LIKE %s';
+            $params[] = '%' . $digits;
         }
 
         if (empty($conditions)) {
@@ -3092,6 +3131,17 @@ class GMS_Database {
         $where = implode(' OR ', array_map(static function ($condition) {
             return '(' . $condition . ')';
         }, $conditions));
+
+        $ambiguity_sql = "SELECT COUNT(DISTINCT {$sanitized_guest_phone}) FROM {$table_guests} WHERE {$where}";
+        $distinct_matches = intval($wpdb->get_var($wpdb->prepare($ambiguity_sql, $params)));
+
+        if ($distinct_matches === 0) {
+            return null;
+        }
+
+        if ($distinct_matches > 1) {
+            return null;
+        }
 
         $sql = "SELECT * FROM {$table_guests} WHERE {$where} ORDER BY updated_at DESC, created_at DESC LIMIT 1";
 
@@ -3202,6 +3252,8 @@ class GMS_Database {
 
         $thread_key = self::generateThreadKey($channel, $reservation_id, $guest_id, $service_number, $guest_number);
 
+        $matched = ($reservation_id > 0 || $guest_id > 0);
+
         return array(
             'reservation_id' => $reservation_id,
             'guest_id' => $guest_id,
@@ -3210,7 +3262,8 @@ class GMS_Database {
             'guest_number_e164' => $guest_number,
             'service_number_e164' => $service_number,
             'thread_key' => $thread_key,
-            'matched' => ($reservation_id > 0 || $guest_id > 0)
+            'matched' => $matched,
+            'status' => $matched ? 'matched' : 'unmatched',
         );
     }
 
