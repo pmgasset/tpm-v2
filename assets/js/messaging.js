@@ -15,7 +15,12 @@
             pollInterval = 20000;
         }
 
+        var channelOrder = Array.isArray(config.channels) && config.channels.length ? config.channels.slice() : ['sms', 'email', 'logs'];
+        var channelLabels = config.channelLabels || {};
+
+        var defaultChannel = channelOrder[0] || 'sms';
         var state = {
+            activeChannel: defaultChannel,
             threads: [],
             threadsPage: 1,
             threadsTotalPages: 1,
@@ -34,10 +39,108 @@
             templatesLoading: false,
             templateSearchTerm: '',
             templateChannel: '',
+            logsItems: [],
+            logsPage: 1,
+            logsTotalPages: 1,
+            selectedLogId: null,
+            selectedLog: null,
         };
+
+        var channelCaches = {};
+        channelOrder.forEach(function(channel) {
+            var key = (channel || '').toLowerCase();
+            if (!key) {
+                return;
+            }
+
+            if (key === 'logs') {
+                channelCaches[key] = {
+                    items: [],
+                    page: 1,
+                    totalPages: 1,
+                    selectedLogId: null,
+                    selectedLog: null,
+                    searchQuery: '',
+                    loaded: false,
+                    loading: false,
+                };
+            } else {
+                channelCaches[key] = {
+                    threads: [],
+                    page: 1,
+                    totalPages: 1,
+                    selectedThreadKey: null,
+                    selectedThread: null,
+                    messages: [],
+                    searchQuery: '',
+                    loaded: false,
+                    loadingThreads: false,
+                    loadingMessages: false,
+                    initialized: false,
+                };
+            }
+        });
+
+        if (!channelCaches[state.activeChannel]) {
+            state.activeChannel = 'sms';
+            if (!channelCaches[state.activeChannel]) {
+                channelCaches[state.activeChannel] = {
+                    threads: [],
+                    page: 1,
+                    totalPages: 1,
+                    selectedThreadKey: null,
+                    selectedThread: null,
+                    messages: [],
+                    searchQuery: '',
+                    loaded: false,
+                    loadingThreads: false,
+                    loadingMessages: false,
+                    initialized: false,
+                };
+            }
+        }
 
         var layout = document.createElement('div');
         layout.className = 'gms-messaging';
+
+        var channelNav = document.createElement('div');
+        channelNav.className = 'gms-messaging__channels';
+        var channelButtons = new Map();
+
+        function getChannelLabel(channel) {
+            var key = (channel || '').toLowerCase();
+            if (channelLabels[key]) {
+                return channelLabels[key];
+            }
+            if (channelLabels[channel]) {
+                return channelLabels[channel];
+            }
+            if (!channel) {
+                return '';
+            }
+            return channel.charAt(0).toUpperCase() + channel.slice(1);
+        }
+
+        channelOrder.forEach(function(channel) {
+            var key = (channel || '').toLowerCase();
+            if (!key) {
+                return;
+            }
+
+            var button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'button button-secondary gms-messaging__channel';
+            button.textContent = getChannelLabel(key);
+            button.dataset.channel = key;
+            button.addEventListener('click', function() {
+                switchChannel(key);
+            });
+
+            channelButtons.set(key, button);
+            channelNav.appendChild(button);
+        });
+
+        layout.appendChild(channelNav);
 
         var sidebar = document.createElement('aside');
         sidebar.className = 'gms-messaging__sidebar';
@@ -201,6 +304,199 @@
 
         var statusTimer = null;
 
+        function updateChannelButtons() {
+            channelButtons.forEach(function(button, key) {
+                if (!button) {
+                    return;
+                }
+                button.classList.toggle('is-active', key === state.activeChannel);
+            });
+        }
+
+        function updateSearchControls() {
+            if (!searchInput || !searchButton) {
+                return;
+            }
+
+            var placeholder = strings.searchPlaceholder || '';
+            var actionText = strings.searchAction || 'Search';
+
+            if (state.activeChannel === 'logs') {
+                placeholder = strings.logsSearchPlaceholder || placeholder;
+                actionText = strings.logsSearchAction || actionText;
+            }
+
+            searchInput.placeholder = placeholder;
+            searchInput.setAttribute('aria-label', placeholder);
+            searchButton.textContent = actionText;
+        }
+
+        function saveActiveChannelCache() {
+            var key = (state.activeChannel || '').toLowerCase();
+            var cache = channelCaches[key];
+            if (!cache) {
+                return;
+            }
+
+            if (key === 'logs') {
+                cache.items = state.logsItems.slice();
+                cache.page = state.logsPage;
+                cache.totalPages = state.logsTotalPages;
+                cache.selectedLogId = state.selectedLogId;
+                cache.selectedLog = state.selectedLog ? Object.assign({}, state.selectedLog) : null;
+                cache.searchQuery = state.searchQuery;
+                cache.loading = state.loadingThreads;
+                cache.loaded = true;
+            } else {
+                cache.threads = state.threads.slice();
+                cache.page = state.threadsPage;
+                cache.totalPages = state.threadsTotalPages;
+                cache.selectedThreadKey = state.selectedThreadKey;
+                cache.selectedThread = state.selectedThread ? Object.assign({}, state.selectedThread) : null;
+                cache.messages = state.messages.slice();
+                cache.searchQuery = state.searchQuery;
+                cache.loadingThreads = state.loadingThreads;
+                cache.loadingMessages = state.loadingMessages;
+                cache.initialized = state.initialized;
+                cache.loaded = true;
+            }
+        }
+
+        function applyChannelState(channel) {
+            var key = (channel || '').toLowerCase();
+            var cache = channelCaches[key];
+            if (!cache) {
+                return;
+            }
+
+            state.activeChannel = key;
+
+            if (key === 'logs') {
+                state.logsItems = (cache.items || []).slice();
+                state.logsPage = cache.page || 1;
+                state.logsTotalPages = cache.totalPages || 1;
+                state.selectedLogId = cache.selectedLogId || null;
+                state.selectedLog = cache.selectedLog ? Object.assign({}, cache.selectedLog) : null;
+                state.threads = [];
+                state.threadsPage = 1;
+                state.threadsTotalPages = 1;
+                state.selectedThreadKey = null;
+                state.selectedThread = null;
+                state.messages = [];
+                state.loadingMessages = false;
+                state.loadingThreads = !!cache.loading;
+                state.initialized = true;
+                state.searchQuery = cache.searchQuery || '';
+                state.templates = [];
+                state.templatesKey = '';
+                state.templatesLoading = false;
+                state.templateChannel = '';
+                state.templateSearchTerm = '';
+                if (state.pendingMessages && typeof state.pendingMessages.clear === 'function') {
+                    state.pendingMessages.clear();
+                }
+            } else {
+                state.threads = (cache.threads || []).slice();
+                state.threadsPage = cache.page || 1;
+                state.threadsTotalPages = cache.totalPages || 1;
+                state.selectedThreadKey = cache.selectedThreadKey || null;
+                state.selectedThread = cache.selectedThread ? Object.assign({}, cache.selectedThread) : null;
+                state.messages = (cache.messages || []).slice();
+                state.logsItems = [];
+                state.logsPage = 1;
+                state.logsTotalPages = 1;
+                state.selectedLogId = null;
+                state.selectedLog = null;
+                state.loadingMessages = !!cache.loadingMessages;
+                state.loadingThreads = !!cache.loadingThreads;
+                state.initialized = !!cache.initialized;
+                state.searchQuery = cache.searchQuery || '';
+            }
+
+            if (searchInput) {
+                searchInput.value = state.searchQuery;
+            }
+
+            updateSearchControls();
+            updateChannelButtons();
+        }
+
+        function isSmsComposerActive() {
+            if (state.activeChannel !== 'sms') {
+                return false;
+            }
+
+            if (!state.selectedThread) {
+                return false;
+            }
+
+            var threadChannel = (state.selectedThread.channel || 'sms').toLowerCase();
+            return threadChannel === 'sms';
+        }
+
+        function updateComposerVisibility() {
+            var smsActive = isSmsComposerActive();
+
+            if (composerForm) {
+                composerForm.hidden = state.activeChannel === 'logs';
+                composerForm.classList.toggle('is-disabled', !smsActive);
+            }
+
+            if (textarea) {
+                textarea.disabled = !smsActive;
+                if (!smsActive) {
+                    textarea.value = '';
+                }
+                textarea.placeholder = smsActive ? (strings.sendPlaceholder || '') : (strings.sendDisabled || strings.sendPlaceholder || '');
+            }
+
+            if (sendButton) {
+                sendButton.disabled = true;
+                sendButton.classList.toggle('is-disabled', !smsActive);
+            }
+
+            if (templateRow) {
+                templateRow.style.display = smsActive ? '' : 'none';
+            }
+
+            if (templateSearchInput) {
+                templateSearchInput.disabled = !smsActive || state.templatesLoading;
+            }
+
+            if (templateSelect) {
+                templateSelect.disabled = !smsActive || state.templatesLoading || !state.templates.length;
+            }
+        }
+
+        function switchChannel(channel) {
+            var key = (channel || '').toLowerCase();
+            if (!key || key === state.activeChannel) {
+                return;
+            }
+
+            saveActiveChannelCache();
+            applyChannelState(key);
+            updateComposerVisibility();
+
+            if (key === 'logs') {
+                if (!channelCaches[key].loaded) {
+                    fetchLogs(false);
+                } else {
+                    renderThreads();
+                    renderThreadDetails();
+                    renderMessages();
+                }
+            } else {
+                if (!channelCaches[key].loaded) {
+                    fetchThreads(false);
+                } else {
+                    renderThreads();
+                    renderThreadDetails();
+                    renderMessages();
+                }
+            }
+        }
+
         function showStatus(message, isError) {
             if (!statusText) {
                 return;
@@ -222,6 +518,15 @@
 
         function renderTemplateOptions() {
             if (!templateSelect) {
+                return;
+            }
+
+            if (!isSmsComposerActive()) {
+                templateRow.classList.remove('is-loading');
+                templateSelect.disabled = true;
+                templateSelect.value = '';
+                templateSelect.selectedIndex = 0;
+                templatePlaceholder.textContent = strings.templateUnavailable || strings.templatePlaceholder || '';
                 return;
             }
 
@@ -284,6 +589,11 @@
             }
 
             state.templateSearchTerm = templateSearchInput.value.trim();
+
+            if (!isSmsComposerActive()) {
+                renderTemplateOptions();
+                return;
+            }
 
             if (!state.selectedThread) {
                 renderTemplateOptions();
@@ -350,6 +660,14 @@
             var normalized = (channel || 'sms').toLowerCase();
             var resetSearch = options && options.resetSearch;
 
+            if (!isSmsComposerActive()) {
+                state.templates = [];
+                state.templatesKey = '';
+                state.templatesLoading = false;
+                renderTemplateOptions();
+                return;
+            }
+
             if (resetSearch) {
                 state.templateSearchTerm = '';
             }
@@ -378,6 +696,8 @@
             }
         }
 
+        applyChannelState(state.activeChannel);
+        updateComposerVisibility();
         renderTemplateOptions();
 
         function pad(number) {
@@ -476,6 +796,77 @@
         function renderThreads() {
             threadsList.innerHTML = '';
 
+            if (state.activeChannel === 'logs') {
+                if (state.loadingThreads) {
+                    var logLoading = document.createElement('div');
+                    logLoading.className = 'gms-messaging__empty';
+                    logLoading.textContent = strings.loading || 'Loading…';
+                    threadsList.appendChild(logLoading);
+                } else if (!state.logsItems.length) {
+                    var logEmpty = document.createElement('div');
+                    logEmpty.className = 'gms-messaging__empty';
+                    logEmpty.textContent = strings.logsEmpty || strings.noConversations || '';
+                    threadsList.appendChild(logEmpty);
+                } else {
+                    state.logsItems.forEach(function(entry) {
+                        if (!entry) {
+                            return;
+                        }
+
+                        var logButton = document.createElement('button');
+                        logButton.type = 'button';
+                        logButton.className = 'gms-thread';
+                        logButton.dataset.logId = String(entry.id);
+                        logButton.setAttribute('role', 'listitem');
+
+                        if (Number(entry.id) === Number(state.selectedLogId)) {
+                            logButton.classList.add('is-active');
+                        }
+
+                        var logTitle = document.createElement('div');
+                        logTitle.className = 'gms-thread__title';
+                        logTitle.textContent = entry.subject || entry.message || getChannelLabel(entry.channel || 'logs');
+                        logButton.appendChild(logTitle);
+
+                        var subtitleParts = [];
+                        if (entry.channel) {
+                            subtitleParts.push(getChannelLabel(entry.channel));
+                        }
+                        if (entry.property_name) {
+                            subtitleParts.push(entry.property_name);
+                        }
+
+                        if (subtitleParts.length) {
+                            var logSubtitle = document.createElement('div');
+                            logSubtitle.className = 'gms-thread__subtitle';
+                            logSubtitle.textContent = subtitleParts.join(' • ');
+                            logButton.appendChild(logSubtitle);
+                        }
+
+                        if (entry.sent_at) {
+                            var logStamp = document.createElement('time');
+                            logStamp.className = 'gms-thread__timestamp';
+                            logStamp.dateTime = entry.sent_at;
+                            logStamp.textContent = formatTimestamp(entry.sent_at);
+                            logButton.appendChild(logStamp);
+                        }
+
+                        logButton.addEventListener('click', function() {
+                            selectLog(entry.id);
+                        });
+
+                        threadsList.appendChild(logButton);
+                    });
+                }
+
+                var logPage = state.logsPage;
+                var logTotalPages = state.logsTotalPages;
+                paginationStatus.textContent = strings.pagination ? strings.pagination.replace('%1$d', logPage).replace('%2$d', logTotalPages) : logPage + ' / ' + logTotalPages;
+                prevButton.disabled = logPage <= 1 || state.loadingThreads;
+                nextButton.disabled = logPage >= logTotalPages || state.loadingThreads;
+                return;
+            }
+
             if (state.loadingThreads) {
                 var loading = document.createElement('div');
                 loading.className = 'gms-messaging__empty';
@@ -489,6 +880,9 @@
                 empty.className = 'gms-messaging__empty';
                 empty.textContent = strings.noConversations || '';
                 threadsList.appendChild(empty);
+                paginationStatus.textContent = strings.pagination ? strings.pagination.replace('%1$d', state.threadsPage).replace('%2$d', state.threadsTotalPages) : state.threadsPage + ' / ' + state.threadsTotalPages;
+                prevButton.disabled = state.threadsPage <= 1 || state.loadingThreads;
+                nextButton.disabled = state.threadsPage >= state.threadsTotalPages || state.loadingThreads;
                 return;
             }
 
@@ -527,11 +921,11 @@
                     stamp.className = 'gms-thread__timestamp';
                     stamp.dateTime = thread.last_message_at;
                     stamp.textContent = formatTimestamp(thread.last_message_at);
-                    item.appendChild(stamp);
-                }
+                item.appendChild(stamp);
+            }
 
-                if (thread.unread_count && thread.unread_count > 0) {
-                    var badge = document.createElement('span');
+            if (thread.unread_count && thread.unread_count > 0) {
+                var badge = document.createElement('span');
                     badge.className = 'gms-thread__badge';
                     badge.textContent = String(thread.unread_count);
                     item.appendChild(badge);
@@ -551,19 +945,107 @@
             nextButton.disabled = state.threadsPage >= state.threadsTotalPages || state.loadingThreads;
         }
 
+        function selectLog(logId) {
+            if (!state.logsItems || !state.logsItems.length) {
+                return;
+            }
+
+            var numericId = parseInt(logId, 10);
+            if (!Number.isFinite(numericId)) {
+                numericId = Number(logId);
+            }
+
+            var chosen = null;
+            state.logsItems.forEach(function(entry) {
+                if (entry && Number(entry.id) === Number(numericId)) {
+                    chosen = entry;
+                }
+            });
+
+            if (!chosen) {
+                return;
+            }
+
+            state.selectedLogId = Number(chosen.id);
+            state.selectedLog = Object.assign({}, chosen);
+            saveActiveChannelCache();
+            renderThreads();
+            renderThreadDetails();
+            renderMessages();
+        }
+
         function renderThreadDetails() {
+            if (state.activeChannel === 'logs') {
+                var logEntry = state.selectedLog;
+                if (!logEntry) {
+                    threadTitle.textContent = strings.logsHeading || getChannelLabel('logs');
+                    threadSubtitle.textContent = '';
+                    threadMeta.innerHTML = '';
+                    markReadButton.disabled = true;
+                    updateComposerVisibility();
+                    return;
+                }
+
+                threadTitle.textContent = logEntry.subject || getChannelLabel(logEntry.channel || 'logs');
+                threadSubtitle.textContent = logEntry.property_name || '';
+
+                var logMetaItems = [];
+                if (logEntry.channel) {
+                    logMetaItems.push({ label: strings.logChannelLabel || 'Channel', value: getChannelLabel(logEntry.channel) });
+                }
+                if (logEntry.delivery_status) {
+                    logMetaItems.push({ label: strings.logStatusLabel || 'Status', value: logEntry.delivery_status });
+                }
+                if (logEntry.guest_email) {
+                    logMetaItems.push({ label: strings.guestEmail || 'Email', value: logEntry.guest_email });
+                }
+                if (logEntry.guest_phone) {
+                    logMetaItems.push({ label: strings.guestPhone || 'Phone', value: logEntry.guest_phone });
+                }
+                if (logEntry.booking_reference) {
+                    logMetaItems.push({ label: strings.bookingReference || 'Reference', value: logEntry.booking_reference });
+                }
+
+                threadMeta.innerHTML = '';
+                if (logMetaItems.length) {
+                    var logList = document.createElement('ul');
+                    logList.className = 'gms-messaging__meta-list';
+                    logMetaItems.forEach(function(meta) {
+                        var logItem = document.createElement('li');
+                        logItem.className = 'gms-messaging__meta-item';
+
+                        var logLabel = document.createElement('span');
+                        logLabel.className = 'gms-messaging__meta-label';
+                        logLabel.textContent = meta.label + ':';
+
+                        var logValue = document.createElement('span');
+                        logValue.className = 'gms-messaging__meta-value';
+                        logValue.textContent = meta.value;
+
+                        logItem.appendChild(logLabel);
+                        logItem.appendChild(logValue);
+                        logList.appendChild(logItem);
+                    });
+                    threadMeta.appendChild(logList);
+                }
+
+                markReadButton.disabled = true;
+                updateComposerVisibility();
+                return;
+            }
+
             var thread = state.selectedThread;
             if (!thread) {
                 threadTitle.textContent = strings.conversationHeading || '';
                 threadSubtitle.textContent = '';
                 threadMeta.innerHTML = '';
                 markReadButton.disabled = true;
-                sendButton.disabled = true;
                 state.templateChannel = '';
                 state.templateSearchTerm = '';
                 state.templates = [];
                 state.templatesKey = '';
                 state.templatesLoading = false;
+                updateComposerVisibility();
                 renderTemplateOptions();
                 return;
             }
@@ -610,12 +1092,76 @@
             }
 
             markReadButton.disabled = false;
-            sendButton.disabled = !textarea.value.trim().length;
+            updateComposerVisibility();
+            sendButton.disabled = !isSmsComposerActive() || !textarea.value.trim().length;
         }
 
         function renderMessages(options) {
             var maintainScroll = options && options.maintainScroll ? options.maintainScroll : false;
             var shouldStickToBottom = maintainScroll || isNearBottom(messagesList);
+
+            if (state.activeChannel === 'logs') {
+                messagesList.innerHTML = '';
+
+                var logEntry = state.selectedLog;
+                if (!logEntry) {
+                    var logPrompt = document.createElement('div');
+                    logPrompt.className = 'gms-messaging__messages-empty';
+                    logPrompt.textContent = strings.logsHeading || strings.conversationHeading || '';
+                    messagesList.appendChild(logPrompt);
+                    return;
+                }
+
+                var logArticle = document.createElement('article');
+                logArticle.className = 'gms-log-entry-detail';
+
+                var logMeta = document.createElement('header');
+                logMeta.className = 'gms-log-entry-detail__meta';
+
+                var logChannel = document.createElement('span');
+                logChannel.className = 'gms-log-entry-detail__channel';
+                logChannel.textContent = getChannelLabel(logEntry.channel || 'logs');
+                logMeta.appendChild(logChannel);
+
+                if (logEntry.sent_at) {
+                    var logTime = document.createElement('time');
+                    logTime.className = 'gms-log-entry-detail__time';
+                    logTime.dateTime = logEntry.sent_at;
+                    logTime.textContent = formatTimestamp(logEntry.sent_at);
+                    logMeta.appendChild(logTime);
+                }
+
+                if (logEntry.delivery_status) {
+                    var logStatus = document.createElement('span');
+                    logStatus.className = 'gms-log-entry-detail__status';
+                    logStatus.textContent = logEntry.delivery_status;
+                    logMeta.appendChild(logStatus);
+                }
+
+                logArticle.appendChild(logMeta);
+
+                if (logEntry.message) {
+                    var logMessage = document.createElement('p');
+                    logMessage.className = 'gms-log-entry-detail__message';
+                    logMessage.textContent = logEntry.message;
+                    logArticle.appendChild(logMessage);
+                }
+
+                if (logEntry.response_data && typeof logEntry.response_data === 'object') {
+                    var responsePre = document.createElement('pre');
+                    responsePre.className = 'gms-log-entry-detail__response';
+                    try {
+                        responsePre.textContent = JSON.stringify(logEntry.response_data, null, 2);
+                    } catch (err) {
+                        responsePre.textContent = String(logEntry.response_data);
+                    }
+                    logArticle.appendChild(responsePre);
+                }
+
+                messagesList.appendChild(logArticle);
+                return;
+            }
+
             var messages = getMessagesWithPending();
 
             messagesList.innerHTML = '';
@@ -678,6 +1224,11 @@
             if (!updatedThread) {
                 return;
             }
+
+            if (state.activeChannel === 'logs') {
+                return;
+            }
+
             var found = false;
             state.threads = state.threads.map(function(thread) {
                 if (thread.thread_key === updatedThread.thread_key) {
@@ -694,9 +1245,16 @@
             if (state.selectedThreadKey === updatedThread.thread_key) {
                 state.selectedThread = Object.assign({}, state.selectedThread || {}, updatedThread);
             }
+
+            saveActiveChannelCache();
         }
 
         function fetchThreads(preservePage) {
+            if (state.activeChannel === 'logs') {
+                fetchLogs(preservePage);
+                return;
+            }
+
             if (state.loadingThreads) {
                 return;
             }
@@ -709,7 +1267,8 @@
             request('gms_list_message_threads', {
                 page: page,
                 per_page: threadsPerPage,
-                search: state.searchQuery
+                search: state.searchQuery,
+                channel: state.activeChannel
             }).then(function(data) {
                 state.loadingThreads = false;
                 state.threads = Array.isArray(data.items) ? data.items : [];
@@ -721,6 +1280,7 @@
                 } else {
                     renderThreads();
                 }
+                saveActiveChannelCache();
             }).catch(function(error) {
                 state.loadingThreads = false;
                 showStatus(error.message || strings.loadError, true);
@@ -728,8 +1288,68 @@
             });
         }
 
+        function fetchLogs(preservePage) {
+            if (state.activeChannel !== 'logs') {
+                return;
+            }
+
+            if (state.loadingThreads) {
+                return;
+            }
+
+            state.loadingThreads = true;
+            renderThreads();
+
+            var page = preservePage ? state.logsPage : 1;
+
+            request('gms_list_operational_logs', {
+                page: page,
+                per_page: threadsPerPage,
+                search: state.searchQuery
+            }).then(function(data) {
+                state.loadingThreads = false;
+                state.logsItems = Array.isArray(data.items) ? data.items : [];
+                state.logsPage = data.page || 1;
+                state.logsTotalPages = data.total_pages || 1;
+
+                if (state.logsItems.length) {
+                    var match = null;
+                    if (state.selectedLogId) {
+                        state.logsItems.forEach(function(entry) {
+                            if (entry && Number(entry.id) === Number(state.selectedLogId)) {
+                                match = entry;
+                            }
+                        });
+                    }
+
+                    if (!match) {
+                        match = state.logsItems[0];
+                    }
+
+                    state.selectedLogId = match ? Number(match.id) : null;
+                    state.selectedLog = match ? Object.assign({}, match) : null;
+                } else {
+                    state.selectedLogId = null;
+                    state.selectedLog = null;
+                }
+
+                renderThreads();
+                renderThreadDetails();
+                renderMessages();
+                saveActiveChannelCache();
+            }).catch(function(error) {
+                state.loadingThreads = false;
+                showStatus(error.message || strings.logsLoadError || strings.loadError, true);
+                renderThreads();
+            });
+        }
+
         function loadThread(threadKey) {
             if (!threadKey) {
+                return;
+            }
+
+            if (state.activeChannel === 'logs') {
                 return;
             }
 
@@ -773,6 +1393,7 @@
                 renderMessages({ maintainScroll: true });
                 renderThreads();
                 markThreadRead(true);
+                saveActiveChannelCache();
             }).catch(function(error) {
                 state.loadingMessages = false;
                 showStatus(error.message || strings.messageLoadError, true);
@@ -782,6 +1403,10 @@
 
         function refreshThreadMessages() {
             if (!state.selectedThreadKey) {
+                return;
+            }
+
+            if (state.activeChannel === 'logs') {
                 return;
             }
 
@@ -841,6 +1466,10 @@
                 return;
             }
 
+            if (!isSmsComposerActive()) {
+                return;
+            }
+
             var trimmed = text.trim();
             if (!trimmed) {
                 return;
@@ -897,6 +1526,7 @@
                 renderMessages({ maintainScroll: true });
                 textarea.value = '';
                 sendButton.disabled = true;
+                saveActiveChannelCache();
             }).catch(function(error) {
                 state.sending = false;
                 state.pendingMessages.delete(temporaryId);
@@ -906,17 +1536,32 @@
                 renderMessages({ maintainScroll: true });
                 showStatus(error.message || strings.sendFailed, true);
                 sendButton.disabled = false;
+                saveActiveChannelCache();
             });
         }
 
         searchForm.addEventListener('submit', function(event) {
             event.preventDefault();
             state.searchQuery = searchInput.value.trim();
-            state.threadsPage = 1;
-            fetchThreads(false);
+            if (state.activeChannel === 'logs') {
+                state.logsPage = 1;
+                fetchLogs(false);
+            } else {
+                state.threadsPage = 1;
+                fetchThreads(false);
+            }
         });
 
         prevButton.addEventListener('click', function() {
+            if (state.activeChannel === 'logs') {
+                if (state.logsPage <= 1) {
+                    return;
+                }
+                state.logsPage -= 1;
+                fetchLogs(true);
+                return;
+            }
+
             if (state.threadsPage <= 1) {
                 return;
             }
@@ -925,6 +1570,15 @@
         });
 
         nextButton.addEventListener('click', function() {
+            if (state.activeChannel === 'logs') {
+                if (state.logsPage >= state.logsTotalPages) {
+                    return;
+                }
+                state.logsPage += 1;
+                fetchLogs(true);
+                return;
+            }
+
             if (state.threadsPage >= state.threadsTotalPages) {
                 return;
             }
@@ -933,12 +1587,15 @@
         });
 
         markReadButton.addEventListener('click', function() {
+            if (state.activeChannel === 'logs') {
+                return;
+            }
             markThreadRead(false);
         });
 
         composerForm.addEventListener('submit', function(event) {
             event.preventDefault();
-            if (!state.sending) {
+            if (!state.sending && isSmsComposerActive()) {
                 sendMessage(textarea.value);
             }
         });
@@ -986,19 +1643,27 @@
         });
 
         textarea.addEventListener('input', function() {
-            if (state.selectedThread && textarea.value.trim().length) {
+            if (isSmsComposerActive() && textarea.value.trim().length) {
                 sendButton.disabled = false;
             } else {
                 sendButton.disabled = true;
             }
         });
 
-        fetchThreads(false);
+        if (state.activeChannel === 'logs') {
+            fetchLogs(false);
+        } else {
+            fetchThreads(false);
+        }
 
         if (pollInterval > 0) {
             state.pollTimer = window.setInterval(function() {
-                fetchThreads(true);
-                refreshThreadMessages();
+                if (state.activeChannel === 'logs') {
+                    fetchLogs(true);
+                } else {
+                    fetchThreads(true);
+                    refreshThreadMessages();
+                }
             }, pollInterval);
         }
 
