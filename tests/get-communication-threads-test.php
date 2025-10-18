@@ -109,26 +109,102 @@ class WPDB_Get_Communication_Threads_Stub {
 
     public function get_var($query) {
         if (strpos($query, 'gms_communications') !== false) {
-            return $this->calculateThreadCount();
+            if (preg_match('/FROM\s*\(\s*SELECT/i', $query)) {
+                return $this->calculateThreadCount($query);
+            }
+
+            return $this->calculateLogCount($query);
         }
 
         return null;
     }
 
     public function get_results($query, $output_type = ARRAY_A) {
-        if (strpos($query, 'gms_communications') !== false) {
+        if (strpos($query, 'gms_communications') === false) {
+            return array();
+        }
+
+        if (preg_match('/FROM\s*\(\s*SELECT/i', $query)) {
             return $this->calculateThreads($query);
         }
 
-        return array();
+        return $this->calculateLogs($query);
     }
 
-    private function calculateThreadCount() {
+    private function extractChannelFilter($query, $defaultChannels = array(), $defaultNegate = false) {
+        $channels = array();
+        $negate = $defaultNegate;
+
+        if (preg_match('/channel\s+(NOT\s+)?IN\s*\(([^)]+)\)/i', $query, $matches)) {
+            $negate = trim($matches[1] ?? '') !== '';
+            $raw = explode(',', $matches[2]);
+            foreach ($raw as $value) {
+                $normalized = sanitize_key(trim($value, "' \""));
+                if ($normalized !== '') {
+                    $channels[$normalized] = $normalized;
+                }
+            }
+        } else {
+            foreach ((array) $defaultChannels as $value) {
+                $normalized = sanitize_key($value);
+                if ($normalized !== '') {
+                    $channels[$normalized] = $normalized;
+                }
+            }
+        }
+
+        return array(array_values($channels), $negate);
+    }
+
+    private function filterRowsByChannels($rows, $channels, $negate) {
+        if (empty($channels)) {
+            return $rows;
+        }
+
+        $allowed = array_flip($channels);
+        $filtered = array();
+
+        foreach ($rows as $row) {
+            $channel = sanitize_key($row['channel'] ?? '');
+            $in = isset($allowed[$channel]);
+
+            if (($negate && !$in) || (!$negate && $in)) {
+                $filtered[] = $row;
+            }
+        }
+
+        return $filtered;
+    }
+
+    private function parseLimitOffset($query) {
+        $limit = 0;
+        $offset = 0;
+
+        if (preg_match('/LIMIT\s+(\d+)/i', $query, $limit_match)) {
+            $limit = (int) $limit_match[1];
+        }
+
+        if (preg_match('/OFFSET\s+(\d+)/i', $query, $offset_match)) {
+            $offset = (int) $offset_match[1];
+        }
+
+        return array($limit, $offset);
+    }
+
+    private function calculateThreadCount($query) {
+        list($channels, $negate) = $this->extractChannelFilter($query, GMS_Database::getConversationalChannels(), false);
+
         $threads = array();
 
         foreach ($this->communications as $row) {
             $thread_key = $row['thread_key'] ?? '';
             if ($thread_key === '') {
+                continue;
+            }
+
+            $channel = sanitize_key($row['channel'] ?? '');
+            $in_channels = empty($channels) || in_array($channel, $channels, true);
+            if (($negate && $in_channels) || (!$negate && !$in_channels)) {
                 continue;
             }
 
@@ -139,11 +215,19 @@ class WPDB_Get_Communication_Threads_Stub {
     }
 
     private function calculateThreads($query) {
+        list($channels, $negate) = $this->extractChannelFilter($query, GMS_Database::getConversationalChannels(), false);
+
         $threads = array();
 
         foreach ($this->communications as $row) {
             $thread_key = $row['thread_key'] ?? '';
             if ($thread_key === '') {
+                continue;
+            }
+
+            $channel = sanitize_key($row['channel'] ?? '');
+            $in_channels = empty($channels) || in_array($channel, $channels, true);
+            if (($negate && $in_channels) || (!$negate && !$in_channels)) {
                 continue;
             }
 
@@ -251,9 +335,8 @@ class WPDB_Get_Communication_Threads_Stub {
             return $dateB <=> $dateA;
         });
 
-        if (preg_match('/LIMIT\s+(\d+)\s+OFFSET\s+(\d+)/i', $query, $matches)) {
-            $limit = (int) $matches[1];
-            $offset = (int) $matches[2];
+        list($limit, $offset) = $this->parseLimitOffset($query);
+        if ($limit > 0) {
             $results = array_slice($results, $offset, $limit);
         }
 
@@ -262,6 +345,101 @@ class WPDB_Get_Communication_Threads_Stub {
         }
 
         return $results;
+    }
+
+    private function calculateLogCount($query) {
+        list($channels, $negate) = $this->extractChannelFilter($query, GMS_Database::getConversationalChannels(), true);
+
+        $count = 0;
+        $conversational = array_flip(GMS_Database::getConversationalChannels());
+        foreach ($this->communications as $row) {
+            $channel = sanitize_key($row['channel'] ?? '');
+            if ($channel === '') {
+                continue;
+            }
+
+            if (isset($conversational[$channel])) {
+                continue;
+            }
+
+            $in_channels = empty($channels) || in_array($channel, $channels, true);
+            if (($negate && $in_channels) || (!$negate && !$in_channels)) {
+                continue;
+            }
+
+            $count++;
+        }
+
+        return $count;
+    }
+
+    private function calculateLogs($query) {
+        list($channels, $negate) = $this->extractChannelFilter($query, GMS_Database::getConversationalChannels(), true);
+
+        $rows = array();
+        $conversational = array_flip(GMS_Database::getConversationalChannels());
+
+        foreach ($this->communications as $row) {
+            $channel = sanitize_key($row['channel'] ?? '');
+            if ($channel === '') {
+                continue;
+            }
+
+            if (isset($conversational[$channel])) {
+                continue;
+            }
+
+            $in_channels = empty($channels) || in_array($channel, $channels, true);
+            if (($negate && $in_channels) || (!$negate && !$in_channels)) {
+                continue;
+            }
+
+            $rows[] = $this->buildLogRow($row);
+        }
+
+        usort($rows, static function ($a, $b) {
+            $dateA = $a['sent_at'] ?? '';
+            $dateB = $b['sent_at'] ?? '';
+            if ($dateA === $dateB) {
+                return ($b['id'] ?? 0) <=> ($a['id'] ?? 0);
+            }
+
+            return $dateB <=> $dateA;
+        });
+
+        list($limit, $offset) = $this->parseLimitOffset($query);
+        if ($limit > 0) {
+            $rows = array_slice($rows, $offset, $limit);
+        }
+
+        return $rows;
+    }
+
+    private function buildLogRow($row) {
+        $reservation = $this->findReservation($row['reservation_id'] ?? 0);
+        $guest = $this->findGuest($row['guest_id'] ?? 0);
+
+        if ($reservation) {
+            $row['property_name'] = $reservation['property_name'] ?? '';
+            $row['reservation_guest_name'] = $reservation['guest_name'] ?? '';
+            $row['reservation_guest_email'] = $reservation['guest_email'] ?? '';
+            $row['reservation_guest_phone'] = $reservation['guest_phone'] ?? '';
+            $row['booking_reference'] = $reservation['booking_reference'] ?? '';
+        }
+
+        if ($guest) {
+            $row['guest_name'] = isset($row['guest_name']) && $row['guest_name'] !== ''
+                ? $row['guest_name']
+                : trim(trim(($guest['first_name'] ?? '') . ' ' . ($guest['last_name'] ?? '')));
+            $row['guest_email'] = isset($row['guest_email']) && $row['guest_email'] !== ''
+                ? $row['guest_email']
+                : ($guest['email'] ?? '');
+            $row['guest_phone'] = isset($row['guest_phone']) && $row['guest_phone'] !== ''
+                ? $row['guest_phone']
+                : ($guest['phone'] ?? '');
+        }
+
+        return $row;
     }
 
     private static function isUnread($message) {
@@ -358,6 +536,38 @@ $wpdb->communications = array(
         'sent_at' => '2024-06-02 08:00:00',
         'read_at' => null,
     ),
+    array(
+        'id' => 12,
+        'thread_key' => 'email-thread',
+        'reservation_id' => 501,
+        'guest_id' => 902,
+        'channel' => 'email',
+        'direction' => 'outbound',
+        'message' => 'Email delivered',
+        'sent_at' => '2024-06-03 09:00:00',
+    ),
+    array(
+        'id' => 20,
+        'thread_key' => '',
+        'reservation_id' => 501,
+        'guest_id' => 902,
+        'channel' => 'portal',
+        'direction' => 'outbound',
+        'message' => 'Portal update logged',
+        'delivery_status' => 'completed',
+        'sent_at' => '2024-06-04 10:00:00',
+    ),
+    array(
+        'id' => 21,
+        'thread_key' => 'portal-thread',
+        'reservation_id' => 501,
+        'guest_id' => 902,
+        'channel' => 'portal',
+        'direction' => 'outbound',
+        'message' => 'Door code synced',
+        'delivery_status' => 'completed',
+        'sent_at' => '2024-06-05 14:30:00',
+    ),
 );
 
 $GLOBALS['wpdb'] = $wpdb;
@@ -365,36 +575,88 @@ $GLOBALS['wpdb'] = $wpdb;
 require_once __DIR__ . '/../includes/class-database.php';
 
 $result = GMS_Database::getCommunicationThreads();
-if (!is_array($result) || ($result['total'] ?? 0) !== 1) {
+if (!is_array($result) || ($result['total'] ?? 0) !== 2) {
     throw new RuntimeException('Unexpected total: ' . json_encode($result));
 }
 
-$item = $result['items'][0] ?? null;
-if (!is_array($item)) {
-    throw new RuntimeException('Missing thread item: ' . json_encode($result));
+$threads = array();
+foreach ($result['items'] as $thread) {
+    if (!is_array($thread)) {
+        continue;
+    }
+    $threads[$thread['thread_key'] ?? ''] = $thread;
 }
 
-if ((int) ($item['guest_id'] ?? 0) !== 902) {
-    throw new RuntimeException('Guest ID mismatch: ' . json_encode($item));
+$smsThread = $threads['thread-1'] ?? null;
+if (!is_array($smsThread)) {
+    throw new RuntimeException('SMS thread missing: ' . json_encode($threads));
 }
 
-if (($item['guest_name'] ?? '') !== 'Canonical Guest') {
-    throw new RuntimeException('Guest name mismatch: ' . json_encode($item));
+if ((int) ($smsThread['guest_id'] ?? 0) !== 902) {
+    throw new RuntimeException('Guest ID mismatch: ' . json_encode($smsThread));
 }
 
-if (($item['guest_email'] ?? '') !== 'canonical@example.com') {
-    throw new RuntimeException('Guest email mismatch: ' . json_encode($item));
+if (($smsThread['guest_name'] ?? '') !== 'Canonical Guest') {
+    throw new RuntimeException('Guest name mismatch: ' . json_encode($smsThread));
 }
 
-if (($item['guest_phone'] ?? '') !== '+15557654321') {
-    throw new RuntimeException('Guest phone mismatch: ' . json_encode($item));
+if (($smsThread['guest_email'] ?? '') !== 'canonical@example.com') {
+    throw new RuntimeException('Guest email mismatch: ' . json_encode($smsThread));
 }
 
-if (($item['reservation_guest_name'] ?? '') !== 'Legacy Guest') {
-    throw new RuntimeException('Reservation guest mismatch: ' . json_encode($item));
+if (($smsThread['guest_phone'] ?? '') !== '+15557654321') {
+    throw new RuntimeException('Guest phone mismatch: ' . json_encode($smsThread));
 }
 
-if ((int) ($item['unread_count'] ?? 0) !== 1) {
-    throw new RuntimeException('Unread count mismatch: ' . json_encode($item));
+if (($smsThread['reservation_guest_name'] ?? '') !== 'Legacy Guest') {
+    throw new RuntimeException('Reservation guest mismatch: ' . json_encode($smsThread));
+}
+
+if ((int) ($smsThread['unread_count'] ?? 0) !== 1) {
+    throw new RuntimeException('Unread count mismatch: ' . json_encode($smsThread));
+}
+
+$emailThread = $threads['email-thread'] ?? null;
+if (!is_array($emailThread)) {
+    throw new RuntimeException('Email thread missing: ' . json_encode($threads));
+}
+
+if (($emailThread['channel'] ?? '') !== 'email') {
+    throw new RuntimeException('Email channel mismatch: ' . json_encode($emailThread));
+}
+
+$smsOnly = GMS_Database::getCommunicationThreads(array('channels' => array('sms')));
+if (($smsOnly['total'] ?? 0) !== 1 || (($smsOnly['items'][0]['thread_key'] ?? '') !== 'thread-1')) {
+    throw new RuntimeException('SMS-only filter failed: ' . json_encode($smsOnly));
+}
+
+$emailOnly = GMS_Database::getCommunicationThreads(array('channels' => array('email')));
+if (($emailOnly['total'] ?? 0) !== 1 || (($emailOnly['items'][0]['thread_key'] ?? '') !== 'email-thread')) {
+    throw new RuntimeException('Email-only filter failed: ' . json_encode($emailOnly));
+}
+
+$logs = GMS_Database::getOperationalLogs();
+if (!is_array($logs) || ($logs['total'] ?? 0) !== 2) {
+    throw new RuntimeException('Unexpected log total: ' . json_encode($logs));
+}
+
+foreach ($logs['items'] as $log) {
+    if (($log['channel'] ?? '') !== 'portal') {
+        throw new RuntimeException('Non-portal log included: ' . json_encode($log));
+    }
+}
+
+if (($logs['items'][0]['message'] ?? '') !== 'Door code synced') {
+    throw new RuntimeException('Logs not sorted correctly: ' . json_encode($logs['items']));
+}
+
+$portalOnly = GMS_Database::getOperationalLogs(array('channels' => array('portal')));
+if (($portalOnly['total'] ?? 0) !== 2) {
+    throw new RuntimeException('Portal filter failed: ' . json_encode($portalOnly));
+}
+
+$noLogs = GMS_Database::getOperationalLogs(array('channels' => array('sms')));
+if (($noLogs['total'] ?? 0) !== 0) {
+    throw new RuntimeException('SMS logs should be empty: ' . json_encode($noLogs));
 }
 

@@ -15,6 +15,38 @@ class GMS_Database {
     const DB_VERSION = '1.6.0';
     const OPTION_DB_VERSION = 'gms_db_version';
 
+    public static function getConversationalChannels() {
+        $channels = array('sms', 'email');
+
+        if (function_exists('apply_filters')) {
+            $channels = (array) apply_filters('gms_conversational_channels', $channels);
+        }
+
+        $normalized = array();
+
+        foreach ($channels as $channel) {
+            $key = sanitize_key($channel);
+
+            if ($key === '') {
+                continue;
+            }
+
+            $normalized[$key] = $key;
+        }
+
+        return array_values($normalized);
+    }
+
+    public static function isConversationalChannel($channel) {
+        $channel = sanitize_key($channel);
+
+        if ($channel === '') {
+            return false;
+        }
+
+        return in_array($channel, self::getConversationalChannels(), true);
+    }
+
     public function __construct() {
         self::maybeRunMigrations();
     }
@@ -2862,6 +2894,8 @@ class GMS_Database {
             $channel = 'sms';
         }
 
+        $is_conversational = self::isConversationalChannel($channel);
+
         $direction = sanitize_key($data['direction']);
         if ($direction === '') {
             $direction = 'outbound';
@@ -2881,20 +2915,24 @@ class GMS_Database {
         $external_id = sanitize_text_field($raw_external_id);
 
         $thread_key = sanitize_text_field($data['thread_key']);
-        if ($thread_key === '') {
-            $thread_key = self::generateThreadKey($channel, $reservation_id, $guest_id, $from_number_e164, $to_number_e164);
-        }
+        if ($is_conversational) {
+            if ($thread_key === '') {
+                $thread_key = self::generateThreadKey($channel, $reservation_id, $guest_id, $from_number_e164, $to_number_e164);
+            }
 
-        if ($thread_key === '') {
-            $thread_key = self::deriveThreadKeyFallback(
-                $channel,
-                $reservation_id,
-                $guest_id,
-                $from_number_e164,
-                $to_number_e164,
-                isset($data['recipient']) ? $data['recipient'] : '',
-                $external_id !== '' ? $external_id : sanitize_text_field($raw_external_id)
-            );
+            if ($thread_key === '') {
+                $thread_key = self::deriveThreadKeyFallback(
+                    $channel,
+                    $reservation_id,
+                    $guest_id,
+                    $from_number_e164,
+                    $to_number_e164,
+                    isset($data['recipient']) ? $data['recipient'] : '',
+                    $external_id !== '' ? $external_id : sanitize_text_field($raw_external_id)
+                );
+            }
+        } else {
+            $thread_key = '';
         }
 
         $read_at = self::sanitizeNullableDateTime($data['read_at']);
@@ -3377,6 +3415,7 @@ class GMS_Database {
             'page' => 1,
             'per_page' => 20,
             'search' => '',
+            'channels' => array(),
         );
 
         $args = wp_parse_args($args, $defaults);
@@ -3389,7 +3428,42 @@ class GMS_Database {
         $reservations_table = $wpdb->prefix . 'gms_reservations';
         $guests_table = $wpdb->prefix . 'gms_guests';
 
-        $where = array("latest.thread_key <> ''");
+        $requested_channels = array();
+        if (!empty($args['channels'])) {
+            foreach ((array) $args['channels'] as $channel) {
+                $key = sanitize_key($channel);
+                if ($key === '') {
+                    continue;
+                }
+                $requested_channels[$key] = $key;
+            }
+        }
+
+        if (empty($requested_channels)) {
+            $requested_channels = array_fill_keys(self::getConversationalChannels(), true);
+        }
+
+        $channels = array_keys($requested_channels);
+
+        if (empty($channels)) {
+            return array(
+                'items' => array(),
+                'total' => 0,
+                'total_pages' => 1,
+                'page' => $page,
+                'per_page' => $per_page,
+            );
+        }
+
+        $channel_literals = array();
+        foreach ($channels as $channel) {
+            $channel_literals[] = "'" . $channel . "'";
+        }
+
+        $channel_constraint = 'latest.channel IN (' . implode(', ', $channel_literals) . ')';
+        $channel_filter_sql = ' AND channel IN (' . implode(', ', $channel_literals) . ')';
+
+        $where = array("latest.thread_key <> ''", $channel_constraint);
         $params = array();
 
         if ($search !== '') {
@@ -3415,16 +3489,16 @@ class GMS_Database {
             INNER JOIN (
                 SELECT thread_key, MAX(CONCAT(sent_at, '|||', LPAD(id, 20, '0'))) AS sort_key
                 FROM {$table}
-                WHERE thread_key <> ''
+                WHERE thread_key <> ''{$channel_filter_sql}
                 GROUP BY thread_key
             ) latest_keys ON latest_keys.thread_key = c1.thread_key
-            WHERE CONCAT(c1.sent_at, '|||', LPAD(c1.id, 20, '0')) = latest_keys.sort_key
+            WHERE CONCAT(c1.sent_at, '|||', LPAD(c1.id, 20, '0')) = latest_keys.sort_key{$channel_filter_sql}
         ";
 
         $unread_counts_sql = "
             SELECT thread_key, SUM(CASE WHEN direction = 'inbound' AND (read_at IS NULL OR read_at = '' OR read_at = '0000-00-00 00:00:00') THEN 1 ELSE 0 END) AS unread_count
             FROM {$table}
-            WHERE thread_key <> ''
+            WHERE thread_key <> ''{$channel_filter_sql}
             GROUP BY thread_key
         ";
 
@@ -3467,6 +3541,131 @@ class GMS_Database {
         if (!empty($rows)) {
             foreach ($rows as $row) {
                 $items[] = self::normalizeThreadRow($row);
+            }
+        }
+
+        $total_pages = $per_page > 0 ? (int) ceil($total / $per_page) : 1;
+        if ($total_pages < 1) {
+            $total_pages = 1;
+        }
+
+        return array(
+            'items' => $items,
+            'total' => $total,
+            'total_pages' => $total_pages,
+            'page' => $page,
+            'per_page' => $per_page,
+        );
+    }
+
+    public static function getOperationalLogs($args = array()) {
+        global $wpdb;
+
+        $defaults = array(
+            'page' => 1,
+            'per_page' => 50,
+            'search' => '',
+            'channels' => array(),
+        );
+
+        $args = wp_parse_args($args, $defaults);
+
+        $page = max(1, intval($args['page']));
+        $per_page = max(1, min(200, intval($args['per_page'])));
+        $offset = ($page - 1) * $per_page;
+        $search = sanitize_text_field($args['search']);
+
+        $table = $wpdb->prefix . 'gms_communications';
+        $reservations_table = $wpdb->prefix . 'gms_reservations';
+        $guests_table = $wpdb->prefix . 'gms_guests';
+
+        $requested_channels = array();
+        if (!empty($args['channels'])) {
+            foreach ((array) $args['channels'] as $channel) {
+                $key = sanitize_key($channel);
+                if ($key === '') {
+                    continue;
+                }
+                $requested_channels[$key] = $key;
+            }
+        }
+
+        $where = array();
+
+        if (!empty($requested_channels)) {
+            $channel_literals = array();
+            foreach (array_keys($requested_channels) as $channel) {
+                $channel_literals[] = "'" . $channel . "'";
+            }
+
+            if (!empty($channel_literals)) {
+                $where[] = 'c.channel IN (' . implode(', ', $channel_literals) . ')';
+            }
+        } else {
+            $conversational = self::getConversationalChannels();
+
+            if (!empty($conversational)) {
+                $channel_literals = array();
+
+                foreach ($conversational as $channel) {
+                    $normalized = sanitize_key($channel);
+                    if ($normalized === '') {
+                        continue;
+                    }
+                    $channel_literals[] = "'" . $normalized . "'";
+                }
+
+                if (!empty($channel_literals)) {
+                    $where[] = 'c.channel NOT IN (' . implode(', ', $channel_literals) . ')';
+                }
+            }
+        }
+
+        $params = array();
+
+        if ($search !== '') {
+            $like = '%' . $wpdb->esc_like($search) . '%';
+            $where[] = "(c.message LIKE %s OR c.subject LIKE %s OR r.property_name LIKE %s OR r.guest_name LIKE %s OR g.email LIKE %s OR g.phone LIKE %s)";
+            $params = array_merge($params, array_fill(0, 6, $like));
+        }
+
+        $where_sql = '';
+        if (!empty($where)) {
+            $where_sql = 'WHERE ' . implode(' AND ', $where);
+        }
+
+        if (!empty($params)) {
+            $where_sql = $wpdb->prepare($where_sql, $params);
+        }
+
+        $total_sql = "SELECT COUNT(*) FROM {$table} c LEFT JOIN {$reservations_table} r ON r.id = c.reservation_id LEFT JOIN {$guests_table} g ON g.id = c.guest_id {$where_sql}";
+        $total = (int) $wpdb->get_var($total_sql);
+
+        $logs_sql = "
+            SELECT
+                c.*,
+                r.property_name,
+                r.guest_name AS reservation_guest_name,
+                r.guest_email AS reservation_guest_email,
+                r.guest_phone AS reservation_guest_phone,
+                TRIM(CONCAT_WS(' ', g.first_name, g.last_name)) AS guest_name,
+                g.email AS guest_email,
+                g.phone AS guest_phone
+            FROM {$table} c
+            LEFT JOIN {$reservations_table} r ON r.id = c.reservation_id
+            LEFT JOIN {$guests_table} g ON g.id = c.guest_id
+            {$where_sql}
+            ORDER BY c.sent_at DESC, c.id DESC
+        ";
+
+        $logs_sql .= $wpdb->prepare(' LIMIT %d OFFSET %d', $per_page, $offset);
+
+        $rows = $wpdb->get_results($logs_sql, ARRAY_A);
+
+        $items = array();
+        if (!empty($rows)) {
+            foreach ($rows as $row) {
+                $items[] = self::formatCommunicationRow($row);
             }
         }
 
@@ -3574,6 +3773,10 @@ class GMS_Database {
 
         $row = $wpdb->get_row($sql, ARRAY_A);
         if (!$row) {
+            return null;
+        }
+
+        if (!self::isConversationalChannel($row['channel'] ?? '')) {
             return null;
         }
 

@@ -26,6 +26,7 @@ class GMS_AJAX_Handler {
         add_action('wp_ajax_gms_send_message_reply', array($this, 'send_message_reply'));
         add_action('wp_ajax_gms_mark_thread_read', array($this, 'mark_thread_read'));
         add_action('wp_ajax_gms_list_message_templates', array($this, 'list_message_templates'));
+        add_action('wp_ajax_gms_list_operational_logs', array($this, 'list_operational_logs'));
     }
 
     /**
@@ -102,14 +103,54 @@ class GMS_AJAX_Handler {
         $page = isset($_REQUEST['page']) ? max(1, intval($_REQUEST['page'])) : 1;
         $per_page = isset($_REQUEST['per_page']) ? max(1, min(50, intval($_REQUEST['per_page']))) : 20;
         $search = isset($_REQUEST['search']) ? sanitize_text_field(wp_unslash($_REQUEST['search'])) : '';
+        $channel = isset($_REQUEST['channel']) ? sanitize_key(wp_unslash($_REQUEST['channel'])) : '';
+
+        $channels = array();
+        if ($channel !== '') {
+            if ($channel === 'all') {
+                $channels = GMS_Database::getConversationalChannels();
+            } else {
+                $channels[] = $channel;
+            }
+        }
 
         $threads = GMS_Database::getCommunicationThreads(array(
             'page' => $page,
             'per_page' => $per_page,
             'search' => $search,
+            'channels' => $channels,
         ));
 
         wp_send_json_success($threads);
+    }
+
+    public function list_operational_logs() {
+        $this->verify_messaging_permissions();
+
+        $page = isset($_REQUEST['page']) ? max(1, intval($_REQUEST['page'])) : 1;
+        $per_page = isset($_REQUEST['per_page']) ? max(1, min(100, intval($_REQUEST['per_page']))) : 50;
+        $search = isset($_REQUEST['search']) ? sanitize_text_field(wp_unslash($_REQUEST['search'])) : '';
+        $requested = array();
+
+        if (isset($_REQUEST['channels'])) {
+            $channels = is_array($_REQUEST['channels']) ? $_REQUEST['channels'] : explode(',', wp_unslash($_REQUEST['channels']));
+            foreach ($channels as $channel) {
+                $key = sanitize_key($channel);
+                if ($key === '') {
+                    continue;
+                }
+                $requested[] = $key;
+            }
+        }
+
+        $logs = GMS_Database::getOperationalLogs(array(
+            'page' => $page,
+            'per_page' => $per_page,
+            'search' => $search,
+            'channels' => $requested,
+        ));
+
+        wp_send_json_success($logs);
     }
 
     public function fetch_thread_messages() {
@@ -131,6 +172,10 @@ class GMS_AJAX_Handler {
         ));
 
         $context = GMS_Database::getCommunicationThreadContext($thread_key);
+
+        if (!$context || !GMS_Database::isConversationalChannel($context['channel'] ?? '')) {
+            wp_send_json_error(array('message' => __('Unable to resolve the selected conversation.', 'guest-management-system')));
+        }
 
         wp_send_json_success(array(
             'messages' => $messages,
@@ -154,7 +199,7 @@ class GMS_AJAX_Handler {
             wp_send_json_error(array('message' => __('Unable to resolve the selected conversation.', 'guest-management-system')));
         }
 
-        if ($channel !== 'sms') {
+        if ($channel !== 'sms' || sanitize_key($context['channel'] ?? '') !== 'sms') {
             wp_send_json_error(array('message' => __('Only SMS replies are supported at this time.', 'guest-management-system')));
         }
 
