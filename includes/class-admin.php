@@ -13,6 +13,53 @@ if (!class_exists('WP_List_Table')) {
     require_once(ABSPATH . 'wp-admin/includes/class-wp-list-table.php');
 }
 
+if (!function_exists('gms_admin_format_datetime_column')) {
+    /**
+     * Formats a datetime string for admin column display using the WordPress timezone settings.
+     *
+     * @param mixed       $datetime Raw datetime string.
+     * @param string|null $format   Optional date format. When omitted the site preferences are used.
+     * @return string|null          Formatted datetime string or null when the value cannot be parsed.
+     */
+    function gms_admin_format_datetime_column($datetime, $format = null)
+    {
+        if (!is_string($datetime)) {
+            return null;
+        }
+
+        $datetime = trim($datetime);
+        if ($datetime === '' || $datetime === '0000-00-00 00:00:00') {
+            return null;
+        }
+
+        $timezone = wp_timezone();
+
+        try {
+            $date = new \DateTimeImmutable($datetime, $timezone);
+        } catch (\Exception $exception) {
+            return null;
+        }
+
+        try {
+            $date = $date->setTimezone($timezone);
+        } catch (\Exception $exception) {
+            return null;
+        }
+
+        if ($format === null) {
+            $date_format = get_option('date_format', 'M j, Y');
+            $time_format = get_option('time_format', 'g:i a');
+            $format = trim($date_format . ' ' . $time_format);
+        }
+
+        if ($format === '') {
+            $format = 'M j, Y g:i a';
+        }
+
+        return wp_date($format, $date->getTimestamp(), $timezone);
+    }
+}
+
 class GMS_Reservations_List_Table extends WP_List_Table {
     protected $status_filter = '';
     protected $checkin_filter = '';
@@ -62,11 +109,12 @@ class GMS_Reservations_List_Table extends WP_List_Table {
             case 'status':
                 return esc_html($item[$column_name]);
             case 'checkin_date':
-                if (empty($item[$column_name]) || $item[$column_name] === '0000-00-00 00:00:00') {
+                $formatted = gms_admin_format_datetime_column($item[$column_name] ?? '', 'M j, Y, g:i a');
+                if ($formatted === null) {
                     return '&mdash;';
                 }
 
-                return esc_html(date('M j, Y, g:i a', strtotime($item[$column_name])));
+                return esc_html($formatted);
             default:
                 return '';
         }
@@ -385,17 +433,12 @@ class GMS_Guests_List_Table extends WP_List_Table {
             case 'phone':
                 return $item[$column_name] !== '' ? esc_html($item[$column_name]) : '&mdash;';
             case 'created_at':
-                if (empty($item[$column_name]) || $item[$column_name] === '0000-00-00 00:00:00') {
+                $formatted = gms_admin_format_datetime_column($item[$column_name] ?? '');
+                if ($formatted === null) {
                     return '&mdash;';
                 }
 
-                $timestamp = strtotime($item[$column_name]);
-                if (!$timestamp) {
-                    return '&mdash;';
-                }
-
-                $format = trim(get_option('date_format', 'M j, Y') . ' ' . get_option('time_format', 'g:i a'));
-                return esc_html(date_i18n($format, $timestamp));
+                return esc_html($formatted);
             case 'status':
                 $has_name = !empty($item['name']);
                 $has_contact = !empty($item['email']) || !empty($item['phone']);
@@ -664,12 +707,12 @@ class GMS_Message_Templates_List_Table extends WP_List_Table {
                 $active = !empty($item['is_active']);
                 return $active ? esc_html__('Yes', 'guest-management-system') : esc_html__('No', 'guest-management-system');
             case 'updated_at':
-                $timestamp = isset($item['updated_at']) ? strtotime($item['updated_at']) : false;
-                if (!$timestamp) {
+                $formatted = gms_admin_format_datetime_column($item['updated_at'] ?? '');
+                if ($formatted === null) {
                     return '&mdash;';
                 }
 
-                return esc_html(date_i18n(get_option('date_format') . ' ' . get_option('time_format'), $timestamp));
+                return esc_html($formatted);
             default:
                 return isset($item[$column_name]) ? esc_html($item[$column_name]) : '';
         }
