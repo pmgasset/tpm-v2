@@ -661,15 +661,17 @@ class GMS_SMS_Handler implements GMS_Messaging_Channel_Interface {
 
         $checkin_date_raw = isset($reservation['checkin_date']) ? $reservation['checkin_date'] : '';
         $checkout_date_raw = isset($reservation['checkout_date']) ? $reservation['checkout_date'] : '';
+        $checkin_fragments = $this->formatReservationDatetimeFragments($checkin_date_raw);
+        $checkout_fragments = $this->formatReservationDatetimeFragments($checkout_date_raw);
 
         $replacements = array(
             '{guest_name}' => sanitize_text_field($reservation['guest_name'] ?? ''),
             '{property_name}' => sanitize_text_field($reservation['property_name'] ?? ''),
             '{booking_reference}' => sanitize_text_field($reservation['booking_reference'] ?? ''),
-            '{checkin_date}' => $checkin_date_raw ? date('M j', strtotime($checkin_date_raw)) : '',
-            '{checkout_date}' => $checkout_date_raw ? date('M j', strtotime($checkout_date_raw)) : '',
-            '{checkin_time}' => $checkin_date_raw ? date('g:i A', strtotime($checkin_date_raw)) : '',
-            '{checkout_time}' => $checkout_date_raw ? date('g:i A', strtotime($checkout_date_raw)) : '',
+            '{checkin_date}' => $checkin_fragments['date'],
+            '{checkout_date}' => $checkout_fragments['date'],
+            '{checkin_time}' => $checkin_fragments['time'],
+            '{checkout_time}' => $checkout_fragments['time'],
             '{portal_link}' => $this->shortenUrl($portal_url),
             '{company_name}' => get_option('gms_company_name', get_option('blogname'))
         );
@@ -721,15 +723,17 @@ class GMS_SMS_Handler implements GMS_Messaging_Channel_Interface {
 
         $checkin_date_raw = isset($reservation['checkin_date']) ? $reservation['checkin_date'] : '';
         $checkout_date_raw = isset($reservation['checkout_date']) ? $reservation['checkout_date'] : '';
+        $checkin_fragments = $this->formatReservationDatetimeFragments($checkin_date_raw);
+        $checkout_fragments = $this->formatReservationDatetimeFragments($checkout_date_raw);
 
         $replacements = array(
             '{guest_name}' => sanitize_text_field($reservation['guest_name'] ?? ''),
             '{property_name}' => sanitize_text_field($reservation['property_name'] ?? ''),
             '{booking_reference}' => sanitize_text_field($reservation['booking_reference'] ?? ''),
-            '{checkin_date}' => $checkin_date_raw ? date('M j', strtotime($checkin_date_raw)) : '',
-            '{checkout_date}' => $checkout_date_raw ? date('M j', strtotime($checkout_date_raw)) : '',
-            '{checkin_time}' => $checkin_date_raw ? date('g:i A', strtotime($checkin_date_raw)) : '',
-            '{checkout_time}' => $checkout_date_raw ? date('g:i A', strtotime($checkout_date_raw)) : '',
+            '{checkin_date}' => $checkin_fragments['date'],
+            '{checkout_date}' => $checkout_fragments['date'],
+            '{checkin_time}' => $checkin_fragments['time'],
+            '{checkout_time}' => $checkout_fragments['time'],
             '{portal_link}' => $this->shortenUrl($portal_url),
             '{company_name}' => get_option('gms_company_name', get_option('blogname'))
         );
@@ -1065,6 +1069,49 @@ class GMS_SMS_Handler implements GMS_Messaging_Channel_Interface {
             'balance' => null,
             'currency' => null,
             'message' => $message
+        );
+    }
+
+    private function formatReservationDatetimeFragments($raw_datetime) {
+        $fragments = array(
+            'date' => '',
+            'time' => '',
+        );
+
+        if (empty($raw_datetime) || $raw_datetime === '0000-00-00 00:00:00') {
+            return $fragments;
+        }
+
+        if (!function_exists('wp_timezone') || !function_exists('wp_date')) {
+            $timestamp = strtotime($raw_datetime);
+
+            if ($timestamp === false) {
+                return $fragments;
+            }
+
+            return array(
+                'date' => date('M j', $timestamp),
+                'time' => date('g:i A', $timestamp),
+            );
+        }
+
+        $timezone = wp_timezone();
+        $timestamp = false;
+
+        try {
+            $datetime = new \DateTimeImmutable($raw_datetime, new \DateTimeZone('UTC'));
+            $timestamp = $datetime->getTimestamp();
+        } catch (\Exception $exception) {
+            $timestamp = strtotime($raw_datetime);
+        }
+
+        if ($timestamp === false) {
+            return $fragments;
+        }
+
+        return array(
+            'date' => wp_date('M j', $timestamp, $timezone),
+            'time' => wp_date('g:i A', $timestamp, $timezone),
         );
     }
 

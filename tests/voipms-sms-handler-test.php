@@ -43,6 +43,12 @@ if (!function_exists('wp_kses_post')) {
     }
 }
 
+if (!function_exists('wp_strip_all_tags')) {
+    function wp_strip_all_tags($string) {
+        return trim(strip_tags((string) $string));
+    }
+}
+
 if (!function_exists('current_time')) {
     function current_time($type, $gmt = false) {
         if ($type === 'mysql') {
@@ -56,6 +62,10 @@ if (!function_exists('current_time')) {
 if (!function_exists('get_option')) {
     $GLOBALS['__gms_test_options'] = array(
         'gms_voipms_did' => '+15550001111',
+        'gms_sms_template' => 'Welcome {guest_name}! Check-in {checkin_date} at {checkin_time}. Check-out {checkout_date} at {checkout_time}. Link: {portal_link} - {company_name}',
+        'gms_approved_sms_template' => 'Reservation approved for {property_name}! Arrive {checkin_date} at {checkin_time}, depart {checkout_date} at {checkout_time}. {company_name}',
+        'gms_company_name' => 'Test Company',
+        'timezone_string' => 'America/Los_Angeles',
     );
 
     function get_option($key, $default = false) {
@@ -66,6 +76,61 @@ if (!function_exists('get_option')) {
 if (!function_exists('update_option')) {
     function update_option($key, $value) {
         $GLOBALS['__gms_test_options'][$key] = $value;
+    }
+}
+
+if (!function_exists('wp_timezone')) {
+    function wp_timezone() {
+        static $timezone = null;
+
+        if ($timezone instanceof DateTimeZone) {
+            return $timezone;
+        }
+
+        $timezone_string = get_option('timezone_string');
+
+        if (!empty($timezone_string)) {
+            $timezone = new DateTimeZone($timezone_string);
+        } else {
+            $timezone = new DateTimeZone('UTC');
+        }
+
+        return $timezone;
+    }
+}
+
+if (!function_exists('wp_date')) {
+    function wp_date($format, $timestamp = null, $timezone = null) {
+        if ($timestamp === null) {
+            $timestamp = time();
+        }
+
+        if ($timezone === null) {
+            $timezone = wp_timezone();
+        } elseif (!$timezone instanceof DateTimeZone) {
+            $timezone = new DateTimeZone((string) $timezone);
+        }
+
+        $datetime = new DateTimeImmutable('@' . $timestamp);
+        $datetime = $datetime->setTimezone($timezone);
+
+        return $datetime->format($format);
+    }
+}
+
+if (!function_exists('gms_build_portal_url')) {
+    function gms_build_portal_url($token) {
+        if (empty($token)) {
+            return false;
+        }
+
+        return 'https://portal.test/' . $token;
+    }
+}
+
+if (!function_exists('gms_shorten_url')) {
+    function gms_shorten_url($url) {
+        return $url;
     }
 }
 
@@ -126,6 +191,17 @@ if (!class_exists('Testable_GMS_SMS_Handler')) {
     class Testable_GMS_SMS_Handler extends GMS_SMS_Handler {
         public function __construct() {
             // Skip WordPress hook registration during tests
+        }
+
+        public $sent_messages = array();
+
+        public function sendSMS($to, $message) {
+            $this->sent_messages[] = array(
+                'to' => $to,
+                'message' => $message,
+            );
+
+            return true;
         }
     }
 }
@@ -226,6 +302,68 @@ if (!is_string(GMS_Database::$last_log['to_number']) || GMS_Database::$last_log[
 
 if (GMS_Database::$last_log['sent_at'] !== $expected_timestamp) {
     throw new RuntimeException('sent_at did not match expected timestamp.');
+}
+
+$handler->sent_messages = array();
+
+$reservation = array(
+    'id' => 501,
+    'guest_id' => 321,
+    'guest_phone' => '(555) 123-4567',
+    'guest_name' => 'Timezone Tester',
+    'property_name' => 'Sunset Villa',
+    'booking_reference' => 'TZ-42',
+    'portal_token' => 'welcome-token',
+    'checkin_date' => '2024-07-10 18:00:00',
+    'checkout_date' => '2024-07-15 16:30:00',
+);
+
+if (!$handler->sendWelcomeSMS($reservation)) {
+    throw new RuntimeException('sendWelcomeSMS should return true under test conditions.');
+}
+
+if (count($handler->sent_messages) !== 1) {
+    throw new RuntimeException('Expected exactly one welcome SMS to be sent.');
+}
+
+$welcome_message = $handler->sent_messages[0];
+
+if ($welcome_message['to'] !== '5551234567') {
+    throw new RuntimeException('Sanitized phone number was not used for welcome SMS: ' . var_export($welcome_message['to'], true));
+}
+
+$timezone = wp_timezone();
+$checkin_dt = new DateTimeImmutable($reservation['checkin_date'], new DateTimeZone('UTC'));
+$checkout_dt = new DateTimeImmutable($reservation['checkout_date'], new DateTimeZone('UTC'));
+$expected_fragments = array(
+    'checkin_date' => wp_date('M j', $checkin_dt->getTimestamp(), $timezone),
+    'checkin_time' => wp_date('g:i A', $checkin_dt->getTimestamp(), $timezone),
+    'checkout_date' => wp_date('M j', $checkout_dt->getTimestamp(), $timezone),
+    'checkout_time' => wp_date('g:i A', $checkout_dt->getTimestamp(), $timezone),
+);
+
+foreach ($expected_fragments as $fragment => $value) {
+    if (strpos($welcome_message['message'], $value) === false) {
+        throw new RuntimeException(sprintf('Welcome SMS missing %s fragment (%s): %s', $fragment, $value, $welcome_message['message']));
+    }
+}
+
+$handler->sent_messages = array();
+
+if (!$handler->sendReservationApprovedSMS($reservation)) {
+    throw new RuntimeException('sendReservationApprovedSMS should return true under test conditions.');
+}
+
+if (count($handler->sent_messages) !== 1) {
+    throw new RuntimeException('Expected exactly one approval SMS to be sent.');
+}
+
+$approval_message = $handler->sent_messages[0]['message'];
+
+foreach ($expected_fragments as $fragment => $value) {
+    if (strpos($approval_message, $value) === false) {
+        throw new RuntimeException(sprintf('Approval SMS missing %s fragment (%s): %s', $fragment, $value, $approval_message));
+    }
 }
 
 echo "voipms-sms-handler-test: OK\n";
