@@ -367,23 +367,20 @@ class GuestManagementSystem {
             }
         }
 
-        if ($is_messaging_screen || $is_logs_screen) {
-            $channels = $is_logs_screen ? array('logs') : array('sms', 'email');
+        if ($is_messaging_screen) {
+            $messaging_style_path = $asset_base_path . 'assets/css/messaging.css';
+            $messaging_script_path = $asset_base_path . 'assets/js/messaging.js';
+            $messaging_style_version = file_exists($messaging_style_path) ? filemtime($messaging_style_path) : GMS_VERSION;
+            $messaging_script_version = file_exists($messaging_script_path) ? filemtime($messaging_script_path) : GMS_VERSION;
+
+            $channels = array('sms', 'email');
             $channel_labels = array(
-                'sms' => __('SMS Chat', 'guest-management-system'),
+                'sms'   => __('SMS Chat', 'guest-management-system'),
                 'email' => __('Email History', 'guest-management-system'),
-                'logs' => __('Operational Logs', 'guest-management-system'),
             );
 
-            $localized_labels = array();
-            foreach ($channels as $channel) {
-                if (isset($channel_labels[$channel])) {
-                    $localized_labels[$channel] = $channel_labels[$channel];
-                }
-            }
-
-            wp_enqueue_style('gms-messaging', GMS_PLUGIN_URL . 'assets/css/messaging.css', [], GMS_VERSION);
-            wp_enqueue_script('gms-messaging', GMS_PLUGIN_URL . 'assets/js/messaging.js', [], GMS_VERSION, true);
+            wp_enqueue_style('gms-messaging', GMS_PLUGIN_URL . 'assets/css/messaging.css', [], $messaging_style_version);
+            wp_enqueue_script('gms-messaging', GMS_PLUGIN_URL . 'assets/js/messaging.js', [], $messaging_script_version, true);
 
             wp_localize_script(
                 'gms-messaging',
@@ -396,21 +393,13 @@ class GuestManagementSystem {
                     'timeFormat' => get_option('time_format', 'H:i'),
                     'locale' => get_locale(),
                     'channels' => $channels,
-                    'channelLabels' => $localized_labels,
+                    'channelLabels' => $channel_labels,
                     'strings' => array(
-                        'searchPlaceholder' => $is_logs_screen
-                            ? __('Search logs…', 'guest-management-system')
-                            : __('Search guests, properties, or numbers…', 'guest-management-system'),
-                        'logsSearchPlaceholder' => __('Search logs…', 'guest-management-system'),
-                        'searchAction' => $is_logs_screen
-                            ? __('Search Logs', 'guest-management-system')
-                            : __('Search', 'guest-management-system'),
-                        'logsSearchAction' => __('Search Logs', 'guest-management-system'),
+                        'searchPlaceholder' => __('Search guests, properties, or numbers…', 'guest-management-system'),
+                        'searchAction' => __('Search', 'guest-management-system'),
                         'loading' => __('Loading…', 'guest-management-system'),
                         'noConversations' => __('No conversations found. Try adjusting your filters.', 'guest-management-system'),
-                        'logsEmpty' => __('No operational activity recorded yet.', 'guest-management-system'),
                         'loadError' => __('Unable to load conversations. Please try again.', 'guest-management-system'),
-                        'logsLoadError' => __('Unable to load operational logs. Please try again.', 'guest-management-system'),
                         'messageLoadError' => __('Unable to load messages for this thread.', 'guest-management-system'),
                         'sendPlaceholder' => __('Type your reply…', 'guest-management-system'),
                         'sendDisabled' => __('Replying is only available for SMS conversations.', 'guest-management-system'),
@@ -435,10 +424,44 @@ class GuestManagementSystem {
                         'bookingReference' => __('Booking Reference', 'guest-management-system'),
                         'pagination' => __('Page %1$d of %2$d', 'guest-management-system'),
                         'conversationHeading' => __('Select a conversation to view message history.', 'guest-management-system'),
-                        'logsHeading' => __('Select an operational log entry to view details.', 'guest-management-system'),
-                        'logChannelLabel' => __('Channel', 'guest-management-system'),
-                        'logStatusLabel' => __('Status', 'guest-management-system'),
                         'emptyThread' => __('No messages yet. Start the conversation below.', 'guest-management-system'),
+                    ),
+                )
+            );
+        }
+
+        if ($is_logs_screen) {
+            $logs_style_path = $asset_base_path . 'assets/css/logs.css';
+            $logs_script_path = $asset_base_path . 'assets/js/logs.js';
+            $logs_style_version = file_exists($logs_style_path) ? filemtime($logs_style_path) : GMS_VERSION;
+            $logs_script_version = file_exists($logs_script_path) ? filemtime($logs_script_path) : GMS_VERSION;
+
+            wp_enqueue_style('gms-logs', GMS_PLUGIN_URL . 'assets/css/logs.css', [], $logs_style_version);
+            wp_enqueue_script('gms-logs', GMS_PLUGIN_URL . 'assets/js/logs.js', [], $logs_script_version, true);
+
+            wp_localize_script(
+                'gms-logs',
+                'gmsLogs',
+                array(
+                    'ajaxUrl' => admin_url('admin-ajax.php'),
+                    'nonce' => wp_create_nonce('gms_logs_nonce'),
+                    'locale' => get_locale(),
+                    'strings' => array(
+                        'searchPlaceholder' => __('Search logs…', 'guest-management-system'),
+                        'searchAction' => __('Search Logs', 'guest-management-system'),
+                        'loading' => __('Loading…', 'guest-management-system'),
+                        'loadError' => __('Unable to load operational logs. Please try again.', 'guest-management-system'),
+                        'empty' => __('No operational activity recorded yet.', 'guest-management-system'),
+                        'pagination' => __('Page %1$d of %2$d', 'guest-management-system'),
+                        'detailPlaceholder' => __('Select an operational log entry to view details.', 'guest-management-system'),
+                        'channelLabel' => __('Channel', 'guest-management-system'),
+                        'statusLabel' => __('Status', 'guest-management-system'),
+                        'propertyLabel' => __('Property', 'guest-management-system'),
+                        'guestLabel' => __('Guest', 'guest-management-system'),
+                        'phoneLabel' => __('Phone', 'guest-management-system'),
+                        'emailLabel' => __('Email', 'guest-management-system'),
+                        'referenceLabel' => __('Booking Reference', 'guest-management-system'),
+                        'subjectFallback' => __('Log entry', 'guest-management-system'),
                     ),
                 )
             );
