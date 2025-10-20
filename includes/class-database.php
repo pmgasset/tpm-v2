@@ -3668,9 +3668,9 @@ class GMS_Database {
                 r.guest_name AS reservation_guest_name,
                 r.guest_email AS reservation_guest_email,
                 r.guest_phone AS reservation_guest_phone,
-                COALESCE(NULLIF(TRIM(CONCAT_WS(' ', g.first_name, g.last_name)), ''), r.guest_name) AS guest_name,
-                COALESCE(NULLIF(g.email, ''), r.guest_email) AS guest_email,
-                COALESCE(NULLIF(g.phone, ''), r.guest_phone) AS guest_phone,
+                COALESCE(NULLIF(TRIM(r.guest_name), ''), NULLIF(TRIM(CONCAT_WS(' ', g.first_name, g.last_name)), '')) AS guest_name,
+                COALESCE(NULLIF(TRIM(r.guest_email), ''), NULLIF(TRIM(g.email), '')) AS guest_email,
+                COALESCE(NULLIF(TRIM(r.guest_phone), ''), NULLIF(TRIM(g.phone), '')) AS guest_phone,
                 COALESCE(unread.unread_count, 0) AS unread_count,
                 latest.sent_at AS last_message_at,
                 latest.message AS last_message,
@@ -3920,7 +3920,7 @@ class GMS_Database {
         $guests_table = $wpdb->prefix . 'gms_guests';
 
         $sql = $wpdb->prepare(
-            "SELECT c.*, r.property_name, r.guest_name AS reservation_guest_name, r.guest_email AS reservation_guest_email, r.guest_phone AS reservation_guest_phone, r.booking_reference AS reservation_booking_reference, TRIM(CONCAT_WS(' ', g.first_name, g.last_name)) AS guest_name, g.email AS guest_email, g.phone AS guest_phone FROM {$table} c LEFT JOIN {$reservations_table} r ON r.id = c.reservation_id LEFT JOIN {$guests_table} g ON g.id = c.guest_id WHERE c.thread_key = %s ORDER BY c.sent_at DESC, c.id DESC LIMIT 1",
+            "SELECT c.*, r.property_name, r.guest_name AS reservation_guest_name, r.guest_email AS reservation_guest_email, r.guest_phone AS reservation_guest_phone, r.booking_reference AS reservation_booking_reference, COALESCE(NULLIF(TRIM(r.guest_name), ''), NULLIF(TRIM(CONCAT_WS(' ', g.first_name, g.last_name)), '')) AS guest_name, COALESCE(NULLIF(TRIM(r.guest_email), ''), NULLIF(TRIM(g.email), '')) AS guest_email, COALESCE(NULLIF(TRIM(r.guest_phone), ''), NULLIF(TRIM(g.phone), '')) AS guest_phone FROM {$table} c LEFT JOIN {$reservations_table} r ON r.id = c.reservation_id LEFT JOIN {$guests_table} g ON g.id = c.guest_id WHERE c.thread_key = %s ORDER BY c.sent_at DESC, c.id DESC LIMIT 1",
             $thread_key
         );
 
@@ -4000,10 +4000,15 @@ class GMS_Database {
             $channel = 'sms';
         }
 
+        $reservation_id = intval($row['reservation_id'] ?? 0);
+        $has_reservation = $reservation_id > 0;
+
         $guest_name = isset($row['guest_name']) ? trim(wp_strip_all_tags($row['guest_name'])) : '';
         $reservation_guest_name = isset($row['reservation_guest_name']) ? trim(wp_strip_all_tags($row['reservation_guest_name'])) : '';
 
-        if ($guest_name === '' && $reservation_guest_name !== '') {
+        if ($has_reservation && $reservation_guest_name !== '') {
+            $guest_name = $reservation_guest_name;
+        } elseif ($guest_name === '' && $reservation_guest_name !== '') {
             $guest_name = $reservation_guest_name;
         }
 
@@ -4012,13 +4017,19 @@ class GMS_Database {
         }
 
         $guest_email = isset($row['guest_email']) ? sanitize_email($row['guest_email']) : '';
-        if ($guest_email === '' && !empty($row['reservation_guest_email'])) {
-            $guest_email = sanitize_email($row['reservation_guest_email']);
+        $reservation_guest_email = isset($row['reservation_guest_email']) ? sanitize_email($row['reservation_guest_email']) : '';
+        if ($has_reservation && $reservation_guest_email !== '') {
+            $guest_email = $reservation_guest_email;
+        } elseif ($guest_email === '' && $reservation_guest_email !== '') {
+            $guest_email = $reservation_guest_email;
         }
 
         $guest_phone = isset($row['guest_phone']) ? sanitize_text_field($row['guest_phone']) : '';
-        if ($guest_phone === '' && !empty($row['reservation_guest_phone'])) {
-            $guest_phone = sanitize_text_field($row['reservation_guest_phone']);
+        $reservation_guest_phone = isset($row['reservation_guest_phone']) ? sanitize_text_field($row['reservation_guest_phone']) : '';
+        if ($has_reservation && $reservation_guest_phone !== '') {
+            $guest_phone = $reservation_guest_phone;
+        } elseif ($guest_phone === '' && $reservation_guest_phone !== '') {
+            $guest_phone = $reservation_guest_phone;
         }
 
         $guest_number = isset($row['guest_number']) ? sanitize_text_field($row['guest_number']) : $guest_phone;
