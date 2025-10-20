@@ -6204,6 +6204,62 @@ class GMS_Admin {
             <p class="description"><?php esc_html_e('Review guest conversations, reply in real time, and keep your team in sync across channels.', 'guest-management-system'); ?></p>
 
             <div id="gms-messaging-app" class="gms-messaging-app" data-loading-text="<?php echo esc_attr__('Loading conversations…', 'guest-management-system'); ?>">
+                <div class="gms-messaging" aria-live="polite">
+                    <aside class="gms-messaging__sidebar" aria-label="<?php esc_attr_e('Conversation list', 'guest-management-system'); ?>">
+                        <form class="gms-messaging__search" role="search">
+                            <label class="screen-reader-text" for="gms-messaging-search"><?php esc_html_e('Search conversations', 'guest-management-system'); ?></label>
+                            <input id="gms-messaging-search" type="search" class="gms-messaging__search-input" placeholder="<?php echo esc_attr__('Search guests, properties, or numbers…', 'guest-management-system'); ?>">
+                            <button type="submit" class="button gms-messaging__search-button"><?php esc_html_e('Search', 'guest-management-system'); ?></button>
+                        </form>
+
+                        <nav class="gms-messaging__channels" aria-label="<?php esc_attr_e('Message channels', 'guest-management-system'); ?>"></nav>
+
+                        <div class="gms-messaging__threads" role="list" aria-live="polite"></div>
+
+                        <div class="gms-messaging__pagination">
+                            <button type="button" class="button gms-messaging__pagination-button" data-direction="prev" aria-label="<?php esc_attr_e('Previous conversations', 'guest-management-system'); ?>">‹</button>
+                            <span class="gms-messaging__pagination-status" aria-live="polite"></span>
+                            <button type="button" class="button gms-messaging__pagination-button" data-direction="next" aria-label="<?php esc_attr_e('Next conversations', 'guest-management-system'); ?>">›</button>
+                        </div>
+                    </aside>
+
+                    <section class="gms-messaging__conversation gms-messaging__panel" aria-label="<?php esc_attr_e('Conversation detail', 'guest-management-system'); ?>">
+                        <header class="gms-messaging__conversation-header gms-messaging__panel-header">
+                            <div class="gms-messaging__conversation-titles gms-messaging__panel-titles">
+                                <h2 class="gms-messaging__thread-title"></h2>
+                                <p class="gms-messaging__thread-subtitle"></p>
+                            </div>
+                            <button type="button" class="button button-secondary gms-messaging__mark-read" disabled><?php esc_html_e('Mark all as read', 'guest-management-system'); ?></button>
+                        </header>
+
+                        <div class="gms-messaging__conversation-meta gms-messaging__thread-meta"></div>
+
+                        <div class="gms-messaging__conversation-scroll gms-messaging__messages-wrapper">
+                            <div class="gms-messaging__messages" role="log" aria-live="polite"></div>
+                        </div>
+
+                        <form class="gms-messaging__composer" novalidate>
+                            <div class="gms-messaging__composer-row gms-messaging__template-row">
+                                <label class="screen-reader-text" for="gms-template-search"><?php esc_html_e('Search templates', 'guest-management-system'); ?></label>
+                                <input id="gms-template-search" type="search" class="gms-messaging__template-search" placeholder="<?php echo esc_attr__('Search templates…', 'guest-management-system'); ?>">
+
+                                <label class="screen-reader-text" for="gms-template-select"><?php esc_html_e('Choose a template', 'guest-management-system'); ?></label>
+                                <select id="gms-template-select" class="gms-messaging__template" aria-label="<?php esc_attr_e('Templates', 'guest-management-system'); ?>">
+                                    <option value=""><?php esc_html_e('Insert a template…', 'guest-management-system'); ?></option>
+                                </select>
+                            </div>
+
+                            <label class="screen-reader-text" for="gms-message-input"><?php esc_html_e('Message body', 'guest-management-system'); ?></label>
+                            <textarea id="gms-message-input" class="gms-messaging__input" rows="4" placeholder="<?php echo esc_attr__('Type your reply…', 'guest-management-system'); ?>"></textarea>
+
+                            <div class="gms-messaging__composer-footer">
+                                <span class="gms-messaging__status" aria-live="polite"></span>
+                                <button type="submit" class="button button-primary gms-messaging__send" disabled><?php esc_html_e('Send Reply', 'guest-management-system'); ?></button>
+                            </div>
+                        </form>
+                    </section>
+                </div>
+
                 <div class="gms-messaging-app__placeholder">
                     <span class="spinner is-active" aria-hidden="true"></span>
                     <p><?php esc_html_e('Loading conversations…', 'guest-management-system'); ?></p>
@@ -6227,7 +6283,29 @@ class GMS_Admin {
             <hr class="wp-header-end">
             <p class="description"><?php esc_html_e('Audit automations, deliveries, and system activity without leaving the dashboard.', 'guest-management-system'); ?></p>
 
-            <div id="gms-messaging-app" class="gms-messaging-app" data-loading-text="<?php echo esc_attr__('Loading logs…', 'guest-management-system'); ?>">
+            <div id="gms-logs-app" class="gms-logs-app" data-loading-text="<?php echo esc_attr__('Loading logs…', 'guest-management-system'); ?>">
+                <div class="gms-logs" aria-live="polite">
+                    <form class="gms-logs__search" role="search">
+                        <label class="screen-reader-text" for="gms-logs-search"><?php esc_html_e('Search logs', 'guest-management-system'); ?></label>
+                        <input id="gms-logs-search" type="search" class="gms-logs__search-input" placeholder="<?php echo esc_attr__('Search logs…', 'guest-management-system'); ?>">
+                        <button type="submit" class="button gms-logs__search-button"><?php esc_html_e('Search Logs', 'guest-management-system'); ?></button>
+                    </form>
+
+                    <div class="gms-logs__layout">
+                        <aside class="gms-logs__list" aria-label="<?php esc_attr_e('Log entries', 'guest-management-system'); ?>" role="list"></aside>
+
+                        <section class="gms-logs__detail" aria-label="<?php esc_attr_e('Log details', 'guest-management-system'); ?>">
+                            <div class="gms-logs__detail-body"></div>
+                        </section>
+                    </div>
+
+                    <div class="gms-logs__pagination">
+                        <button type="button" class="button gms-logs__pagination-button" data-direction="prev" aria-label="<?php esc_attr_e('Previous logs', 'guest-management-system'); ?>">‹</button>
+                        <span class="gms-logs__pagination-status" aria-live="polite"></span>
+                        <button type="button" class="button gms-logs__pagination-button" data-direction="next" aria-label="<?php esc_attr_e('Next logs', 'guest-management-system'); ?>">›</button>
+                    </div>
+                </div>
+
                 <div class="gms-messaging-app__placeholder">
                     <span class="spinner is-active" aria-hidden="true"></span>
                     <p><?php esc_html_e('Loading logs…', 'guest-management-system'); ?></p>
