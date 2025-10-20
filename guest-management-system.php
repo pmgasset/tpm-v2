@@ -354,7 +354,8 @@ class GuestManagementSystem {
         wp_enqueue_style('gms-admin', GMS_PLUGIN_URL . 'assets/css/admin.css', [], $admin_style_version);
         wp_enqueue_media(); // For handling media uploads in settings (e.g., logo)
 
-        $is_messaging_screen = $hook === 'guest-management_page_guest-management-communications';
+        $is_messaging_screen = $hook === 'guest-management_page_guest-management-messaging';
+        $is_logs_screen = $hook === 'guest-management_page_guest-management-logs';
         $is_housekeeper_screen = $hook === 'guest-management_page_guest-management-housekeeper';
 
         if ($is_housekeeper_screen) {
@@ -366,7 +367,21 @@ class GuestManagementSystem {
             }
         }
 
-        if ($is_messaging_screen) {
+        if ($is_messaging_screen || $is_logs_screen) {
+            $channels = $is_logs_screen ? array('logs') : array('sms', 'email');
+            $channel_labels = array(
+                'sms' => __('SMS Chat', 'guest-management-system'),
+                'email' => __('Email History', 'guest-management-system'),
+                'logs' => __('Operational Logs', 'guest-management-system'),
+            );
+
+            $localized_labels = array();
+            foreach ($channels as $channel) {
+                if (isset($channel_labels[$channel])) {
+                    $localized_labels[$channel] = $channel_labels[$channel];
+                }
+            }
+
             wp_enqueue_style('gms-messaging', GMS_PLUGIN_URL . 'assets/css/messaging.css', [], GMS_VERSION);
             wp_enqueue_script('gms-messaging', GMS_PLUGIN_URL . 'assets/js/messaging.js', [], GMS_VERSION, true);
 
@@ -380,16 +395,16 @@ class GuestManagementSystem {
                     'dateFormat' => get_option('date_format', 'Y-m-d'),
                     'timeFormat' => get_option('time_format', 'H:i'),
                     'locale' => get_locale(),
-                    'channels' => array('sms', 'email', 'logs'),
-                    'channelLabels' => array(
-                        'sms' => __('SMS Chat', 'guest-management-system'),
-                        'email' => __('Email History', 'guest-management-system'),
-                        'logs' => __('Operational Logs', 'guest-management-system'),
-                    ),
+                    'channels' => $channels,
+                    'channelLabels' => $localized_labels,
                     'strings' => array(
-                        'searchPlaceholder' => __('Search guests, properties, or numbers…', 'guest-management-system'),
+                        'searchPlaceholder' => $is_logs_screen
+                            ? __('Search logs…', 'guest-management-system')
+                            : __('Search guests, properties, or numbers…', 'guest-management-system'),
                         'logsSearchPlaceholder' => __('Search logs…', 'guest-management-system'),
-                        'searchAction' => __('Search', 'guest-management-system'),
+                        'searchAction' => $is_logs_screen
+                            ? __('Search Logs', 'guest-management-system')
+                            : __('Search', 'guest-management-system'),
                         'logsSearchAction' => __('Search Logs', 'guest-management-system'),
                         'loading' => __('Loading…', 'guest-management-system'),
                         'noConversations' => __('No conversations found. Try adjusting your filters.', 'guest-management-system'),

@@ -1896,11 +1896,20 @@ class GMS_Admin {
 
         add_submenu_page(
             'guest-management-dashboard',
-            'Communications & Logs',
-            'Communications/Logs',
+            'Messaging Inbox',
+            'Messaging',
             'manage_options',
-            'guest-management-communications',
+            'guest-management-messaging',
             [$this, 'render_communications_page']
+        );
+
+        add_submenu_page(
+            'guest-management-dashboard',
+            'Activity Logs',
+            'Logs',
+            'manage_options',
+            'guest-management-logs',
+            [$this, 'render_logs_page']
         );
 
         add_submenu_page(
@@ -3423,7 +3432,8 @@ class GMS_Admin {
                 <h2><?php esc_html_e('Quick Actions', 'guest-management-system'); ?></h2>
                 <a class="button button-primary" href="<?php echo esc_url($reservations_list_url); ?>"><?php esc_html_e('Manage Reservations', 'guest-management-system'); ?></a>
                 <a class="button" href="<?php echo esc_url(admin_url('admin.php?page=guest-management-guests')); ?>"><?php esc_html_e('View Guest Profiles', 'guest-management-system'); ?></a>
-                <a class="button" href="<?php echo esc_url(admin_url('admin.php?page=guest-management-communications')); ?>"><?php esc_html_e('Communications & Logs', 'guest-management-system'); ?></a>
+                <a class="button" href="<?php echo esc_url(admin_url('admin.php?page=guest-management-messaging')); ?>"><?php esc_html_e('Open Messaging Inbox', 'guest-management-system'); ?></a>
+                <a class="button" href="<?php echo esc_url(admin_url('admin.php?page=guest-management-logs')); ?>"><?php esc_html_e('View Activity Logs', 'guest-management-system'); ?></a>
                 <a class="button" href="<?php echo esc_url(admin_url('admin.php?page=guest-management-templates')); ?>"><?php esc_html_e('Edit Templates', 'guest-management-system'); ?></a>
                 <a class="button" href="<?php echo esc_url(admin_url('admin.php?page=guest-management-settings')); ?>"><?php esc_html_e('Open Settings', 'guest-management-system'); ?></a>
             </div>
@@ -6199,6 +6209,30 @@ class GMS_Admin {
                     <p><?php esc_html_e('Loading conversations…', 'guest-management-system'); ?></p>
                     <noscript>
                         <p><?php esc_html_e('Enable JavaScript to use the messaging inbox.', 'guest-management-system'); ?></p>
+                    </noscript>
+                </div>
+            </div>
+        </div>
+        <?php
+    }
+
+    public function render_logs_page() {
+        if (!current_user_can('manage_options')) {
+            return;
+        }
+
+        ?>
+        <div class="wrap gms-messaging-wrap">
+            <h1 class="wp-heading-inline"><?php esc_html_e('Operational Logs', 'guest-management-system'); ?></h1>
+            <hr class="wp-header-end">
+            <p class="description"><?php esc_html_e('Audit automations, deliveries, and system activity without leaving the dashboard.', 'guest-management-system'); ?></p>
+
+            <div id="gms-messaging-app" class="gms-messaging-app" data-loading-text="<?php echo esc_attr__('Loading logs…', 'guest-management-system'); ?>">
+                <div class="gms-messaging-app__placeholder">
+                    <span class="spinner is-active" aria-hidden="true"></span>
+                    <p><?php esc_html_e('Loading logs…', 'guest-management-system'); ?></p>
+                    <noscript>
+                        <p><?php esc_html_e('Enable JavaScript to review operational logs.', 'guest-management-system'); ?></p>
                     </noscript>
                 </div>
             </div>
