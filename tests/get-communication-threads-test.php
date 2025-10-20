@@ -131,6 +131,89 @@ class WPDB_Get_Communication_Threads_Stub {
         return $this->calculateLogs($query);
     }
 
+    public function get_row($query, $output_type = ARRAY_A) {
+        if (strpos($query, 'WHERE c.thread_key') !== false && strpos($query, 'ORDER BY c.sent_at DESC') !== false) {
+            if (preg_match("/WHERE\\s+c\\.thread_key\\s*=\\s*'([^']+)'/i", $query, $match)) {
+                $thread_key = sanitize_text_field($match[1] ?? '');
+                if ($thread_key === '') {
+                    return null;
+                }
+
+                $messages = array();
+                foreach ($this->communications as $row) {
+                    if (($row['thread_key'] ?? '') === $thread_key) {
+                        $messages[] = $row;
+                    }
+                }
+
+                if (empty($messages)) {
+                    return null;
+                }
+
+                usort($messages, static function ($a, $b) {
+                    $sentA = $a['sent_at'] ?? '';
+                    $sentB = $b['sent_at'] ?? '';
+                    if ($sentA === $sentB) {
+                        return ($b['id'] ?? 0) <=> ($a['id'] ?? 0);
+                    }
+
+                    return $sentB <=> $sentA;
+                });
+
+                $canonical = $messages[0];
+                $reservation = $this->findReservation($canonical['reservation_id'] ?? 0);
+                $guest = $this->findGuest($canonical['guest_id'] ?? 0);
+
+                $guest_profile_name = '';
+                $guest_email = '';
+                $guest_phone = '';
+
+                if ($guest) {
+                    $guest_profile_name = trim(trim(($guest['first_name'] ?? '') . ' ' . ($guest['last_name'] ?? '')));
+                    if ($guest_profile_name === '') {
+                        $guest_profile_name = $guest['name'] ?? '';
+                    }
+                    $guest_email = $guest['email'] ?? '';
+                    $guest_phone = $guest['phone'] ?? '';
+                }
+
+                $row = $canonical;
+                if ($reservation) {
+                    $row['property_name'] = $reservation['property_name'] ?? '';
+                    $row['reservation_guest_name'] = $reservation['guest_name'] ?? '';
+                    $row['reservation_guest_email'] = $reservation['guest_email'] ?? '';
+                    $row['reservation_guest_phone'] = $reservation['guest_phone'] ?? '';
+                    $row['reservation_booking_reference'] = $reservation['booking_reference'] ?? '';
+                } else {
+                    $row['property_name'] = $row['property_name'] ?? '';
+                    $row['reservation_guest_name'] = '';
+                    $row['reservation_guest_email'] = '';
+                    $row['reservation_guest_phone'] = '';
+                    $row['reservation_booking_reference'] = '';
+                }
+
+                $row['guest_name'] = ($row['reservation_guest_name'] ?? '') !== ''
+                    ? $row['reservation_guest_name']
+                    : $guest_profile_name;
+                $row['guest_email'] = ($row['reservation_guest_email'] ?? '') !== ''
+                    ? $row['reservation_guest_email']
+                    : $guest_email;
+                $row['guest_phone'] = ($row['reservation_guest_phone'] ?? '') !== ''
+                    ? $row['reservation_guest_phone']
+                    : $guest_phone;
+
+                return $row;
+            }
+        }
+
+        $results = $this->get_results($query, $output_type);
+        if (empty($results)) {
+            return null;
+        }
+
+        return $results[0];
+    }
+
     private function extractChannelFilter($query, $defaultChannels = array(), $defaultNegate = false) {
         $channels = array();
         $negate = $defaultNegate;
@@ -260,25 +343,25 @@ class WPDB_Get_Communication_Threads_Stub {
             $guest_email = '';
             $guest_phone = '';
 
-            if ($guest) {
+            if ($reservation) {
+                $guest_name = $reservation['guest_name'] ?? '';
+                $guest_email = $reservation['guest_email'] ?? '';
+                $guest_phone = $reservation['guest_phone'] ?? '';
+            }
+
+            if ($guest_name === '' && $guest) {
                 $guest_name = trim(trim(($guest['first_name'] ?? '') . ' ' . ($guest['last_name'] ?? '')));
                 if ($guest_name === '') {
                     $guest_name = $guest['name'] ?? '';
                 }
+            }
+
+            if ($guest_email === '' && $guest) {
                 $guest_email = $guest['email'] ?? '';
+            }
+
+            if ($guest_phone === '' && $guest) {
                 $guest_phone = $guest['phone'] ?? '';
-            }
-
-            if ($guest_name === '' && $reservation) {
-                $guest_name = $reservation['guest_name'] ?? '';
-            }
-
-            if ($guest_email === '' && $reservation) {
-                $guest_email = $reservation['guest_email'] ?? '';
-            }
-
-            if ($guest_phone === '' && $reservation) {
-                $guest_phone = $reservation['guest_phone'] ?? '';
             }
 
             $unread_count = 0;
@@ -425,18 +508,35 @@ class WPDB_Get_Communication_Threads_Stub {
             $row['reservation_guest_email'] = $reservation['guest_email'] ?? '';
             $row['reservation_guest_phone'] = $reservation['guest_phone'] ?? '';
             $row['booking_reference'] = $reservation['booking_reference'] ?? '';
+
+            if (empty($row['guest_name'])) {
+                $row['guest_name'] = $reservation['guest_name'] ?? '';
+            }
+
+            if (empty($row['guest_email'])) {
+                $row['guest_email'] = $reservation['guest_email'] ?? '';
+            }
+
+            if (empty($row['guest_phone'])) {
+                $row['guest_phone'] = $reservation['guest_phone'] ?? '';
+            }
         }
 
         if ($guest) {
-            $row['guest_name'] = isset($row['guest_name']) && $row['guest_name'] !== ''
-                ? $row['guest_name']
-                : trim(trim(($guest['first_name'] ?? '') . ' ' . ($guest['last_name'] ?? '')));
-            $row['guest_email'] = isset($row['guest_email']) && $row['guest_email'] !== ''
-                ? $row['guest_email']
-                : ($guest['email'] ?? '');
-            $row['guest_phone'] = isset($row['guest_phone']) && $row['guest_phone'] !== ''
-                ? $row['guest_phone']
-                : ($guest['phone'] ?? '');
+            if (empty($row['guest_name'])) {
+                $row['guest_name'] = trim(trim(($guest['first_name'] ?? '') . ' ' . ($guest['last_name'] ?? '')));
+                if ($row['guest_name'] === '') {
+                    $row['guest_name'] = $guest['name'] ?? '';
+                }
+            }
+
+            if (empty($row['guest_email'])) {
+                $row['guest_email'] = $guest['email'] ?? '';
+            }
+
+            if (empty($row['guest_phone'])) {
+                $row['guest_phone'] = $guest['phone'] ?? '';
+            }
         }
 
         return $row;
@@ -494,6 +594,16 @@ $wpdb->reservations = array(
         'guest_phone' => '+15551234567',
         'property_name' => 'Unit Test Property',
     ),
+    array(
+        'id' => 601,
+        'guest_id' => 1301,
+        'guest_record_id' => 903,
+        'guest_name' => 'Reservation Updated',
+        'guest_email' => 'reservation-updated@example.com',
+        'guest_phone' => '+15558889999',
+        'property_name' => 'Updated Contact Property',
+        'booking_reference' => 'RES-UPDATED-601',
+    ),
 );
 $wpdb->guests = array(
     array(
@@ -503,6 +613,14 @@ $wpdb->guests = array(
         'email' => 'canonical@example.com',
         'phone' => '+15557654321',
         'wp_user_id' => 1201,
+    ),
+    array(
+        'id' => 903,
+        'first_name' => 'Stale',
+        'last_name' => 'Profile',
+        'email' => 'stale-profile@example.com',
+        'phone' => '+15550000000',
+        'wp_user_id' => 1301,
     ),
 );
 $wpdb->communications = array(
@@ -568,6 +686,21 @@ $wpdb->communications = array(
         'delivery_status' => 'completed',
         'sent_at' => '2024-06-05 14:30:00',
     ),
+    array(
+        'id' => 30,
+        'thread_key' => 'stale-profile-thread',
+        'reservation_id' => 601,
+        'guest_id' => 903,
+        'channel' => 'sms',
+        'direction' => 'inbound',
+        'from_number' => '+15558889999',
+        'from_number_e164' => '+15558889999',
+        'to_number' => '+15550003333',
+        'to_number_e164' => '+15550003333',
+        'message' => 'Please confirm my updated contact info',
+        'sent_at' => '2024-06-06 10:00:00',
+        'read_at' => '',
+    ),
 );
 
 $GLOBALS['wpdb'] = $wpdb;
@@ -575,7 +708,7 @@ $GLOBALS['wpdb'] = $wpdb;
 require_once __DIR__ . '/../includes/class-database.php';
 
 $result = GMS_Database::getCommunicationThreads();
-if (!is_array($result) || ($result['total'] ?? 0) !== 2) {
+if (!is_array($result) || ($result['total'] ?? 0) !== 3) {
     throw new RuntimeException('Unexpected total: ' . json_encode($result));
 }
 
@@ -596,15 +729,15 @@ if ((int) ($smsThread['guest_id'] ?? 0) !== 902) {
     throw new RuntimeException('Guest ID mismatch: ' . json_encode($smsThread));
 }
 
-if (($smsThread['guest_name'] ?? '') !== 'Canonical Guest') {
+if (($smsThread['guest_name'] ?? '') !== 'Legacy Guest') {
     throw new RuntimeException('Guest name mismatch: ' . json_encode($smsThread));
 }
 
-if (($smsThread['guest_email'] ?? '') !== 'canonical@example.com') {
+if (($smsThread['guest_email'] ?? '') !== 'legacy@example.com') {
     throw new RuntimeException('Guest email mismatch: ' . json_encode($smsThread));
 }
 
-if (($smsThread['guest_phone'] ?? '') !== '+15557654321') {
+if (($smsThread['guest_phone'] ?? '') !== '+15551234567') {
     throw new RuntimeException('Guest phone mismatch: ' . json_encode($smsThread));
 }
 
@@ -614,6 +747,27 @@ if (($smsThread['reservation_guest_name'] ?? '') !== 'Legacy Guest') {
 
 if ((int) ($smsThread['unread_count'] ?? 0) !== 1) {
     throw new RuntimeException('Unread count mismatch: ' . json_encode($smsThread));
+}
+
+$staleThread = $threads['stale-profile-thread'] ?? null;
+if (!is_array($staleThread)) {
+    throw new RuntimeException('Stale profile thread missing: ' . json_encode($threads));
+}
+
+if (($staleThread['guest_name'] ?? '') !== 'Reservation Updated') {
+    throw new RuntimeException('Stale thread guest name mismatch: ' . json_encode($staleThread));
+}
+
+if (($staleThread['guest_email'] ?? '') !== 'reservation-updated@example.com') {
+    throw new RuntimeException('Stale thread guest email mismatch: ' . json_encode($staleThread));
+}
+
+if (($staleThread['guest_phone'] ?? '') !== '+15558889999') {
+    throw new RuntimeException('Stale thread guest phone mismatch: ' . json_encode($staleThread));
+}
+
+if ((int) ($staleThread['unread_count'] ?? 0) !== 1) {
+    throw new RuntimeException('Stale thread unread count mismatch: ' . json_encode($staleThread));
 }
 
 $emailThread = $threads['email-thread'] ?? null;
@@ -626,13 +780,39 @@ if (($emailThread['channel'] ?? '') !== 'email') {
 }
 
 $smsOnly = GMS_Database::getCommunicationThreads(array('channels' => array('sms')));
-if (($smsOnly['total'] ?? 0) !== 1 || (($smsOnly['items'][0]['thread_key'] ?? '') !== 'thread-1')) {
-    throw new RuntimeException('SMS-only filter failed: ' . json_encode($smsOnly));
+if (($smsOnly['total'] ?? 0) !== 2) {
+    throw new RuntimeException('SMS-only filter count failed: ' . json_encode($smsOnly));
+}
+
+$smsOnlyKeys = array();
+foreach ($smsOnly['items'] as $item) {
+    $smsOnlyKeys[] = $item['thread_key'] ?? '';
+}
+sort($smsOnlyKeys);
+if ($smsOnlyKeys !== array('stale-profile-thread', 'thread-1')) {
+    throw new RuntimeException('SMS-only filter keys mismatch: ' . json_encode($smsOnlyKeys));
 }
 
 $emailOnly = GMS_Database::getCommunicationThreads(array('channels' => array('email')));
 if (($emailOnly['total'] ?? 0) !== 1 || (($emailOnly['items'][0]['thread_key'] ?? '') !== 'email-thread')) {
     throw new RuntimeException('Email-only filter failed: ' . json_encode($emailOnly));
+}
+
+$staleContext = GMS_Database::getCommunicationThreadContext('stale-profile-thread');
+if (!is_array($staleContext)) {
+    throw new RuntimeException('Context lookup failed: ' . json_encode($staleContext));
+}
+
+if (($staleContext['guest_name'] ?? '') !== 'Reservation Updated') {
+    throw new RuntimeException('Context guest name mismatch: ' . json_encode($staleContext));
+}
+
+if (($staleContext['guest_email'] ?? '') !== 'reservation-updated@example.com') {
+    throw new RuntimeException('Context guest email mismatch: ' . json_encode($staleContext));
+}
+
+if (($staleContext['guest_phone'] ?? '') !== '+15558889999') {
+    throw new RuntimeException('Context guest phone mismatch: ' . json_encode($staleContext));
 }
 
 $logs = GMS_Database::getOperationalLogs();
