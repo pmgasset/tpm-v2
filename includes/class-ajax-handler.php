@@ -89,12 +89,12 @@ class GMS_AJAX_Handler {
         }
     }
 
-    private function verify_messaging_permissions() {
+    private function verify_messaging_permissions($nonce_action = 'gms_messaging_nonce') {
         if (!current_user_can('manage_options')) {
             wp_send_json_error(array('message' => __('You do not have permission to manage messages.', 'guest-management-system')));
         }
 
-        check_ajax_referer('gms_messaging_nonce', 'nonce');
+        check_ajax_referer($nonce_action, 'nonce');
     }
 
     public function list_message_threads() {
@@ -125,7 +125,7 @@ class GMS_AJAX_Handler {
     }
 
     public function list_operational_logs() {
-        $this->verify_messaging_permissions();
+        $this->verify_messaging_permissions('gms_logs_nonce');
 
         $page = isset($_REQUEST['page']) ? max(1, intval($_REQUEST['page'])) : 1;
         $per_page = isset($_REQUEST['per_page']) ? max(1, min(100, intval($_REQUEST['per_page']))) : 50;
