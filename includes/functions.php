@@ -909,7 +909,10 @@ function gms_handle_reservation_status_transition($reservation_id, $new_status, 
     $new_status = sanitize_key($new_status);
     $previous_status = $previous_status !== null ? sanitize_key($previous_status) : null;
 
-    if ($new_status !== 'approved' || $previous_status === 'approved') {
+    $should_handle_approved  = $new_status === 'approved' && $previous_status !== 'approved';
+    $should_handle_completed = $new_status === 'completed' && $previous_status !== 'completed';
+
+    if (!$should_handle_approved && !$should_handle_completed) {
         return;
     }
 
@@ -919,23 +922,52 @@ function gms_handle_reservation_status_transition($reservation_id, $new_status, 
         return;
     }
 
-    if (!empty($reservation['guest_email']) && is_email($reservation['guest_email'])) {
-        static $email_handler = null;
+    if ($should_handle_approved) {
+        if (!empty($reservation['guest_email']) && is_email($reservation['guest_email'])) {
+            static $email_handler = null;
 
-        if ($email_handler === null) {
-            $email_handler = new GMS_Email_Handler();
+            if ($email_handler === null) {
+                $email_handler = new GMS_Email_Handler();
+            }
+
+            $email_handler->sendReservationApprovedEmail($reservation);
         }
 
-        $email_handler->sendReservationApprovedEmail($reservation);
+        if (!empty($reservation['guest_phone'])) {
+            static $sms_handler = null;
+
+            if ($sms_handler === null) {
+                $sms_handler = new GMS_SMS_Handler();
+            }
+
+            $sms_handler->sendReservationApprovedSMS($reservation);
+        }
     }
 
-    if (!empty($reservation['guest_phone'])) {
-        static $sms_handler = null;
+    if ($should_handle_completed) {
+        $checkout_raw = isset($reservation['checkout_date']) ? trim((string) $reservation['checkout_date']) : '';
 
-        if ($sms_handler === null) {
-            $sms_handler = new GMS_SMS_Handler();
+        if ($checkout_raw === '' || $checkout_raw === '0000-00-00 00:00:00') {
+            return;
         }
 
-        $sms_handler->sendReservationApprovedSMS($reservation);
+        try {
+            $timezone = wp_timezone();
+            $checkout = new \DateTimeImmutable($checkout_raw, $timezone);
+        } catch (\Exception $exception) {
+            error_log('GMS housekeeping event skipped: invalid checkout for reservation ' . $reservation_id);
+            return;
+        }
+
+        $window_start = $checkout->modify('+30 minutes');
+        $window_end   = $checkout->modify('+120 minutes');
+
+        if (!$window_start || !$window_end) {
+            return;
+        }
+
+        if (class_exists('GMS_Housekeeping_Integration')) {
+            GMS_Housekeeping_Integration::sendCleaningWindowEvent($reservation, $window_start, $window_end);
+        }
     }
 }

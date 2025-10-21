@@ -92,6 +92,7 @@ class GuestManagementSystem {
             'class-stripe-integration.php',
             'class-ajax-handler.php',
             'class-agreement-handler.php', // Load the new agreement handler class
+            'class-housekeeping-integration.php',
             'class-housekeeper-checklist-view.php',
             'functions.php'
         );
