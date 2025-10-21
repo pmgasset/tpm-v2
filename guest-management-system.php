@@ -444,7 +444,7 @@ class GuestManagementSystem {
                 'gmsLogs',
                 array(
                     'ajaxUrl' => admin_url('admin-ajax.php'),
-                    'nonce' => wp_create_nonce('gms_logs_nonce'),
+                    'nonce' => wp_create_nonce('gms_messaging_nonce'),
                     'locale' => get_locale(),
                     'strings' => array(
                         'searchPlaceholder' => __('Search logs…', 'guest-management-system'),

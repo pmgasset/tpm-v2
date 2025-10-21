@@ -125,7 +125,7 @@ class GMS_AJAX_Handler {
     }
 
     public function list_operational_logs() {
-        $this->verify_messaging_permissions('gms_logs_nonce');
+        $this->verify_messaging_permissions();
 
         $page = isset($_REQUEST['page']) ? max(1, intval($_REQUEST['page'])) : 1;
         $per_page = isset($_REQUEST['per_page']) ? max(1, min(100, intval($_REQUEST['per_page']))) : 50;
