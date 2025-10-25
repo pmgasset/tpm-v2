@@ -184,6 +184,46 @@ function gms_get_housekeeper_url($reservation_id) {
     return $access['url'];
 }
 
+function gms_build_staff_overview_url($token) {
+    if (!is_scalar($token)) {
+        return false;
+    }
+
+    $token = trim((string) $token);
+
+    if ($token === '') {
+        return false;
+    }
+
+    global $wp_rewrite;
+
+    $encoded_token = rawurlencode($token);
+
+    if (is_object($wp_rewrite) && method_exists($wp_rewrite, 'using_permalinks') && $wp_rewrite->using_permalinks()) {
+        $path = 'staff-overview/' . $encoded_token;
+
+        return home_url(user_trailingslashit($path));
+    }
+
+    return add_query_arg(
+        array(
+            'gms_staff_overview' => 1,
+            'gms_staff_token' => $encoded_token,
+        ),
+        home_url('/')
+    );
+}
+
+function gms_get_staff_overview_url() {
+    $token = GMS_Database::getStaffOverviewAccessToken();
+
+    if ($token === '') {
+        return false;
+    }
+
+    return gms_build_staff_overview_url($token);
+}
+
 function gms_get_housekeeper_contacts($reservation) {
     $reservation = is_array($reservation) ? $reservation : array();
 

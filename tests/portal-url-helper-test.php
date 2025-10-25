@@ -262,4 +262,11 @@ if ($result !== $expected) {
     throw new RuntimeException('gms_build_portal_url produced unexpected URL: ' . var_export($result, true));
 }
 
+$staff = gms_build_staff_overview_url('staff token');
+$expected_staff = 'https://example.com/?gms_staff_overview=1&gms_staff_token=staff%2520token';
+
+if ($staff !== $expected_staff) {
+    throw new RuntimeException('gms_build_staff_overview_url produced unexpected URL: ' . var_export($staff, true));
+}
+
 echo "portal-url-helper-test: OK\n";
