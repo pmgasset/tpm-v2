@@ -4490,11 +4490,45 @@ class GMS_Database {
                 $reservation['guest_profile_url'] = gms_build_guest_profile_url($reservation['guest_profile_token']);
             }
 
-            $reservation['checkin_timestamp'] = isset($reservation['checkin_date']) ? strtotime($reservation['checkin_date']) : false;
-            $reservation['checkout_timestamp'] = isset($reservation['checkout_date']) ? strtotime($reservation['checkout_date']) : false;
+            $reservation['checkin_timestamp'] = self::parseStaffOverviewTimestamp($reservation['checkin_date'] ?? null);
+            $reservation['checkout_timestamp'] = self::parseStaffOverviewTimestamp($reservation['checkout_date'] ?? null);
 
             return $reservation;
         }, $reservations);
+    }
+
+    private static function parseStaffOverviewTimestamp($value) {
+        if (is_array($value) && isset($value['timestamp'])) {
+            $value = $value['timestamp'];
+        }
+
+        if (is_numeric($value)) {
+            $numeric = (int) $value;
+
+            return $numeric > 0 ? $numeric : false;
+        }
+
+        $string = is_scalar($value) ? trim((string) $value) : '';
+
+        if ($string === '' || $string === '0000-00-00 00:00:00') {
+            return false;
+        }
+
+        if (function_exists('wp_timezone')) {
+            $timezone = wp_timezone();
+        } else {
+            $timezone = new \DateTimeZone('UTC');
+        }
+
+        try {
+            $datetime = new \DateTimeImmutable($string, $timezone);
+        } catch (\Exception $exception) {
+            $timestamp = strtotime($string);
+
+            return $timestamp !== false ? (int) $timestamp : false;
+        }
+
+        return $datetime->getTimestamp();
     }
 
     /**

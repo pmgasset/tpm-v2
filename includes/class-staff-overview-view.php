@@ -160,9 +160,9 @@ class GMS_Staff_Overview_View {
 
         $contact_confirmed_at = sanitize_text_field($reservation['contact_info_confirmed_at'] ?? '');
         $contact_confirmed_label = '';
-        if ($contact_confirmed_at !== '' && $contact_confirmed_at !== '0000-00-00 00:00:00') {
-            $confirmed_timestamp = strtotime($contact_confirmed_at);
-            if ($confirmed_timestamp) {
+        if ($contact_confirmed_at !== '') {
+            $confirmed_timestamp = self::resolveTimestamp($contact_confirmed_at);
+            if ($confirmed_timestamp > 0) {
                 $contact_confirmed_label = self::formatTimestampLabel($confirmed_timestamp);
             }
         }
@@ -448,20 +448,9 @@ class GMS_Staff_Overview_View {
     }
 
     private static function formatDateTimeValue($raw) {
-        if (is_array($raw) && isset($raw['timestamp'])) {
-            $timestamp = (int) $raw['timestamp'];
-        } elseif (is_numeric($raw)) {
-            $timestamp = (int) $raw;
-        } else {
-            $raw_string = is_array($raw) ? '' : (string) $raw;
-            $raw_string = trim($raw_string);
-            if ($raw_string === '' || $raw_string === '0000-00-00 00:00:00') {
-                return array('label' => '', 'timestamp' => 0);
-            }
-            $timestamp = strtotime($raw_string);
-        }
+        $timestamp = self::resolveTimestamp($raw);
 
-        if (!$timestamp) {
+        if ($timestamp <= 0) {
             return array('label' => '', 'timestamp' => 0);
         }
 
@@ -469,6 +458,40 @@ class GMS_Staff_Overview_View {
             'label' => self::formatTimestampLabel($timestamp),
             'timestamp' => $timestamp,
         );
+    }
+
+    private static function resolveTimestamp($value) {
+        if (is_array($value) && isset($value['timestamp'])) {
+            $value = $value['timestamp'];
+        }
+
+        if (is_numeric($value)) {
+            $numeric = (int) $value;
+
+            return $numeric > 0 ? $numeric : 0;
+        }
+
+        $raw = is_scalar($value) ? trim((string) $value) : '';
+
+        if ($raw === '' || $raw === '0000-00-00 00:00:00') {
+            return 0;
+        }
+
+        if (function_exists('wp_timezone')) {
+            $timezone = wp_timezone();
+        } else {
+            $timezone = new DateTimeZone('UTC');
+        }
+
+        try {
+            $datetime = new DateTimeImmutable($raw, $timezone);
+        } catch (Exception $exception) {
+            $timestamp = strtotime($raw);
+
+            return $timestamp !== false ? (int) $timestamp : 0;
+        }
+
+        return $datetime->getTimestamp();
     }
 
     private static function formatTimestampLabel($timestamp) {
