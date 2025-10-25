@@ -950,7 +950,8 @@ function gms_handle_reservation_status_transition($reservation_id, $new_status, 
     $previous_status = $previous_status !== null ? sanitize_key($previous_status) : null;
 
     $should_handle_approved  = $new_status === 'approved' && $previous_status !== 'approved';
-    $should_handle_completed = $new_status === 'completed' && $previous_status !== 'completed';
+    $should_handle_completed = $new_status === 'completed'
+        && in_array($previous_status, array('pending', 'approved'), true);
 
     if (!$should_handle_approved && !$should_handle_completed) {
         return;
@@ -1009,5 +1010,32 @@ function gms_handle_reservation_status_transition($reservation_id, $new_status, 
         if (class_exists('GMS_Housekeeping_Integration')) {
             GMS_Housekeeping_Integration::sendCleaningWindowEvent($reservation, $window_start, $window_end);
         }
+
+        $housekeeper_link = GMS_Database::getHousekeeperLinkForReservation($reservation_id);
+        $housekeeper_token = is_array($housekeeper_link) ? trim((string) ($housekeeper_link['token'] ?? '')) : '';
+
+        if ($housekeeper_token === '') {
+            return;
+        }
+
+        $contacts = gms_get_housekeeper_contacts($reservation);
+        $phones = isset($contacts['phones']) ? array_filter((array) $contacts['phones']) : array();
+
+        if (empty($phones)) {
+            return;
+        }
+
+        static $housekeeper_sms_handler = null;
+
+        if ($housekeeper_sms_handler === null) {
+            $housekeeper_sms_handler = new GMS_SMS_Handler();
+        }
+
+        $housekeeper_sms_handler->handleHousekeeperAssignment(
+            $reservation_id,
+            $housekeeper_token,
+            '',
+            $reservation
+        );
     }
 }
