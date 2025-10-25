@@ -4411,6 +4411,158 @@ class GMS_Database {
         return array_values(array_filter($results));
     }
 
+    /**
+     * Retrieve reservations for the property staff overview page.
+     *
+     * @param array $args
+     * @return array
+     */
+    public static function getStaffOverviewReservations($args = array()) {
+        $defaults = array(
+            'status' => 'all',
+            'search' => '',
+            'limit' => 200,
+            'orderby' => 'checkin_date',
+            'order' => 'ASC',
+        );
+
+        $args = wp_parse_args($args, $defaults);
+
+        $default_limit = (int) $args['limit'];
+        if ($default_limit <= 0) {
+            $default_limit = 200;
+        }
+
+        $max_limit = 500;
+        if (function_exists('apply_filters')) {
+            $default_limit = (int) apply_filters('gms_staff_overview_default_limit', $default_limit);
+            $max_limit = (int) apply_filters('gms_staff_overview_max_limit', $max_limit);
+        }
+
+        $limit = max(1, min($default_limit, $max_limit > 0 ? $max_limit : 500));
+
+        $order = strtoupper((string) $args['order']) === 'DESC' ? 'DESC' : 'ASC';
+        $orderby = sanitize_key($args['orderby']);
+        if ($orderby === '') {
+            $orderby = 'checkin_date';
+        }
+
+        $query_args = array(
+            'per_page' => $limit,
+            'page' => 1,
+            'orderby' => $orderby,
+            'order' => $order,
+        );
+
+        $status = $args['status'];
+        if (is_string($status)) {
+            $status = trim($status);
+            if ($status === 'all') {
+                $status = '';
+            }
+        }
+
+        if ($status !== '' && $status !== null) {
+            $query_args['status'] = $status;
+        }
+
+        $search = trim((string) $args['search']);
+        if ($search !== '') {
+            $query_args['search'] = $search;
+        }
+
+        $reservations = self::get_reservations($query_args);
+
+        return array_map(function ($reservation) {
+            if (!is_array($reservation)) {
+                return $reservation;
+            }
+
+            if (isset($reservation['door_code'])) {
+                $reservation['door_code'] = self::sanitizeDoorCode($reservation['door_code']);
+            }
+
+            if (!empty($reservation['portal_token']) && function_exists('gms_build_portal_url')) {
+                $reservation['portal_url'] = gms_build_portal_url($reservation['portal_token']);
+            }
+
+            if (empty($reservation['guest_profile_url']) && !empty($reservation['guest_profile_token']) && function_exists('gms_build_guest_profile_url')) {
+                $reservation['guest_profile_url'] = gms_build_guest_profile_url($reservation['guest_profile_token']);
+            }
+
+            $reservation['checkin_timestamp'] = isset($reservation['checkin_date']) ? strtotime($reservation['checkin_date']) : false;
+            $reservation['checkout_timestamp'] = isset($reservation['checkout_date']) ? strtotime($reservation['checkout_date']) : false;
+
+            return $reservation;
+        }, $reservations);
+    }
+
+    /**
+     * Retrieve or generate the staff overview token stored in WordPress options.
+     *
+     * @return string
+     */
+    public static function getStaffOverviewAccessToken() {
+        $token = get_option('gms_staff_overview_token', '');
+        $token = is_string($token) ? trim($token) : '';
+
+        if ($token !== '') {
+            return $token;
+        }
+
+        if (function_exists('wp_generate_password')) {
+            $generated = wp_generate_password(40, false, false);
+        } elseif (function_exists('random_bytes')) {
+            try {
+                $generated = bin2hex(random_bytes(20));
+            } catch (Exception $e) {
+                $generated = md5(uniqid('', true));
+            }
+        } else {
+            $generated = md5(uniqid('', true));
+        }
+
+        $generated = sanitize_text_field($generated);
+
+        if ($generated === '') {
+            return '';
+        }
+
+        update_option('gms_staff_overview_token', $generated);
+
+        return $generated;
+    }
+
+    /**
+     * Validate a staff overview token against the stored option.
+     *
+     * @param string $token
+     * @return bool
+     */
+    public static function isValidStaffOverviewToken($token) {
+        if (!is_scalar($token)) {
+            return false;
+        }
+
+        $token = sanitize_text_field((string) $token);
+
+        if ($token === '') {
+            return false;
+        }
+
+        $expected = self::getStaffOverviewAccessToken();
+
+        if ($expected === '') {
+            return false;
+        }
+
+        if (function_exists('hash_equals')) {
+            return hash_equals($expected, $token);
+        }
+
+        return $expected === $token;
+    }
+
     public static function count_reservations($args = array()) {
         $defaults = array(
             'search' => '',
