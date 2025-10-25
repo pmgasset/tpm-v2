@@ -1307,6 +1307,23 @@ class GMS_Admin {
             )
         );
 
+        add_settings_section(
+            'gms_general_staff_access',
+            __('Staff Access', 'guest-management-system'),
+            function() {
+                echo '<p>' . esc_html__('Share read-only dashboards with property staff who do not require full admin access.', 'guest-management-system') . '</p>';
+            },
+            'gms_settings_general'
+        );
+
+        add_settings_field(
+            'gms_staff_overview_link',
+            __('Staff Overview Link', 'guest-management-system'),
+            array($this, 'render_staff_overview_link_field'),
+            'gms_settings_general',
+            'gms_general_staff_access'
+        );
+
         // Integrations tab - API credentials
         $integration_options = array(
             'gms_stripe_pk' => array('label' => __('Stripe Publishable Key', 'guest-management-system')),
@@ -1680,6 +1697,44 @@ class GMS_Admin {
         if (!empty($description)) {
             printf('<span class="description">%s</span>', esc_html($description));
         }
+    }
+
+    /**
+     * Render the staff overview link field.
+     */
+    public function render_staff_overview_link_field() {
+        if (!class_exists('GMS_Database')) {
+            echo '<p class="description">' . esc_html__('Staff overview access is unavailable because the database layer is not loaded.', 'guest-management-system') . '</p>';
+
+            return;
+        }
+
+        $token = GMS_Database::getStaffOverviewAccessToken();
+        $url = ($token !== '' && function_exists('gms_build_staff_overview_url')) ? gms_build_staff_overview_url($token) : '';
+
+        if ($url === '') {
+            echo '<p class="description">' . esc_html__('No staff overview link is available yet. Activate the plugin or refresh this page to generate a token automatically.', 'guest-management-system') . '</p>';
+
+            return;
+        }
+
+        $field_id = 'gms_staff_overview_url';
+
+        printf(
+            '<input type="text" readonly id="%1$s" class="regular-text code" value="%2$s" />',
+            esc_attr($field_id),
+            esc_attr($url)
+        );
+
+        printf(
+            ' <button type="button" class="button gms-copy-trigger" data-copy-value="%1$s" data-copy-success="%2$s">%3$s</button>',
+            esc_attr($url),
+            esc_attr__('Staff overview link copied to clipboard.', 'guest-management-system'),
+            esc_html__('Copy Link', 'guest-management-system')
+        );
+
+        echo '<p class="description">' . esc_html__('Share this read-only link with hotel managers who only need to view guest and reservation summaries.', 'guest-management-system') . '</p>';
+        echo '<p class="description">' . esc_html__('Current access token:', 'guest-management-system') . ' <code>' . esc_html($token) . '</code></p>';
     }
 
     /**
