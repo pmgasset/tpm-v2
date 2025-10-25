@@ -30,6 +30,7 @@ class GuestManagementSystem {
     private $portal_request = null;
     private $guest_profile_request = null;
     private $housekeeper_request = null;
+    private $staff_overview_request = null;
     
     public static function getInstance() {
         if (self::$instance === null) {
@@ -94,6 +95,7 @@ class GuestManagementSystem {
             'class-agreement-handler.php', // Load the new agreement handler class
             'class-housekeeping-integration.php',
             'class-housekeeper-checklist-view.php',
+            'class-staff-overview-view.php',
             'functions.php'
         );
         
@@ -150,6 +152,8 @@ class GuestManagementSystem {
             }
         }
 
+        GMS_Database::getStaffOverviewAccessToken();
+
         GMS_Database::recalculateAllCommunicationContexts();
     }
     
@@ -184,6 +188,12 @@ class GuestManagementSystem {
             'index.php?gms_housekeeper=1&gms_housekeeper_token=$matches[1]',
             'top'
         );
+
+        add_rewrite_rule(
+            '^staff-overview/([^/]+)/?$',
+            'index.php?gms_staff_overview=1&gms_staff_token=$matches[1]',
+            'top'
+        );
     }
 
     public function addQueryVars($vars) {
@@ -193,9 +203,11 @@ class GuestManagementSystem {
         $vars[] = 'guest_profile_token';
         $vars[] = 'gms_housekeeper';
         $vars[] = 'gms_housekeeper_token';
+        $vars[] = 'gms_staff_overview';
+        $vars[] = 'gms_staff_token';
         return $vars;
     }
-    
+
     public function handleGuestPortal() {
         $portal_context = $this->resolvePortalRequest();
 
@@ -234,6 +246,23 @@ class GuestManagementSystem {
         $housekeeper_context = $this->resolveHousekeeperRequest();
 
         if (!$housekeeper_context['is_housekeeper']) {
+            $staff_context = $this->resolveStaffOverviewRequest();
+
+            if ($staff_context['is_staff']) {
+                $this->synchronizeStaffOverviewQueryState($staff_context['token']);
+
+                if (function_exists('status_header')) {
+                    status_header(200);
+                }
+
+                if (function_exists('nocache_headers')) {
+                    nocache_headers();
+                }
+
+                GMS_Staff_Overview_View::displayOverview($staff_context['token']);
+                exit;
+            }
+
             return;
         }
 
@@ -291,7 +320,25 @@ class GuestManagementSystem {
         $housekeeper_context = $this->resolveHousekeeperRequest();
 
         if (!$housekeeper_context['is_housekeeper']) {
-            return $preempt;
+            $staff_context = $this->resolveStaffOverviewRequest();
+
+            if (!$staff_context['is_staff']) {
+                return $preempt;
+            }
+
+            $this->synchronizeStaffOverviewQueryState($staff_context['token'], $wp_query);
+
+            add_filter('redirect_canonical', '__return_false', 10, 2);
+
+            if (function_exists('status_header')) {
+                status_header(200);
+            }
+
+            if (function_exists('nocache_headers')) {
+                nocache_headers();
+            }
+
+            return false;
         }
 
         $this->synchronizeHousekeeperQueryState($housekeeper_context['token'], $wp_query);
@@ -327,6 +374,12 @@ class GuestManagementSystem {
                 'reservationId' => $reservation ? $reservation['id'] : 0
             ));
 
+            return;
+        }
+
+        $staff_context = $this->resolveStaffOverviewRequest();
+
+        if ($staff_context['is_staff']) {
             return;
         }
 
@@ -688,6 +741,64 @@ class GuestManagementSystem {
         return $this->housekeeper_request;
     }
 
+    private function resolveStaffOverviewRequest() {
+        if ($this->staff_overview_request !== null) {
+            return $this->staff_overview_request;
+        }
+
+        $is_staff = false;
+        $token = '';
+
+        $query_flag = get_query_var('gms_staff_overview');
+
+        if (!empty($query_flag)) {
+            $token = (string) get_query_var('gms_staff_token');
+            if ($token !== '') {
+                $is_staff = true;
+            }
+        }
+
+        if (!$is_staff && isset($_GET['gms_staff_overview'])) {
+            $raw_flag = strtolower(trim(wp_unslash($_GET['gms_staff_overview'])));
+            $truthy_flags = array('1', 'true', 'yes', 'on');
+
+            if (in_array($raw_flag, $truthy_flags, true)) {
+                $token = isset($_GET['gms_staff_token']) ? wp_unslash($_GET['gms_staff_token']) : '';
+                if ($token !== '') {
+                    $is_staff = true;
+                }
+            }
+        }
+
+        if (!$is_staff && isset($_SERVER['REQUEST_URI'])) {
+            $extracted = $this->extractStaffOverviewTokenFromPath(wp_unslash($_SERVER['REQUEST_URI']));
+            if ($extracted !== '') {
+                $token = $extracted;
+                $is_staff = true;
+            }
+        }
+
+        if ($is_staff) {
+            $token = sanitize_text_field($token);
+
+            if ($token === '') {
+                $is_staff = false;
+            }
+        }
+
+        if ($is_staff && function_exists('set_query_var')) {
+            set_query_var('gms_staff_overview', 1);
+            set_query_var('gms_staff_token', $token);
+        }
+
+        $this->staff_overview_request = array(
+            'is_staff' => $is_staff,
+            'token' => $is_staff ? $token : ''
+        );
+
+        return $this->staff_overview_request;
+    }
+
     private function synchronizePortalQueryState($token, $primary_query = null) {
         $queries = array();
 
@@ -850,6 +961,59 @@ class GuestManagementSystem {
         }
     }
 
+    private function synchronizeStaffOverviewQueryState($token, $primary_query = null) {
+        $queries = array();
+
+        if ($primary_query instanceof WP_Query) {
+            $queries[] = $primary_query;
+        }
+
+        global $wp_query, $wp_the_query;
+
+        if ($wp_query instanceof WP_Query) {
+            $queries[] = $wp_query;
+        }
+
+        if ($wp_the_query instanceof WP_Query) {
+            $queries[] = $wp_the_query;
+        }
+
+        foreach ($queries as $query_obj) {
+            if (!$query_obj instanceof WP_Query) {
+                continue;
+            }
+
+            $query_obj->is_404 = false;
+            $query_obj->is_home = false;
+            $query_obj->is_page = false;
+            $query_obj->is_archive = false;
+            $query_obj->is_singular = false;
+            $query_obj->query['error'] = '';
+            $query_obj->query_vars['error'] = '';
+            $query_obj->set('gms_staff_overview', 1);
+            $query_obj->set('gms_staff_token', $token);
+
+            if (isset($query_obj->query_vars['error'])) {
+                unset($query_obj->query_vars['error']);
+            }
+        }
+
+        global $wp;
+
+        if ($wp instanceof WP) {
+            $wp->query_vars['gms_staff_overview'] = 1;
+            $wp->query_vars['gms_staff_token'] = $token;
+
+            if (isset($wp->query_vars['error'])) {
+                unset($wp->query_vars['error']);
+            }
+
+            if (isset($wp->query) && is_array($wp->query) && isset($wp->query['error'])) {
+                unset($wp->query['error']);
+            }
+        }
+    }
+
     private function extractPortalTokenFromPath($request_uri) {
         if ($request_uri === '') {
             return '';
@@ -969,6 +1133,52 @@ class GuestManagementSystem {
         }
 
         $prefix = 'housekeeper/';
+
+        if (strpos($path, $prefix) !== 0) {
+            return '';
+        }
+
+        $token = substr($path, strlen($prefix));
+        $token = trim($token, '/');
+
+        if ($token === '') {
+            return '';
+        }
+
+        if (strpos($token, '/') !== false) {
+            return '';
+        }
+
+        return rawurldecode($token);
+    }
+
+    private function extractStaffOverviewTokenFromPath($request_uri) {
+        if ($request_uri === '') {
+            return '';
+        }
+
+        $parsed_request = wp_parse_url($request_uri);
+        $path = isset($parsed_request['path']) ? trim($parsed_request['path'], '/') : '';
+
+        if ($path === '') {
+            return '';
+        }
+
+        $home_path = '';
+        $home_parts = wp_parse_url(home_url('/'));
+        if ($home_parts && !empty($home_parts['path'])) {
+            $home_path = trim($home_parts['path'], '/');
+        }
+
+        if ($home_path !== '' && strpos($path, $home_path) === 0) {
+            $path = trim(substr($path, strlen($home_path)), '/');
+        }
+
+        if ($path === '') {
+            return '';
+        }
+
+        $prefix = 'staff-overview/';
 
         if (strpos($path, $prefix) !== 0) {
             return '';
