@@ -137,12 +137,11 @@ class GMS_Staff_Overview_View {
 
         $nights = '';
         if (!empty($checkin['timestamp']) && !empty($checkout['timestamp']) && $checkout['timestamp'] > $checkin['timestamp']) {
-            $seconds = $checkout['timestamp'] - $checkin['timestamp'];
-            $nights_calc = (int) floor($seconds / (60 * 60 * 24));
-            if ($nights_calc <= 0) {
-                $nights_calc = 1;
+            $nights_calc = self::calculateStayNights((int) $checkin['timestamp'], (int) $checkout['timestamp']);
+
+            if ($nights_calc > 0) {
+                $nights = sprintf(_n('%d night', '%d nights', $nights_calc, 'guest-management-system'), $nights_calc);
             }
-            $nights = sprintf(_n('%d night', '%d nights', $nights_calc, 'guest-management-system'), $nights_calc);
         }
 
         $status_key = sanitize_key($reservation['status'] ?? '');
@@ -517,6 +516,49 @@ class GMS_Staff_Overview_View {
         $dt->setTimezone($timezone);
 
         return $dt->format('M j, Y g:i A');
+    }
+
+    private static function calculateStayNights($checkin_timestamp, $checkout_timestamp) {
+        if (!is_int($checkin_timestamp)) {
+            $checkin_timestamp = (int) $checkin_timestamp;
+        }
+
+        if (!is_int($checkout_timestamp)) {
+            $checkout_timestamp = (int) $checkout_timestamp;
+        }
+
+        if ($checkin_timestamp <= 0 || $checkout_timestamp <= $checkin_timestamp) {
+            return 0;
+        }
+
+        if (function_exists('wp_timezone')) {
+            $timezone = wp_timezone();
+        } else {
+            $timezone = new DateTimeZone('UTC');
+        }
+
+        try {
+            $checkin = new DateTimeImmutable('@' . $checkin_timestamp);
+            $checkout = new DateTimeImmutable('@' . $checkout_timestamp);
+
+            $checkin = $checkin->setTimezone($timezone)->setTime(0, 0, 0);
+            $checkout = $checkout->setTimezone($timezone)->setTime(0, 0, 0);
+
+            $interval = $checkin->diff($checkout);
+            $days = (int) $interval->days;
+
+            if ($days <= 0) {
+                return 1;
+            }
+
+            return $days;
+        } catch (Exception $exception) {
+            $seconds = $checkout_timestamp - $checkin_timestamp;
+            $day_length = defined('DAY_IN_SECONDS') ? DAY_IN_SECONDS : 86400;
+            $nights = (int) floor($seconds / $day_length);
+
+            return $nights > 0 ? $nights : 1;
+        }
     }
 
     private static function formatPhone($phone) {
