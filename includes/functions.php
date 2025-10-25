@@ -230,6 +230,26 @@ function gms_get_housekeeper_contacts($reservation) {
     $emails = array();
     $phones = array();
 
+    if (class_exists('GMS_Database') && method_exists('GMS_Database', 'getHousekeeperContactsForReservation')) {
+        $managed_contacts = GMS_Database::getHousekeeperContactsForReservation($reservation);
+
+        if (is_array($managed_contacts)) {
+            foreach ($managed_contacts as $managed_contact) {
+                if (!is_array($managed_contact)) {
+                    continue;
+                }
+
+                if (!empty($managed_contact['emails']) && is_array($managed_contact['emails'])) {
+                    $emails = array_merge($emails, $managed_contact['emails']);
+                }
+
+                if (!empty($managed_contact['phones']) && is_array($managed_contact['phones'])) {
+                    $phones = array_merge($phones, $managed_contact['phones']);
+                }
+            }
+        }
+    }
+
     $email_keys = array('housekeeper_email', 'housekeeping_email', 'cleaner_email', 'cleaning_email');
     $phone_keys = array('housekeeper_phone', 'housekeeping_phone', 'cleaner_phone', 'cleaning_phone');
 
