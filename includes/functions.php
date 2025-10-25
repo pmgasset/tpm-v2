@@ -949,9 +949,46 @@ function gms_handle_reservation_status_transition($reservation_id, $new_status, 
     $new_status = sanitize_key($new_status);
     $previous_status = $previous_status !== null ? sanitize_key($previous_status) : null;
 
-    $should_handle_approved  = $new_status === 'approved' && $previous_status !== 'approved';
+    $should_handle_approved = $new_status === 'approved' && $previous_status !== 'approved';
+
+    $completed_predecessors = array(
+        'pending',
+        'approved',
+        'confirmed',
+        'awaiting_signature',
+        'awaiting_id_verification',
+    );
+
+    if (function_exists('apply_filters')) {
+        $completed_predecessors = apply_filters(
+            'gms_cleaning_ready_previous_statuses',
+            $completed_predecessors,
+            $reservation_id,
+            $new_status,
+            $previous_status
+        );
+    }
+
+    if (!is_array($completed_predecessors)) {
+        $completed_predecessors = array();
+    }
+
+    $completed_predecessors = array_values(array_unique(array_filter(array_map(
+        function ($status) {
+            if (!is_scalar($status)) {
+                return '';
+            }
+
+            $sanitized = sanitize_key($status);
+
+            return $sanitized !== '' ? $sanitized : '';
+        },
+        $completed_predecessors
+    ))));
+
     $should_handle_completed = $new_status === 'completed'
-        && in_array($previous_status, array('pending', 'approved'), true);
+        && $previous_status !== 'completed'
+        && in_array($previous_status, $completed_predecessors, true);
 
     if (!$should_handle_approved && !$should_handle_completed) {
         return;
