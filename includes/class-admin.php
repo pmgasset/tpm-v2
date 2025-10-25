@@ -2492,6 +2492,21 @@ class GMS_Admin {
                                             <?php endif; ?>
                                         </li>
                                     </ul>
+                                    <?php if ($reservation['housekeeper_url'] !== '') :
+                                        $housekeeper_action_attributes = ' data-housekeeper-url="' . esc_attr($reservation['housekeeper_url']) . '"';
+                                        if (!empty($reservation['housekeeper_token'])) {
+                                            $housekeeper_action_attributes .= ' data-housekeeper-token="' . esc_attr($reservation['housekeeper_token']) . '"';
+                                        }
+                                        ?>
+                                        <div class="gms-housekeeper__actions">
+                                            <a class="button button-secondary"
+                                                href="<?php echo esc_url($reservation['housekeeper_url']); ?>"
+                                                target="_blank"
+                                                rel="noopener noreferrer"<?php echo $housekeeper_action_attributes; ?>>
+                                                <?php esc_html_e('Open checklist', 'guest-management-system'); ?>
+                                            </a>
+                                        </div>
+                                    <?php endif; ?>
                                 </div>
                             </article>
                         <?php endforeach; ?>
@@ -5005,6 +5020,12 @@ class GMS_Admin {
                 'guest_name' => $guest_name,
                 'property_name' => $property_name,
                 'status' => $status,
+                'housekeeper_url' => isset($reservation['housekeeper_url']) && is_string($reservation['housekeeper_url'])
+                    ? trim($reservation['housekeeper_url'])
+                    : '',
+                'housekeeper_token' => isset($reservation['housekeeper_token'])
+                    ? trim((string) $reservation['housekeeper_token'])
+                    : '',
                 'checkin' => $checkin_dt,
                 'checkout' => $checkout_dt,
                 'checkin_ts' => $checkin_ts,
