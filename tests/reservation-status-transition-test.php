@@ -5,6 +5,7 @@ if (!defined('ABSPATH')) {
 
 $logged_messages = array();
 $captured_request = null;
+$gms_cleaning_status_overrides = array();
 
 if (!function_exists('add_action')) {
     function add_action($hook, $callback, $priority = 10, $accepted_args = 1) {
@@ -288,7 +289,14 @@ if (!function_exists('wp_remote_retrieve_body')) {
 }
 
 if (!function_exists('apply_filters')) {
-    function apply_filters($hook, $value) {
+    function apply_filters($hook, $value, ...$args) {
+        global $gms_cleaning_status_overrides;
+
+        if ($hook === 'gms_cleaning_ready_previous_statuses') {
+            $overrides = is_array($gms_cleaning_status_overrides) ? $gms_cleaning_status_overrides : array();
+            $value = array_merge((array) $value, $overrides);
+        }
+
         return $value;
     }
 }
@@ -348,14 +356,23 @@ if (!function_exists('wp_date')) {
 
 if (!class_exists('GMS_Database')) {
     class GMS_Database {
+        public static $reservation_template = array();
+        public static $housekeeper_tokens = array();
+        public static $default_token = 'hk-token';
+
         public static function getReservationById($reservation_id) {
+            $reservation = is_array(self::$reservation_template) ? self::$reservation_template : array();
+            $reservation['id'] = $reservation_id;
+
+            return $reservation;
+        }
+
+        public static function getHousekeeperLinkForReservation($reservation_id) {
+            $tokens = is_array(self::$housekeeper_tokens) ? self::$housekeeper_tokens : array();
+            $token = isset($tokens[$reservation_id]) ? $tokens[$reservation_id] : self::$default_token;
+
             return array(
-                'id' => $reservation_id,
-                'guest_email' => 'guest@example.com',
-                'guest_phone' => '+1234567890',
-                'checkout_date' => '2024-07-18 16:00:00',
-                'property_name' => 'Ocean View Villa',
-                'guest_name' => 'Ada Lovelace',
+                'token' => $token,
             );
         }
     }
@@ -371,8 +388,19 @@ if (!class_exists('GMS_Email_Handler')) {
 
 if (!class_exists('GMS_SMS_Handler')) {
     class GMS_SMS_Handler {
+        public static $assignments = array();
+
         public function sendReservationApprovedSMS($reservation) {
             // no-op for tests
+        }
+
+        public function handleHousekeeperAssignment($reservation_id, $new_token, $previous_token, $reservation = null) {
+            self::$assignments[] = array(
+                'reservation_id' => $reservation_id,
+                'token' => $new_token,
+                'previous_token' => $previous_token,
+                'reservation' => $reservation,
+            );
         }
     }
 }
@@ -393,43 +421,123 @@ $wp_rewrite = new class {
 require_once __DIR__ . '/../includes/class-housekeeping-integration.php';
 require_once __DIR__ . '/../includes/functions.php';
 
-$captured_request = null;
+GMS_Database::$reservation_template = array(
+    'guest_email' => 'guest@example.com',
+    'guest_phone' => '+1234567890',
+    'checkout_date' => '2024-07-18 16:00:00',
+    'checkin_date' => '2024-07-15 16:00:00',
+    'property_name' => 'Ocean View Villa',
+    'guest_name' => 'Ada Lovelace',
+    'housekeeper_phone' => array('+1 (555) 000-1234'),
+    'webhook_data' => array(),
+);
+GMS_Database::$housekeeper_tokens = array();
+GMS_Database::$default_token = 'hk-default-token';
 
-$previous_status = 'confirmed';
-$new_status = 'completed';
-$reservation_id = 42;
-
-gms_handle_reservation_status_transition($reservation_id, $new_status, $previous_status);
-
-if ($captured_request === null) {
-    throw new RuntimeException('Housekeeping request was not dispatched.');
-}
-
-$payload = json_decode($captured_request['args']['body'], true);
-if (!is_array($payload)) {
-    throw new RuntimeException('Unable to decode dispatched payload.');
-}
+$statuses_to_test = array(
+    'pending' => 'hk-pending',
+    'approved' => 'hk-approved',
+    'confirmed' => 'hk-confirmed',
+    'awaiting_signature' => 'hk-awaiting-signature',
+    'awaiting_id_verification' => 'hk-awaiting-id',
+);
 
 $timezone = new DateTimeZone('America/New_York');
-$checkout = new DateTimeImmutable('2024-07-18 16:00:00', $timezone);
+$checkout = new DateTimeImmutable(GMS_Database::$reservation_template['checkout_date'], $timezone);
 $expected_start = $checkout->modify('+30 minutes')->format(DATE_ATOM);
 $expected_end = $checkout->modify('+120 minutes')->format(DATE_ATOM);
 
-if (($payload['windowStart'] ?? '') !== $expected_start) {
-    throw new RuntimeException('Unexpected windowStart: ' . var_export($payload['windowStart'] ?? null, true));
+$reservation_id = 100;
+
+foreach ($statuses_to_test as $previous_status => $token) {
+    $reservation_id++;
+
+    GMS_Database::$housekeeper_tokens[$reservation_id] = $token;
+
+    $captured_request = null;
+    GMS_SMS_Handler::$assignments = array();
+
+    gms_handle_reservation_status_transition($reservation_id, 'completed', $previous_status);
+
+    if ($captured_request === null) {
+        throw new RuntimeException('Housekeeping request was not dispatched for status ' . $previous_status . '.');
+    }
+
+    $payload = json_decode($captured_request['args']['body'], true);
+    if (!is_array($payload)) {
+        throw new RuntimeException('Unable to decode dispatched payload for status ' . $previous_status . '.');
+    }
+
+    if (($payload['reservationId'] ?? null) !== $reservation_id) {
+        throw new RuntimeException('Unexpected reservationId for status ' . $previous_status . '.');
+    }
+
+    if (($payload['windowStart'] ?? '') !== $expected_start) {
+        throw new RuntimeException('Unexpected windowStart for status ' . $previous_status . ': ' . var_export($payload['windowStart'] ?? null, true));
+    }
+
+    if (($payload['windowEnd'] ?? '') !== $expected_end) {
+        throw new RuntimeException('Unexpected windowEnd for status ' . $previous_status . ': ' . var_export($payload['windowEnd'] ?? null, true));
+    }
+
+    if (($captured_request['url'] ?? '') !== 'https://housekeeping.example/api/events') {
+        throw new RuntimeException('Unexpected endpoint URL for status ' . $previous_status . ': ' . var_export($captured_request['url'] ?? null, true));
+    }
+
+    $headers = $captured_request['args']['headers'] ?? array();
+    if (($headers['Authorization'] ?? '') !== 'Bearer token-abc') {
+        throw new RuntimeException('Authorization header was not set for status ' . $previous_status . '.');
+    }
+
+    if (count(GMS_SMS_Handler::$assignments) !== 1) {
+        throw new RuntimeException('Housekeeper SMS was not queued for status ' . $previous_status . '.');
+    }
+
+    $assignment = GMS_SMS_Handler::$assignments[0];
+    if ($assignment['token'] !== $token) {
+        throw new RuntimeException('Unexpected token for status ' . $previous_status . '.');
+    }
+
+    if (($assignment['reservation']['id'] ?? null) !== $reservation_id) {
+        throw new RuntimeException('Reservation payload missing for status ' . $previous_status . '.');
+    }
 }
 
-if (($payload['windowEnd'] ?? '') !== $expected_end) {
-    throw new RuntimeException('Unexpected windowEnd: ' . var_export($payload['windowEnd'] ?? null, true));
+$gms_cleaning_status_overrides = array('ready_for_cleaning');
+
+$custom_reservation_id = $reservation_id + 1;
+GMS_Database::$housekeeper_tokens[$custom_reservation_id] = 'hk-custom';
+
+$captured_request = null;
+GMS_SMS_Handler::$assignments = array();
+
+gms_handle_reservation_status_transition($custom_reservation_id, 'completed', 'ready_for_cleaning');
+
+if ($captured_request === null) {
+    throw new RuntimeException('Housekeeping request was not dispatched for filter override.');
 }
 
-if (($captured_request['url'] ?? '') !== 'https://housekeeping.example/api/events') {
-    throw new RuntimeException('Unexpected endpoint URL: ' . var_export($captured_request['url'] ?? null, true));
+if (count(GMS_SMS_Handler::$assignments) !== 1) {
+    throw new RuntimeException('Housekeeper SMS was not queued for filter override.');
 }
 
-$headers = $captured_request['args']['headers'] ?? array();
-if (($headers['Authorization'] ?? '') !== 'Bearer token-abc') {
-    throw new RuntimeException('Authorization header was not set.');
+if (GMS_SMS_Handler::$assignments[0]['token'] !== 'hk-custom') {
+    throw new RuntimeException('Unexpected token for filter override.');
+}
+
+$gms_cleaning_status_overrides = array();
+
+$captured_request = null;
+GMS_SMS_Handler::$assignments = array();
+
+gms_handle_reservation_status_transition($custom_reservation_id + 1, 'completed', 'completed');
+
+if ($captured_request !== null) {
+    throw new RuntimeException('Housekeeping request dispatched for duplicate completed status.');
+}
+
+if (!empty(GMS_SMS_Handler::$assignments)) {
+    throw new RuntimeException('Housekeeper SMS queued for duplicate completed status.');
 }
 
 echo "reservation-status-transition-test: OK\n";
