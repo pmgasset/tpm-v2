@@ -2301,6 +2301,30 @@ class GMS_Admin {
         $list_button_classes = 'button button-secondary' . ($initial_view === 'list' ? ' is-active' : '');
         $calendar_button_classes = 'button button-secondary' . ($initial_view === 'calendar' ? ' is-active' : '');
 
+        $housekeeper_cta_statuses = array('completed');
+        if (function_exists('apply_filters')) {
+            $housekeeper_cta_statuses = apply_filters('gms_housekeeper_cta_statuses', $housekeeper_cta_statuses);
+        }
+
+        if (!is_array($housekeeper_cta_statuses)) {
+            $housekeeper_cta_statuses = array();
+        }
+
+        $housekeeper_cta_statuses = array_values(array_unique(array_filter(array_map(
+            function($status) {
+                if (!is_scalar($status)) {
+                    return '';
+                }
+
+                $sanitized = sanitize_key($status);
+
+                return $sanitized !== '' ? $sanitized : '';
+            },
+            $housekeeper_cta_statuses
+        ))));
+
+        $housekeeper_cta_locked_message = __('The checklist link unlocks after the stay is completed.', 'guest-management-system');
+
         ?>
         <div class="wrap">
             <h1><?php esc_html_e('Housekeeper Schedule', 'guest-management-system'); ?></h1>
@@ -2502,19 +2526,32 @@ class GMS_Admin {
                                             <?php endif; ?>
                                         </li>
                                     </ul>
-                                    <?php if ($reservation['housekeeper_url'] !== '') :
+                                    <?php
+                                    $has_housekeeper_url = $reservation['housekeeper_url'] !== '';
+                                    $cta_is_enabled = $has_housekeeper_url && in_array($status, $housekeeper_cta_statuses, true);
+
+                                    if ($has_housekeeper_url) :
                                         $housekeeper_action_attributes = ' data-housekeeper-url="' . esc_attr($reservation['housekeeper_url']) . '"';
                                         if (!empty($reservation['housekeeper_token'])) {
                                             $housekeeper_action_attributes .= ' data-housekeeper-token="' . esc_attr($reservation['housekeeper_token']) . '"';
                                         }
                                         ?>
                                         <div class="gms-housekeeper__actions">
-                                            <a class="button button-secondary"
-                                                href="<?php echo esc_url($reservation['housekeeper_url']); ?>"
-                                                target="_blank"
-                                                rel="noopener noreferrer"<?php echo $housekeeper_action_attributes; ?>>
-                                                <?php esc_html_e('Open checklist', 'guest-management-system'); ?>
-                                            </a>
+                                            <?php if ($cta_is_enabled) : ?>
+                                                <a class="button button-secondary"
+                                                    href="<?php echo esc_url($reservation['housekeeper_url']); ?>"
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"<?php echo $housekeeper_action_attributes; ?>>
+                                                    <?php esc_html_e('Open checklist', 'guest-management-system'); ?>
+                                                </a>
+                                            <?php else : ?>
+                                                <span class="button button-secondary disabled"
+                                                    role="button"
+                                                    aria-disabled="true"
+                                                    title="<?php echo esc_attr($housekeeper_cta_locked_message); ?>">
+                                                    <?php esc_html_e('Open checklist', 'guest-management-system'); ?>
+                                                </span>
+                                            <?php endif; ?>
                                         </div>
                                     <?php endif; ?>
                                 </div>
