@@ -12,7 +12,7 @@ if (!defined('ABSPATH')) {
 class GMS_Database {
 
     const GUEST_PLACEHOLDER_DOMAIN = 'guest.invalid';
-    const DB_VERSION = '1.6.0';
+    const DB_VERSION = '1.7.0';
     const OPTION_DB_VERSION = 'gms_db_version';
 
     public static function getConversationalChannels() {
@@ -400,6 +400,31 @@ class GMS_Database {
             ],
         ]);
 
+        $table_contacts = $wpdb->prefix . 'gms_housekeeper_contacts';
+        $sql_contacts = "CREATE TABLE $table_contacts (
+            id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            contact_name varchar(255) NOT NULL DEFAULT '',
+            property_id varchar(191) NOT NULL DEFAULT '',
+            property_name varchar(255) NOT NULL DEFAULT '',
+            contact_emails longtext NULL,
+            contact_phones longtext NULL,
+            notes longtext NULL,
+            created_at datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
+            updated_at datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
+            PRIMARY KEY  (id)
+        ) $charset_collate;";
+        dbDelta($sql_contacts);
+        self::maybeAddIndexes($table_contacts, [
+            [
+                'name' => 'property_id',
+                'columns' => ['property_id'],
+            ],
+            [
+                'name' => 'property_name',
+                'columns' => ['property_name'],
+            ],
+        ]);
+
         update_option(self::OPTION_DB_VERSION, self::DB_VERSION);
     }
 
@@ -416,6 +441,7 @@ class GMS_Database {
         self::maybeAddGuestProfileColumns($installed);
         self::maybeAddHousekeeperTokenColumn($installed);
         self::maybeCreateHousekeeperTables($installed);
+        self::maybeCreateHousekeeperContactsTable($installed);
         self::maybeSeedMessageTemplates();
         self::recalculateAllCommunicationContexts();
 
@@ -578,6 +604,49 @@ class GMS_Database {
                 ),
             ));
         }
+    }
+
+    private static function maybeCreateHousekeeperContactsTable($previous_version) {
+        global $wpdb;
+
+        if (!empty($previous_version) && version_compare($previous_version, '1.7.0', '>=')) {
+            return;
+        }
+
+        require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
+
+        $charset_collate = $wpdb->get_charset_collate();
+        $table = $wpdb->prefix . 'gms_housekeeper_contacts';
+
+        if (self::tableExists($table)) {
+            return;
+        }
+
+        $sql = "CREATE TABLE $table (
+            id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            contact_name varchar(255) NOT NULL DEFAULT '',
+            property_id varchar(191) NOT NULL DEFAULT '',
+            property_name varchar(255) NOT NULL DEFAULT '',
+            contact_emails longtext NULL,
+            contact_phones longtext NULL,
+            notes longtext NULL,
+            created_at datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
+            updated_at datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
+            PRIMARY KEY  (id)
+        ) $charset_collate;";
+
+        dbDelta($sql);
+
+        self::maybeAddIndexes($table, array(
+            array(
+                'name' => 'property_id',
+                'columns' => array('property_id'),
+            ),
+            array(
+                'name' => 'property_name',
+                'columns' => array('property_name'),
+            ),
+        ));
     }
 
     private static function backfillHousekeeperTokens($table_name) {
@@ -2271,6 +2340,463 @@ class GMS_Database {
         $deleted = $wpdb->delete($table, array('id' => $submission_id), array('%d'));
 
         return $deleted !== false;
+    }
+
+    private static function flattenHousekeeperContactValues($value) {
+        if (is_array($value)) {
+            $results = array();
+
+            foreach ($value as $item) {
+                $results = array_merge($results, self::flattenHousekeeperContactValues($item));
+            }
+
+            return $results;
+        }
+
+        if (!is_scalar($value)) {
+            return array();
+        }
+
+        $value = trim((string) $value);
+
+        if ($value === '') {
+            return array();
+        }
+
+        $parts = preg_split('/[\r\n,;]+/', $value);
+
+        if (!is_array($parts)) {
+            return array();
+        }
+
+        return array_map('trim', $parts);
+    }
+
+    private static function normalizeHousekeeperContactEmails($value) {
+        $candidates = self::flattenHousekeeperContactValues($value);
+        $emails = array();
+
+        foreach ($candidates as $candidate) {
+            $candidate = trim($candidate);
+
+            if ($candidate === '') {
+                continue;
+            }
+
+            $email = sanitize_email($candidate);
+
+            if ($email === '' || !is_email($email)) {
+                continue;
+            }
+
+            $emails[$email] = $email;
+        }
+
+        return array_values($emails);
+    }
+
+    private static function normalizeHousekeeperContactPhones($value) {
+        $candidates = self::flattenHousekeeperContactValues($value);
+        $phones = array();
+
+        foreach ($candidates as $candidate) {
+            $candidate = trim($candidate);
+
+            if ($candidate === '') {
+                continue;
+            }
+
+            if (function_exists('gms_sanitize_phone')) {
+                $normalized = gms_sanitize_phone($candidate);
+            } else {
+                $normalized = preg_replace('/[^0-9+]/', '', $candidate);
+            }
+
+            $normalized = trim((string) $normalized);
+
+            if ($normalized === '') {
+                continue;
+            }
+
+            $phones[$normalized] = $normalized;
+        }
+
+        return array_values($phones);
+    }
+
+    private static function decodeHousekeeperContactValues($value, $type = 'email') {
+        if (is_string($value)) {
+            $decoded = json_decode($value, true);
+        } elseif (is_array($value)) {
+            $decoded = $value;
+        } else {
+            $decoded = array();
+        }
+
+        if (!is_array($decoded)) {
+            $decoded = array();
+        }
+
+        if ($type === 'phone') {
+            return self::normalizeHousekeeperContactPhones($decoded);
+        }
+
+        return self::normalizeHousekeeperContactEmails($decoded);
+    }
+
+    private static function prepareHousekeeperContactData(array $data) {
+        $emails = self::normalizeHousekeeperContactEmails($data['emails'] ?? ($data['contact_emails'] ?? array()));
+        $phones = self::normalizeHousekeeperContactPhones($data['phones'] ?? ($data['contact_phones'] ?? array()));
+
+        $prepared = array(
+            'contact_name' => substr(sanitize_text_field($data['contact_name'] ?? ''), 0, 255),
+            'property_id' => substr(sanitize_text_field($data['property_id'] ?? ''), 0, 191),
+            'property_name' => substr(sanitize_text_field($data['property_name'] ?? ''), 0, 255),
+            'contact_emails' => wp_json_encode(array_values($emails)),
+            'contact_phones' => wp_json_encode(array_values($phones)),
+            'notes' => wp_kses_post($data['notes'] ?? ''),
+        );
+
+        if (!is_string($prepared['contact_emails'])) {
+            $prepared['contact_emails'] = wp_json_encode(array());
+        }
+
+        if (!is_string($prepared['contact_phones'])) {
+            $prepared['contact_phones'] = wp_json_encode(array());
+        }
+
+        return $prepared;
+    }
+
+    private static function formatHousekeeperContactRow($row) {
+        if (!is_array($row)) {
+            return null;
+        }
+
+        $contact = array(
+            'id' => intval($row['id'] ?? 0),
+            'contact_name' => sanitize_text_field($row['contact_name'] ?? ''),
+            'property_id' => sanitize_text_field($row['property_id'] ?? ''),
+            'property_name' => sanitize_text_field($row['property_name'] ?? ''),
+            'emails' => self::decodeHousekeeperContactValues($row['contact_emails'] ?? array(), 'email'),
+            'phones' => self::decodeHousekeeperContactValues($row['contact_phones'] ?? array(), 'phone'),
+            'notes' => wp_kses_post($row['notes'] ?? ''),
+            'created_at' => isset($row['created_at']) ? sanitize_text_field($row['created_at']) : '',
+            'updated_at' => isset($row['updated_at']) ? sanitize_text_field($row['updated_at']) : '',
+        );
+
+        return $contact;
+    }
+
+    public static function insertHousekeeperContact(array $data) {
+        global $wpdb;
+
+        $table = $wpdb->prefix . 'gms_housekeeper_contacts';
+
+        if (!self::tableExists($table)) {
+            return 0;
+        }
+
+        $prepared = self::prepareHousekeeperContactData($data);
+
+        $insert_data = array_merge($prepared, array(
+            'created_at' => current_time('mysql'),
+            'updated_at' => current_time('mysql'),
+        ));
+
+        $formats = array('%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s');
+
+        $result = $wpdb->insert($table, $insert_data, $formats);
+
+        if ($result === false) {
+            return 0;
+        }
+
+        return (int) $wpdb->insert_id;
+    }
+
+    public static function updateHousekeeperContact($contact_id, array $data) {
+        global $wpdb;
+
+        $contact_id = intval($contact_id);
+
+        if ($contact_id <= 0) {
+            return false;
+        }
+
+        $table = $wpdb->prefix . 'gms_housekeeper_contacts';
+
+        if (!self::tableExists($table)) {
+            return false;
+        }
+
+        $prepared = self::prepareHousekeeperContactData($data);
+        $prepared['updated_at'] = current_time('mysql');
+
+        $formats = array('%s', '%s', '%s', '%s', '%s', '%s', '%s');
+
+        $updated = $wpdb->update($table, $prepared, array('id' => $contact_id), $formats, array('%d'));
+
+        return $updated !== false;
+    }
+
+    public static function deleteHousekeeperContact($contact_id) {
+        global $wpdb;
+
+        $contact_id = intval($contact_id);
+
+        if ($contact_id <= 0) {
+            return false;
+        }
+
+        $table = $wpdb->prefix . 'gms_housekeeper_contacts';
+
+        if (!self::tableExists($table)) {
+            return false;
+        }
+
+        $deleted = $wpdb->delete($table, array('id' => $contact_id), array('%d'));
+
+        return $deleted !== false;
+    }
+
+    public static function getHousekeeperContact($contact_id) {
+        global $wpdb;
+
+        $contact_id = intval($contact_id);
+
+        if ($contact_id <= 0) {
+            return null;
+        }
+
+        $table = $wpdb->prefix . 'gms_housekeeper_contacts';
+
+        if (!self::tableExists($table)) {
+            return null;
+        }
+
+        $row = $wpdb->get_row(
+            $wpdb->prepare("SELECT * FROM {$table} WHERE id = %d", $contact_id),
+            ARRAY_A
+        );
+
+        $formatted = self::formatHousekeeperContactRow($row);
+
+        return $formatted;
+    }
+
+    public static function queryHousekeeperContacts($args = array()) {
+        global $wpdb;
+
+        $defaults = array(
+            'search' => '',
+            'property_id' => '',
+            'property_name' => '',
+            'orderby' => 'updated_at',
+            'order' => 'DESC',
+            'paged' => 1,
+            'per_page' => 20,
+        );
+
+        $args = wp_parse_args($args, $defaults);
+
+        $table = $wpdb->prefix . 'gms_housekeeper_contacts';
+
+        if (!self::tableExists($table)) {
+            return array(
+                'items' => array(),
+                'total' => 0,
+                'page' => max(1, intval($args['paged'])),
+                'per_page' => max(1, intval($args['per_page'])),
+                'total_pages' => 1,
+            );
+        }
+
+        $search = sanitize_text_field($args['search']);
+        $property_id = substr(sanitize_text_field($args['property_id']), 0, 191);
+        $property_name = substr(sanitize_text_field($args['property_name']), 0, 255);
+        $page = max(1, intval($args['paged']));
+        $per_page = max(1, min(100, intval($args['per_page'])));
+        $offset = ($page - 1) * $per_page;
+
+        $orderby_map = array(
+            'contact_name' => 'contact_name',
+            'property_id' => 'property_id',
+            'property_name' => 'property_name',
+            'created_at' => 'created_at',
+            'updated_at' => 'updated_at',
+        );
+
+        $orderby_key = strtolower(sanitize_key($args['orderby']));
+        $orderby = isset($orderby_map[$orderby_key]) ? $orderby_map[$orderby_key] : 'updated_at';
+        $order = strtoupper($args['order']) === 'ASC' ? 'ASC' : 'DESC';
+
+        $where = array('1=1');
+        $params = array();
+
+        if ($property_id !== '') {
+            $where[] = 'property_id = %s';
+            $params[] = $property_id;
+        }
+
+        if ($property_name !== '') {
+            $where[] = 'property_name = %s';
+            $params[] = $property_name;
+        }
+
+        if ($search !== '') {
+            $like = '%' . $wpdb->esc_like($search) . '%';
+            $where[] = '(contact_name LIKE %s OR property_name LIKE %s OR property_id LIKE %s OR contact_emails LIKE %s OR contact_phones LIKE %s)';
+            $params = array_merge($params, array($like, $like, $like, $like, $like));
+        }
+
+        $where_sql = implode(' AND ', $where);
+
+        $count_sql = "SELECT COUNT(*) FROM {$table} WHERE {$where_sql}";
+        $items_sql = "SELECT * FROM {$table} WHERE {$where_sql} ORDER BY {$orderby} {$order} LIMIT %d OFFSET %d";
+
+        $count_params = $params;
+        $items_params = array_merge($params, array($per_page, $offset));
+
+        if (!empty($count_params)) {
+            $count_sql = $wpdb->prepare($count_sql, $count_params);
+        }
+
+        $total = (int) $wpdb->get_var($count_sql);
+
+        if (!empty($items_params)) {
+            $items_sql = $wpdb->prepare($items_sql, $items_params);
+        }
+
+        $rows = $wpdb->get_results($items_sql, ARRAY_A);
+
+        $items = array();
+
+        if (!empty($rows)) {
+            foreach ($rows as $row) {
+                $formatted = self::formatHousekeeperContactRow($row);
+
+                if ($formatted !== null) {
+                    $items[] = $formatted;
+                }
+            }
+        }
+
+        $total_pages = max(1, (int) ceil($total / $per_page));
+
+        return array(
+            'items' => $items,
+            'total' => $total,
+            'page' => $page,
+            'per_page' => $per_page,
+            'total_pages' => $total_pages,
+        );
+    }
+
+    public static function getHousekeeperContactsForProperty($property_id, $property_name = '') {
+        global $wpdb;
+
+        $table = $wpdb->prefix . 'gms_housekeeper_contacts';
+
+        if (!self::tableExists($table)) {
+            return array();
+        }
+
+        $property_id = substr(sanitize_text_field($property_id), 0, 191);
+        $property_name = substr(sanitize_text_field($property_name), 0, 255);
+
+        $conditions = array();
+        $params = array();
+
+        if ($property_id !== '') {
+            $conditions[] = 'property_id = %s';
+            $params[] = $property_id;
+        }
+
+        if ($property_name !== '') {
+            $conditions[] = 'property_name = %s';
+            $params[] = $property_name;
+        }
+
+        $conditions[] = "(property_id = '' AND property_name = '')";
+
+        $sql = "SELECT * FROM {$table} WHERE " . implode(' OR ', $conditions) . ' ORDER BY updated_at DESC, id DESC';
+
+        if (!empty($params)) {
+            $sql = $wpdb->prepare($sql, $params);
+        }
+
+        $rows = $wpdb->get_results($sql, ARRAY_A);
+
+        if (empty($rows)) {
+            return array();
+        }
+
+        $property_id = $property_id;
+        $property_name = $property_name;
+
+        usort($rows, function ($a, $b) use ($property_id, $property_name) {
+            $priority_a = 2;
+            $priority_b = 2;
+
+            if ($property_id !== '' && isset($a['property_id']) && $a['property_id'] === $property_id) {
+                $priority_a = 0;
+            } elseif ($property_name !== '' && isset($a['property_name']) && $a['property_name'] === $property_name) {
+                $priority_a = 1;
+            }
+
+            if ($property_id !== '' && isset($b['property_id']) && $b['property_id'] === $property_id) {
+                $priority_b = 0;
+            } elseif ($property_name !== '' && isset($b['property_name']) && $b['property_name'] === $property_name) {
+                $priority_b = 1;
+            }
+
+            if ($priority_a !== $priority_b) {
+                return $priority_a - $priority_b;
+            }
+
+            $time_a = isset($a['updated_at']) ? strtotime($a['updated_at']) : 0;
+            $time_b = isset($b['updated_at']) ? strtotime($b['updated_at']) : 0;
+
+            $time_a = $time_a ? $time_a : 0;
+            $time_b = $time_b ? $time_b : 0;
+
+            if ($time_a !== $time_b) {
+                return $time_b <=> $time_a;
+            }
+
+            $id_a = isset($a['id']) ? intval($a['id']) : 0;
+            $id_b = isset($b['id']) ? intval($b['id']) : 0;
+
+            return $id_b <=> $id_a;
+        });
+
+        $contacts = array();
+
+        foreach ($rows as $row) {
+            $formatted = self::formatHousekeeperContactRow($row);
+
+            if ($formatted !== null) {
+                $contacts[] = $formatted;
+            }
+        }
+
+        return $contacts;
+    }
+
+    public static function getHousekeeperContactsForReservation($reservation) {
+        $reservation = is_array($reservation) ? $reservation : array();
+
+        $property_id = isset($reservation['property_id']) ? $reservation['property_id'] : '';
+        $property_name = isset($reservation['property_name']) ? $reservation['property_name'] : '';
+
+        $contacts = self::getHousekeeperContactsForProperty($property_id, $property_name);
+
+        if (!is_array($contacts)) {
+            return array();
+        }
+
+        return $contacts;
     }
 
     public static function addHousekeeperPhoto($data) {

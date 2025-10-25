@@ -768,8 +768,239 @@ class GMS_Message_Templates_List_Table extends WP_List_Table {
     }
 }
 
+class GMS_Housekeeper_Contacts_List_Table extends WP_List_Table {
+    public function __construct() {
+        parent::__construct([
+            'singular' => 'housekeeper_contact',
+            'plural' => 'housekeeper_contacts',
+            'ajax' => false,
+        ]);
+    }
+
+    public function get_columns() {
+        return [
+            'cb' => '<input type="checkbox" />',
+            'contact_name' => __('Cleaner', 'guest-management-system'),
+            'property' => __('Property', 'guest-management-system'),
+            'emails' => __('Emails', 'guest-management-system'),
+            'phones' => __('Phone numbers', 'guest-management-system'),
+            'updated_at' => __('Last updated', 'guest-management-system'),
+        ];
+    }
+
+    protected function get_sortable_columns() {
+        return [
+            'contact_name' => ['contact_name', true],
+            'property' => ['property_name', false],
+            'updated_at' => ['updated_at', true],
+        ];
+    }
+
+    public function get_bulk_actions() {
+        return [
+            'bulk-delete' => __('Delete', 'guest-management-system'),
+        ];
+    }
+
+    public function column_cb($item) {
+        $contact_id = isset($item['id']) ? absint($item['id']) : 0;
+
+        if ($contact_id <= 0) {
+            return '';
+        }
+
+        return sprintf(
+            '<input type="checkbox" name="%1$s[]" value="%2$s" />',
+            esc_attr($this->_args['singular']),
+            esc_attr($contact_id)
+        );
+    }
+
+    public function column_contact_name($item) {
+        $contact_id = isset($item['id']) ? absint($item['id']) : 0;
+        $name = isset($item['contact_name']) && $item['contact_name'] !== ''
+            ? $item['contact_name']
+            : __('(no name)', 'guest-management-system');
+
+        $value = '<strong>' . esc_html($name) . '</strong>';
+
+        if ($contact_id > 0) {
+            $base_args = [
+                'page' => 'guest-management-housekeepers',
+                'contact_id' => $contact_id,
+            ];
+
+            $edit_url = add_query_arg(array_merge($base_args, ['action' => 'edit']), admin_url('admin.php'));
+            $delete_url = wp_nonce_url(
+                add_query_arg(array_merge($base_args, ['action' => 'delete']), admin_url('admin.php')),
+                'gms_delete_housekeeper_contact_' . $contact_id
+            );
+
+            $actions = [
+                'edit' => sprintf('<a href="%s">%s</a>', esc_url($edit_url), esc_html__('Edit', 'guest-management-system')),
+                'delete' => sprintf(
+                    '<a href="%s" class="submitdelete" onclick="return confirm(\'%s\');">%s</a>',
+                    esc_url($delete_url),
+                    esc_attr__('Are you sure you want to delete this cleaner contact?', 'guest-management-system'),
+                    esc_html__('Delete', 'guest-management-system')
+                ),
+            ];
+
+            $value .= $this->row_actions($actions);
+        }
+
+        return $value;
+    }
+
+    public function column_property($item) {
+        $property_name = isset($item['property_name']) ? (string) $item['property_name'] : '';
+        $property_id = isset($item['property_id']) ? (string) $item['property_id'] : '';
+
+        if ($property_name === '' && $property_id === '') {
+            return '<em>' . esc_html__('All properties', 'guest-management-system') . '</em>';
+        }
+
+        if ($property_name !== '' && $property_id !== '') {
+            return sprintf(
+                '%1$s<br /><code>%2$s</code>',
+                esc_html($property_name),
+                esc_html($property_id)
+            );
+        }
+
+        if ($property_name !== '') {
+            return esc_html($property_name);
+        }
+
+        return '<code>' . esc_html($property_id) . '</code>';
+    }
+
+    public function column_emails($item) {
+        if (empty($item['emails']) || !is_array($item['emails'])) {
+            return '&mdash;';
+        }
+
+        $emails = [];
+
+        foreach ($item['emails'] as $email) {
+            $sanitized = sanitize_email($email);
+
+            if ($sanitized === '') {
+                continue;
+            }
+
+            $emails[] = esc_html($sanitized);
+        }
+
+        if (empty($emails)) {
+            return '&mdash;';
+        }
+
+        return implode('<br />', $emails);
+    }
+
+    public function column_phones($item) {
+        if (empty($item['phones']) || !is_array($item['phones'])) {
+            return '&mdash;';
+        }
+
+        $phones = [];
+
+        foreach ($item['phones'] as $phone) {
+            $phone = is_scalar($phone) ? trim((string) $phone) : '';
+
+            if ($phone === '') {
+                continue;
+            }
+
+            $phones[] = esc_html($phone);
+        }
+
+        if (empty($phones)) {
+            return '&mdash;';
+        }
+
+        return implode('<br />', $phones);
+    }
+
+    public function column_updated_at($item) {
+        $updated_at = isset($item['updated_at']) ? (string) $item['updated_at'] : '';
+        $formatted = function_exists('gms_admin_format_datetime_column')
+            ? gms_admin_format_datetime_column($updated_at)
+            : $updated_at;
+
+        if (!is_string($formatted) || $formatted === '') {
+            return '&mdash;';
+        }
+
+        return esc_html($formatted);
+    }
+
+    public function column_default($item, $column_name) {
+        switch ($column_name) {
+            case 'contact_name':
+                return $this->column_contact_name($item);
+            case 'property':
+                return $this->column_property($item);
+            case 'emails':
+                return $this->column_emails($item);
+            case 'phones':
+                return $this->column_phones($item);
+            case 'updated_at':
+                return $this->column_updated_at($item);
+            default:
+                return isset($item[$column_name]) ? esc_html((string) $item[$column_name]) : '';
+        }
+    }
+
+    public function prepare_items() {
+        $per_page = apply_filters('gms_housekeeper_contacts_per_page', 20);
+        $per_page = max(1, (int) $per_page);
+        $paged = $this->get_pagenum();
+        $search = isset($_REQUEST['s']) ? sanitize_text_field(wp_unslash($_REQUEST['s'])) : '';
+        $orderby = isset($_REQUEST['orderby']) ? sanitize_key(wp_unslash($_REQUEST['orderby'])) : 'updated_at';
+        $order = isset($_REQUEST['order']) ? strtoupper(sanitize_key(wp_unslash($_REQUEST['order']))) : 'DESC';
+
+        if ($order !== 'ASC') {
+            $order = 'DESC';
+        }
+
+        $results = GMS_Database::queryHousekeeperContacts([
+            'search' => $search,
+            'orderby' => $orderby,
+            'order' => $order,
+            'paged' => $paged,
+            'per_page' => $per_page,
+        ]);
+
+        $this->items = isset($results['items']) && is_array($results['items']) ? $results['items'] : [];
+
+        $this->_column_headers = [
+            $this->get_columns(),
+            [],
+            $this->get_sortable_columns(),
+        ];
+
+        $total_items = isset($results['total']) ? (int) $results['total'] : count($this->items);
+        $total_pages = isset($results['total_pages']) ? (int) $results['total_pages'] : 1;
+
+        $this->set_pagination_args([
+            'total_items' => $total_items,
+            'per_page' => $per_page,
+            'total_pages' => max(1, $total_pages),
+        ]);
+    }
+
+    public function no_items() {
+        esc_html_e('No cleaner contacts found.', 'guest-management-system');
+    }
+}
+
 
 class GMS_Admin {
+    private $housekeeper_contact_form_data = array();
+    private $housekeeper_contact_active_action = '';
+
     public function __construct() {
         add_action('admin_menu', array($this, 'add_admin_menu'));
         add_action('admin_init', array($this, 'register_settings'));
@@ -1949,6 +2180,15 @@ class GMS_Admin {
             [$this, 'render_housekeeper_page']
         );
 
+        $housekeeper_contacts_hook = add_submenu_page(
+            'guest-management-dashboard',
+            'Cleaner Contacts',
+            'Cleaner Contacts',
+            'manage_options',
+            'guest-management-housekeepers',
+            [$this, 'render_housekeeper_contacts_page']
+        );
+
         add_submenu_page(
             'guest-management-dashboard',
             'Messaging Inbox',
@@ -1991,6 +2231,10 @@ class GMS_Admin {
 
         if (!empty($guests_hook)) {
             add_action('load-' . $guests_hook, [$this, 'handle_guests_actions']);
+        }
+
+        if (!empty($housekeeper_contacts_hook)) {
+            add_action('load-' . $housekeeper_contacts_hook, [$this, 'handle_housekeeper_contacts_actions']);
         }
     }
 
@@ -2120,6 +2364,354 @@ class GMS_Admin {
 
         wp_safe_redirect($redirect_url);
         exit;
+    }
+
+    public function handle_housekeeper_contacts_actions() {
+        if (!current_user_can('manage_options')) {
+            return;
+        }
+
+        if (isset($_POST['gms_housekeeper_contact_action']) && sanitize_key(wp_unslash($_POST['gms_housekeeper_contact_action'])) === 'save') {
+            check_admin_referer('gms_save_housekeeper_contact');
+
+            $contact_id = isset($_POST['contact_id']) ? absint(wp_unslash($_POST['contact_id'])) : 0;
+            $name = isset($_POST['contact_name']) ? sanitize_text_field(wp_unslash($_POST['contact_name'])) : '';
+            $property_id = isset($_POST['property_id']) ? sanitize_text_field(wp_unslash($_POST['property_id'])) : '';
+            $property_name = isset($_POST['property_name']) ? sanitize_text_field(wp_unslash($_POST['property_name'])) : '';
+            $emails_input = isset($_POST['contact_emails']) ? wp_unslash($_POST['contact_emails']) : '';
+            $phones_input = isset($_POST['contact_phones']) ? wp_unslash($_POST['contact_phones']) : '';
+            $notes_input = isset($_POST['contact_notes']) ? wp_unslash($_POST['contact_notes']) : '';
+
+            $form_data = array(
+                'id' => $contact_id,
+                'contact_name' => $name,
+                'property_id' => $property_id,
+                'property_name' => $property_name,
+                'emails' => $emails_input,
+                'phones' => $phones_input,
+                'notes' => wp_kses_post($notes_input),
+            );
+
+            $this->housekeeper_contact_form_data = $form_data;
+
+            $contact_data = array(
+                'contact_name' => $name,
+                'property_id' => $property_id,
+                'property_name' => $property_name,
+                'emails' => $emails_input,
+                'phones' => $phones_input,
+                'notes' => $notes_input,
+            );
+
+            $result = false;
+
+            if ($contact_id > 0) {
+                $result = GMS_Database::updateHousekeeperContact($contact_id, $contact_data);
+            } else {
+                $new_id = GMS_Database::insertHousekeeperContact($contact_data);
+                if ($new_id > 0) {
+                    $contact_id = $new_id;
+                    $result = true;
+                }
+            }
+
+            if ($result) {
+                $message_key = $form_data['id'] > 0 ? 'contact_updated' : 'contact_created';
+                $redirect_args = array(
+                    'page' => 'guest-management-housekeepers',
+                    'message' => $message_key,
+                );
+
+                $this->housekeeper_contact_form_data = array();
+                $this->housekeeper_contact_active_action = '';
+
+                $redirect_url = add_query_arg($redirect_args, admin_url('admin.php'));
+                wp_safe_redirect($redirect_url);
+                exit;
+            }
+
+            $this->housekeeper_contact_active_action = $form_data['id'] > 0 ? 'edit' : 'add';
+
+            add_settings_error(
+                'gms_housekeeper_contacts',
+                'gms_housekeeper_contact_error',
+                __('Unable to save the cleaner contact. Please try again.', 'guest-management-system'),
+                'error'
+            );
+
+            return;
+        }
+
+        if (isset($_GET['action']) && sanitize_key(wp_unslash($_GET['action'])) === 'delete') {
+            $contact_id = isset($_GET['contact_id']) ? absint(wp_unslash($_GET['contact_id'])) : 0;
+            $nonce = isset($_GET['_wpnonce']) ? wp_unslash($_GET['_wpnonce']) : '';
+
+            $redirect_args = array('page' => 'guest-management-housekeepers');
+
+            if ($contact_id > 0 && wp_verify_nonce($nonce, 'gms_delete_housekeeper_contact_' . $contact_id)) {
+                if (GMS_Database::deleteHousekeeperContact($contact_id)) {
+                    $redirect_args['message'] = 'contact_deleted';
+                } else {
+                    $redirect_args['message'] = 'contact_delete_error';
+                }
+            } else {
+                $redirect_args['message'] = 'contact_delete_error';
+            }
+
+            $redirect_url = add_query_arg($redirect_args, admin_url('admin.php'));
+            wp_safe_redirect($redirect_url);
+            exit;
+        }
+
+        $primary_action = isset($_REQUEST['action']) ? sanitize_key(wp_unslash($_REQUEST['action'])) : '';
+        $secondary_action = isset($_REQUEST['action2']) ? sanitize_key(wp_unslash($_REQUEST['action2'])) : '';
+        $current_action = $primary_action !== '-1' && $primary_action !== '' ? $primary_action : $secondary_action;
+
+        if ($current_action !== 'bulk-delete') {
+            return;
+        }
+
+        check_admin_referer('bulk-housekeeper_contacts');
+
+        $ids = isset($_REQUEST['housekeeper_contact']) ? array_map('absint', (array) $_REQUEST['housekeeper_contact']) : array();
+        $ids = array_filter($ids);
+
+        $deleted_count = 0;
+        if (!empty($ids)) {
+            foreach ($ids as $contact_id) {
+                if (GMS_Database::deleteHousekeeperContact($contact_id)) {
+                    $deleted_count++;
+                }
+            }
+        }
+
+        $redirect_args = array('page' => 'guest-management-housekeepers');
+
+        if ($deleted_count > 0) {
+            $redirect_args['message'] = 'contacts_deleted';
+            $redirect_args['deleted'] = $deleted_count;
+        } else {
+            $redirect_args['message'] = 'contact_delete_error';
+        }
+
+        $redirect_url = add_query_arg($redirect_args, admin_url('admin.php'));
+        wp_safe_redirect($redirect_url);
+        exit;
+    }
+
+    public function render_housekeeper_contacts_page() {
+        if (!current_user_can('manage_options')) {
+            return;
+        }
+
+        $action = isset($_GET['action']) ? sanitize_key(wp_unslash($_GET['action'])) : '';
+        if ($this->housekeeper_contact_active_action !== '') {
+            $action = $this->housekeeper_contact_active_action;
+        }
+
+        $message_key = isset($_GET['message']) ? sanitize_key(wp_unslash($_GET['message'])) : '';
+        $deleted_count = isset($_GET['deleted']) ? absint(wp_unslash($_GET['deleted'])) : 0;
+
+        switch ($message_key) {
+            case 'contact_created':
+                add_settings_error(
+                    'gms_housekeeper_contacts',
+                    'gms_housekeeper_contact_created',
+                    __('Cleaner contact added.', 'guest-management-system'),
+                    'updated'
+                );
+                break;
+            case 'contact_updated':
+                add_settings_error(
+                    'gms_housekeeper_contacts',
+                    'gms_housekeeper_contact_updated',
+                    __('Cleaner contact updated.', 'guest-management-system'),
+                    'updated'
+                );
+                break;
+            case 'contact_deleted':
+                add_settings_error(
+                    'gms_housekeeper_contacts',
+                    'gms_housekeeper_contact_deleted',
+                    __('Cleaner contact deleted.', 'guest-management-system'),
+                    'updated'
+                );
+                break;
+            case 'contacts_deleted':
+                if ($deleted_count > 0) {
+                    add_settings_error(
+                        'gms_housekeeper_contacts',
+                        'gms_housekeeper_contacts_deleted',
+                        sprintf(
+                            esc_html(_n('%d cleaner contact deleted.', '%d cleaner contacts deleted.', $deleted_count, 'guest-management-system')),
+                            $deleted_count
+                        ),
+                        'updated'
+                    );
+                }
+                break;
+            case 'contact_delete_error':
+                add_settings_error(
+                    'gms_housekeeper_contacts',
+                    'gms_housekeeper_contact_delete_error',
+                    __('Unable to delete the cleaner contact. Please try again.', 'guest-management-system'),
+                    'error'
+                );
+                break;
+        }
+
+        if ($action === 'add' || $action === 'edit') {
+            $is_edit = ($action === 'edit');
+            $form_data = $this->housekeeper_contact_form_data;
+
+            if ($is_edit && empty($form_data)) {
+                $contact_id = isset($_GET['contact_id']) ? absint(wp_unslash($_GET['contact_id'])) : 0;
+
+                if ($contact_id > 0) {
+                    $contact = GMS_Database::getHousekeeperContact($contact_id);
+                    if (is_array($contact) && !empty($contact)) {
+                        $form_data = array(
+                            'id' => $contact['id'],
+                            'contact_name' => $contact['contact_name'],
+                            'property_id' => $contact['property_id'],
+                            'property_name' => $contact['property_name'],
+                            'emails' => implode("\n", isset($contact['emails']) ? (array) $contact['emails'] : array()),
+                            'phones' => implode("\n", isset($contact['phones']) ? (array) $contact['phones'] : array()),
+                            'notes' => isset($contact['notes']) ? $contact['notes'] : '',
+                        );
+                    }
+                }
+
+                if (empty($form_data)) {
+                    add_settings_error(
+                        'gms_housekeeper_contacts',
+                        'gms_housekeeper_contact_missing',
+                        __('The requested cleaner contact could not be found.', 'guest-management-system'),
+                        'error'
+                    );
+
+                    $this->housekeeper_contact_active_action = '';
+                    $action = '';
+                }
+            }
+
+            if ($action === 'add' || $action === 'edit') {
+                if (empty($form_data)) {
+                    $form_data = array(
+                        'id' => 0,
+                        'contact_name' => '',
+                        'property_id' => '',
+                        'property_name' => '',
+                        'emails' => '',
+                        'phones' => '',
+                        'notes' => '',
+                    );
+                }
+
+                $contact_id = isset($form_data['id']) ? absint($form_data['id']) : 0;
+
+                echo '<div class="wrap">';
+                echo '<h1>' . esc_html($is_edit ? __('Edit cleaner contact', 'guest-management-system') : __('Add cleaner contact', 'guest-management-system')) . '</h1>';
+                settings_errors('gms_housekeeper_contacts');
+
+                echo '<form method="post">';
+                wp_nonce_field('gms_save_housekeeper_contact');
+                echo '<input type="hidden" name="gms_housekeeper_contact_action" value="save" />';
+
+                if ($is_edit && $contact_id > 0) {
+                    echo '<input type="hidden" name="contact_id" value="' . esc_attr($contact_id) . '" />';
+                }
+
+                echo '<table class="form-table" role="presentation">';
+                echo '<tr>'; 
+                echo '<th scope="row"><label for="gms-contact-name">' . esc_html__('Cleaner name', 'guest-management-system') . '</label></th>';
+                echo '<td><input type="text" class="regular-text" id="gms-contact-name" name="contact_name" value="' . esc_attr($form_data['contact_name']) . '" /></td>';
+                echo '</tr>';
+
+                echo '<tr>';
+                echo '<th scope="row"><label for="gms-property-id">' . esc_html__('Property ID', 'guest-management-system') . '</label></th>';
+                echo '<td>';
+                echo '<input type="text" class="regular-text" id="gms-property-id" name="property_id" value="' . esc_attr($form_data['property_id']) . '" />';
+                echo '<p class="description">' . esc_html__('Match reservations by property identifier. Leave blank to apply to all properties.', 'guest-management-system') . '</p>';
+                echo '</td>';
+                echo '</tr>';
+
+                echo '<tr>';
+                echo '<th scope="row"><label for="gms-property-name">' . esc_html__('Property name', 'guest-management-system') . '</label></th>';
+                echo '<td>';
+                echo '<input type="text" class="regular-text" id="gms-property-name" name="property_name" value="' . esc_attr($form_data['property_name']) . '" />';
+                echo '<p class="description">' . esc_html__('Optional display label used when matching by property name.', 'guest-management-system') . '</p>';
+                echo '</td>';
+                echo '</tr>';
+
+                echo '<tr>';
+                echo '<th scope="row"><label for="gms-contact-emails">' . esc_html__('Email addresses', 'guest-management-system') . '</label></th>';
+                echo '<td>';
+                echo '<textarea class="large-text" rows="4" id="gms-contact-emails" name="contact_emails">' . esc_textarea($form_data['emails']) . '</textarea>';
+                echo '<p class="description">' . esc_html__('Separate multiple email addresses with commas or new lines.', 'guest-management-system') . '</p>';
+                echo '</td>';
+                echo '</tr>';
+
+                echo '<tr>';
+                echo '<th scope="row"><label for="gms-contact-phones">' . esc_html__('Phone numbers', 'guest-management-system') . '</label></th>';
+                echo '<td>';
+                echo '<textarea class="large-text" rows="4" id="gms-contact-phones" name="contact_phones">' . esc_textarea($form_data['phones']) . '</textarea>';
+                echo '<p class="description">' . esc_html__('Separate multiple numbers with commas or new lines.', 'guest-management-system') . '</p>';
+                echo '</td>';
+                echo '</tr>';
+
+                echo '<tr>';
+                echo '<th scope="row"><label for="gms-contact-notes">' . esc_html__('Notes', 'guest-management-system') . '</label></th>';
+                echo '<td>';
+                echo '<textarea class="large-text" rows="4" id="gms-contact-notes" name="contact_notes">' . esc_textarea($form_data['notes']) . '</textarea>';
+                echo '<p class="description">' . esc_html__('Add internal notes for this cleaner contact.', 'guest-management-system') . '</p>';
+                echo '</td>';
+                echo '</tr>';
+
+                echo '</table>';
+
+                submit_button($is_edit ? __('Update contact', 'guest-management-system') : __('Add contact', 'guest-management-system'));
+
+                $cancel_url = add_query_arg(array('page' => 'guest-management-housekeepers'), admin_url('admin.php'));
+                echo ' <a class="button-secondary" href="' . esc_url($cancel_url) . '">' . esc_html__('Cancel', 'guest-management-system') . '</a>';
+
+                echo '</form>';
+                echo '</div>';
+
+                return;
+            }
+        }
+
+        $this->housekeeper_contact_form_data = array();
+        $this->housekeeper_contact_active_action = '';
+
+        $table = new GMS_Housekeeper_Contacts_List_Table();
+        $table->prepare_items();
+
+        $add_new_url = add_query_arg(
+            array(
+                'page' => 'guest-management-housekeepers',
+                'action' => 'add',
+            ),
+            admin_url('admin.php')
+        );
+
+        echo '<div class="wrap">';
+        echo '<h1 class="wp-heading-inline">' . esc_html__('Cleaner contacts', 'guest-management-system') . '</h1>';
+        echo ' <a href="' . esc_url($add_new_url) . '" class="page-title-action">' . esc_html__('Add New', 'guest-management-system') . '</a>';
+        echo '<hr class="wp-header-end" />';
+
+        settings_errors('gms_housekeeper_contacts');
+
+        echo '<form method="get">';
+        echo '<input type="hidden" name="page" value="guest-management-housekeepers" />';
+        $table->search_box(__('Search contacts', 'guest-management-system'), 'gms-housekeeper-contacts');
+        echo '</form>';
+
+        echo '<form method="post">';
+        $table->display();
+        echo '</form>';
+        echo '</div>';
     }
 
     public function render_housekeeper_page() {
