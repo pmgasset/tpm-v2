@@ -2164,6 +2164,16 @@ class GMS_Admin {
             $reservation_map[$reservation_item['id']] = $reservation_item;
         }
 
+        $reservations = array_values(array_filter($reservations, function($reservation_item) use ($submissions_by_reservation) {
+            $reservation_id = isset($reservation_item['id']) ? intval($reservation_item['id']) : 0;
+
+            if ($reservation_id <= 0) {
+                return true;
+            }
+
+            return !isset($submissions_by_reservation[$reservation_id]);
+        }));
+
         $now_timestamp = current_time('timestamp');
         $pending_reservations = array();
 
