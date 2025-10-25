@@ -5011,9 +5011,13 @@ class GMS_Admin {
             $guest_name = isset($reservation['guest_name']) ? trim((string) $reservation['guest_name']) : '';
             $property_name = isset($reservation['property_name']) ? trim((string) $reservation['property_name']) : '';
 
-            $checkin_day_ts = $checkin_dt->setTime(0, 0)->getTimestamp();
-            $checkout_day_ts = $checkout_dt->setTime(0, 0)->getTimestamp();
-            $nights = max(1, (int) $checkin_dt->diff($checkout_dt)->format('%a'));
+            $checkin_day = $checkin_dt->setTime(0, 0);
+            $checkout_day = $checkout_dt->setTime(0, 0);
+
+            $checkin_day_ts = $checkin_day->getTimestamp();
+            $checkout_day_ts = $checkout_day->getTimestamp();
+            $night_seconds = max(0, $checkout_day_ts - $checkin_day_ts);
+            $nights = max(1, (int) round($night_seconds / DAY_IN_SECONDS));
 
             $reservations[] = array(
                 'id' => isset($reservation['id']) ? absint($reservation['id']) : 0,
