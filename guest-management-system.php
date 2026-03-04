@@ -55,7 +55,6 @@ class GuestManagementSystem {
         new GMS_Guest_Portal();
         new GMS_Email_Handler();
         new GMS_SMS_Handler();
-        new GMS_Stripe_Integration();
         new GMS_Roku_Integration();
         new GMS_Agreement_Handler(); // Initialize the new agreement handler
         new GMS_AJAX_Handler();
@@ -90,7 +89,6 @@ class GuestManagementSystem {
             'class-ota-reservation-sync.php',
             'class-ota-messaging-handler.php',
             'class-roku-integration.php',
-            'class-stripe-integration.php',
             'class-ajax-handler.php',
             'class-agreement-handler.php', // Load the new agreement handler class
             'class-housekeeping-integration.php',
@@ -127,8 +125,6 @@ class GuestManagementSystem {
         
         // Set up default options on first activation
         $default_options = array(
-            'gms_stripe_pk' => '',
-            'gms_stripe_sk' => '',
             'gms_voipms_user' => '',
             'gms_voipms_pass' => '',
             'gms_voipms_did' => '',
@@ -360,8 +356,7 @@ class GuestManagementSystem {
         $portal_context = $this->resolvePortalRequest();
 
         if ($portal_context['is_portal']) {
-            wp_enqueue_script('stripe-js', 'https://js.stripe.com/v3/', [], null, true);
-            wp_enqueue_script('gms-guest-portal', GMS_PLUGIN_URL . 'assets/js/guest-portal.js', ['jquery', 'stripe-js'], GMS_VERSION, true);
+            wp_enqueue_script('gms-guest-portal', GMS_PLUGIN_URL . 'assets/js/guest-portal.js', ['jquery'], GMS_VERSION, true);
             wp_enqueue_style('gms-guest-portal', GMS_PLUGIN_URL . 'assets/css/guest-portal.css', [], GMS_VERSION);
 
             $reservation = GMS_Database::getReservationByToken($portal_context['token']);
@@ -370,7 +365,6 @@ class GuestManagementSystem {
             wp_localize_script('gms-guest-portal', 'gmsConfig', array(
                 'ajaxUrl' => admin_url('admin-ajax.php'),
                 'nonce' => wp_create_nonce('gms_guest_nonce'),
-                'stripeKey' => get_option('gms_stripe_pk'),
                 'reservationId' => $reservation ? $reservation['id'] : 0
             ));
 

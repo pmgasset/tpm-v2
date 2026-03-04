@@ -180,8 +180,6 @@ class GMS_Database {
             reservation_id bigint(20) unsigned NOT NULL,
             guest_id bigint(20) unsigned DEFAULT 0,
             guest_record_id bigint(20) unsigned DEFAULT 0,
-            stripe_verification_session_id varchar(191) NOT NULL DEFAULT '',
-            stripe_client_secret varchar(191) NOT NULL DEFAULT '',
             verification_status varchar(50) NOT NULL DEFAULT 'pending',
             verification_data longtext NULL,
             document_front_file_id varchar(191) NOT NULL DEFAULT '',
@@ -200,11 +198,6 @@ class GMS_Database {
         ) $charset_collate;";
         dbDelta($sql_verification);
         self::maybeAddIndexes($table_verification, [
-            [
-                'name' => 'stripe_verification_session_id',
-                'columns' => ['stripe_verification_session_id'],
-                'unique' => true,
-            ],
             [
                 'name' => 'reservation_id',
                 'columns' => ['reservation_id'],
@@ -3371,8 +3364,6 @@ class GMS_Database {
             'reservation_id' => 0,
             'guest_id' => 0,
             'guest_record_id' => 0,
-            'stripe_session_id' => '',
-            'stripe_client_secret' => '',
             'status' => 'pending',
             'verification_data' => array(),
         );
@@ -3393,15 +3384,13 @@ class GMS_Database {
             'reservation_id' => $reservation_id,
             'guest_id' => intval($data['guest_id']),
             'guest_record_id' => $guest_record_id,
-            'stripe_verification_session_id' => sanitize_text_field($data['stripe_session_id']),
-            'stripe_client_secret' => sanitize_text_field($data['stripe_client_secret']),
             'verification_status' => sanitize_text_field($data['status']),
             'verification_data' => self::maybeEncodeJson($data['verification_data']),
             'created_at' => current_time('mysql'),
             'updated_at' => current_time('mysql'),
         );
 
-        $formats = array('%d', '%d', '%d', '%s', '%s', '%s', '%s', '%s');
+        $formats = array('%d', '%d', '%d', '%s', '%s', '%s', '%s');
 
         $result = $wpdb->insert($table_name, $insert_data, $formats);
 
@@ -3441,14 +3430,13 @@ class GMS_Database {
         return self::formatVerificationRow($row);
     }
 
-    public static function updateVerification($stripe_session_id, $data) {
+    public static function updateVerification($reservation_id, $data) {
         global $wpdb;
         $table_name = $wpdb->prefix . 'gms_identity_verification';
 
         $allowed = array(
             'status',
             'verification_data',
-            'stripe_client_secret',
             'verified_at',
             'guest_record_id',
             'document_front_file_id',
@@ -3515,21 +3503,20 @@ class GMS_Database {
         $result = $wpdb->update(
             $table_name,
             $update_data,
-            array('stripe_verification_session_id' => sanitize_text_field($stripe_session_id)),
+            array('reservation_id' => intval($reservation_id)),
             null,
-            array('%s')
+            array('%d')
         );
 
         if ($result === false) {
             return false;
         }
 
-        $record = $wpdb->get_row($wpdb->prepare("SELECT reservation_id FROM $table_name WHERE stripe_verification_session_id = %s", sanitize_text_field($stripe_session_id)), ARRAY_A);
-        if ($record && isset($update_data['verification_status'])) {
+        if (isset($update_data['verification_status'])) {
             if ($update_data['verification_status'] === 'verified') {
-                self::updateReservationStatus($record['reservation_id'], 'verification_completed');
+                self::updateReservationStatus($reservation_id, 'verification_completed');
             } else {
-                self::updateReservation($record['reservation_id'], array('verification_status' => $update_data['verification_status']));
+                self::updateReservation($reservation_id, array('verification_status' => $update_data['verification_status']));
             }
         }
 
@@ -6100,7 +6087,6 @@ class GMS_Database {
             $row['guest_record_id'] = intval($row['guest_record_id']);
         }
 
-        $row['stripe_session_id'] = $row['stripe_verification_session_id'];
         $row['status'] = $row['verification_status'];
 
         return $row;

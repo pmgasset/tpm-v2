@@ -30,7 +30,6 @@ function gms_get_reservation_status_options() {
         'pending' => __('Pending Approval', 'guest-management-system'),
         'approved' => __('Approved', 'guest-management-system'),
         'awaiting_signature' => __('Awaiting Signature', 'guest-management-system'),
-        'awaiting_id_verification' => __('Awaiting ID Verification', 'guest-management-system'),
         'confirmed' => __('Confirmed', 'guest-management-system'),
         'completed' => __('Completed', 'guest-management-system'),
         'cancelled' => __('Cancelled', 'guest-management-system'),
@@ -38,7 +37,7 @@ function gms_get_reservation_status_options() {
 }
 
 function gms_get_followup_reservation_statuses() {
-    return array('approved', 'awaiting_signature', 'awaiting_id_verification');
+    return array('approved', 'awaiting_signature');
 }
 
 /**
@@ -46,12 +45,8 @@ function gms_get_followup_reservation_statuses() {
  */
 function gms_is_reservation_complete($reservation_id) {
     $agreement = GMS_Database::getAgreementByReservation($reservation_id);
-    $verification = GMS_Database::getVerificationByReservation($reservation_id);
-    
-    return $agreement && 
-           $verification && 
-           $agreement['status'] === 'signed' && 
-           $verification['verification_status'] === 'verified';
+
+    return $agreement && $agreement['status'] === 'signed';
 }
 
 /**
@@ -556,7 +551,7 @@ add_action('profile_update', 'gms_sync_guest_profile_from_user', 10, 1);
 add_action('user_register', 'gms_sync_guest_profile_from_user', 10, 1);
 add_action('added_user_meta', 'gms_maybe_sync_guest_phone_meta', 10, 4);
 add_action('updated_user_meta', 'gms_maybe_sync_guest_phone_meta', 10, 4);
-add_filter('pre_get_avatar_data', 'gms_use_stripe_selfie_avatar', 10, 2);
+add_filter('pre_get_avatar_data', 'gms_use_profile_photo_avatar', 10, 2);
 
 function gms_sync_guest_profile_from_user($user_id) {
     $user_id = intval($user_id);
@@ -576,7 +571,7 @@ function gms_maybe_sync_guest_phone_meta($meta_id, $user_id, $meta_key, $meta_va
     gms_sync_guest_profile_from_user($user_id);
 }
 
-function gms_use_stripe_selfie_avatar($args, $id_or_email) {
+function gms_use_profile_photo_avatar($args, $id_or_email) {
     $user = null;
 
     if (is_numeric($id_or_email)) {
@@ -684,20 +679,8 @@ function gms_format_datetime($datetime, $format = 'F j, Y \a\t g:i A') {
  */
 function gms_get_completion_percentage($reservation_id) {
     $agreement = GMS_Database::getAgreementByReservation($reservation_id);
-    $verification = GMS_Database::getVerificationByReservation($reservation_id);
-    
-    $completed = 0;
-    $total = 2;
-    
-    if ($agreement && $agreement['status'] === 'signed') {
-        $completed++;
-    }
-    
-    if ($verification && $verification['verification_status'] === 'verified') {
-        $completed++;
-    }
-    
-    return ($completed / $total) * 100;
+
+    return ($agreement && $agreement['status'] === 'signed') ? 100 : 0;
 }
 
 /**
@@ -708,7 +691,6 @@ function gms_get_status_badge($status) {
         'pending' => '<span class="gms-badge gms-badge-warning">' . esc_html__('Pending Approval', 'guest-management-system') . '</span>',
         'approved' => '<span class="gms-badge gms-badge-success">' . esc_html__('Approved', 'guest-management-system') . '</span>',
         'awaiting_signature' => '<span class="gms-badge gms-badge-info">' . esc_html__('Awaiting Signature', 'guest-management-system') . '</span>',
-        'awaiting_id_verification' => '<span class="gms-badge gms-badge-warning">' . esc_html__('Awaiting ID Verification', 'guest-management-system') . '</span>',
         'confirmed' => '<span class="gms-badge gms-badge-success">' . esc_html__('Confirmed', 'guest-management-system') . '</span>',
         'completed' => '<span class="gms-badge gms-badge-success">' . esc_html__('Completed', 'guest-management-system') . '</span>',
         'cancelled' => '<span class="gms-badge gms-badge-danger">' . esc_html__('Cancelled', 'guest-management-system') . '</span>',
@@ -796,7 +778,6 @@ function gms_get_webhook_urls() {
         'vrbo' => home_url('/webhook/vrbo'),
         'generic' => home_url('/webhook/generic'),
         'rest_api' => rest_url('gms/v1/webhook/{platform}'),
-        'stripe' => rest_url('gms/v1/stripe-webhook')
     );
 }
 
@@ -823,15 +804,6 @@ function gms_test_notifications() {
         $results['sms_balance'] = $sms_handler->getSMSBalance();
     } else {
         $results['sms_configured'] = false;
-    }
-    
-    // Test Stripe
-    $stripe_sk = get_option('gms_stripe_sk');
-    if (!empty($stripe_sk)) {
-        $stripe = new GMS_Stripe_Integration();
-        $results['stripe'] = $stripe->testConnection();
-    } else {
-        $results['stripe'] = array('success' => false, 'message' => 'Not configured');
     }
     
     return $results;
@@ -976,7 +948,6 @@ function gms_handle_reservation_status_transition($reservation_id, $new_status, 
         'approved',
         'confirmed',
         'awaiting_signature',
-        'awaiting_id_verification',
     );
 
     if (function_exists('apply_filters')) {

@@ -835,39 +835,6 @@
             }
         });
 
-        // Real-time validation for API keys
-        $('input[name="gms_stripe_pk"]').on('blur', function() {
-            var value = $(this).val();
-            var feedback = $(this).siblings('.validation-feedback');
-            
-            if (!feedback.length) {
-                feedback = $('<span class="validation-feedback" style="display: block; margin-top: 5px; font-size: 12px;"></span>');
-                $(this).after(feedback);
-            }
-            
-            if (value && !value.startsWith('pk_')) {
-                feedback.html('<span style="color: red;">⚠ Publishable key should start with "pk_"</span>');
-            } else {
-                feedback.html('');
-            }
-        });
-
-        $('input[name="gms_stripe_sk"]').on('blur', function() {
-            var value = $(this).val();
-            var feedback = $(this).siblings('.validation-feedback');
-            
-            if (!feedback.length) {
-                feedback = $('<span class="validation-feedback" style="display: block; margin-top: 5px; font-size: 12px;"></span>');
-                $(this).after(feedback);
-            }
-            
-            if (value && !value.startsWith('sk_')) {
-                feedback.html('<span style="color: red;">⚠ Secret key should start with "sk_"</span>');
-            } else {
-                feedback.html('');
-            }
-        });
-
         // Copy webhook URL to clipboard
         $('.copy-webhook-url').on('click', function() {
             var url = $(this).data('url');

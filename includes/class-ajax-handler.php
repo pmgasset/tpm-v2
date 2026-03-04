@@ -12,10 +12,6 @@ if (!defined('ABSPATH')) {
 class GMS_AJAX_Handler {
 
     public function __construct() {
-        // Hook for creating the Stripe ID verification session
-        add_action('wp_ajax_gms_create_id_verification_session', array($this, 'create_id_verification_session'));
-        add_action('wp_ajax_nopriv_gms_create_id_verification_session', array($this, 'create_id_verification_session'));
-
         // Hook for saving the signed agreement
         add_action('wp_ajax_gms_save_signed_agreement', array($this, 'save_signed_agreement'));
         add_action('wp_ajax_nopriv_gms_save_signed_agreement', array($this, 'save_signed_agreement'));
@@ -27,39 +23,6 @@ class GMS_AJAX_Handler {
         add_action('wp_ajax_gms_mark_thread_read', array($this, 'mark_thread_read'));
         add_action('wp_ajax_gms_list_message_templates', array($this, 'list_message_templates'));
         add_action('wp_ajax_gms_list_operational_logs', array($this, 'list_operational_logs'));
-    }
-
-    /**
-     * Creates a Stripe Identity Verification session for a guest.
-     */
-    public function create_id_verification_session() {
-        // SECURITY: Always check the nonce to protect against CSRF attacks.
-        check_ajax_referer('gms_guest_nonce', 'nonce');
-
-        $reservation_id = isset($_POST['reservation_id']) ? intval($_POST['reservation_id']) : 0;
-        
-        if (!$reservation_id) {
-            wp_send_json_error(array('message' => 'Invalid reservation ID.'));
-            return;
-        }
-        
-        $reservation = GMS_Database::getReservationById($reservation_id);
-        if (!$reservation) {
-            wp_send_json_error(array('message' => 'Reservation not found.'));
-            return;
-        }
-        
-        $stripe_integration = new GMS_Stripe_Integration();
-        $session_data = $stripe_integration->createVerificationSession($reservation);
-        
-        if (!$session_data) {
-            wp_send_json_error(array('message' => 'Could not create identity verification session. Please check API keys.'));
-            return;
-        }
-        
-        wp_send_json_success(array(
-            'client_secret' => $session_data['client_secret']
-        ));
     }
 
     /**

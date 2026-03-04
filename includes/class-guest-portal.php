@@ -13,10 +13,6 @@ class GMS_Guest_Portal {
         add_action('wp_ajax_nopriv_gms_submit_agreement', array($this, 'submitAgreement'));
         add_action('wp_ajax_gms_update_contact_info', array($this, 'updateContactInfo'));
         add_action('wp_ajax_nopriv_gms_update_contact_info', array($this, 'updateContactInfo'));
-        add_action('wp_ajax_gms_create_verification_session', array($this, 'createVerificationSession'));
-        add_action('wp_ajax_nopriv_gms_create_verification_session', array($this, 'createVerificationSession'));
-        add_action('wp_ajax_gms_check_verification_status', array($this, 'checkVerificationStatus'));
-        add_action('wp_ajax_nopriv_gms_check_verification_status', array($this, 'checkVerificationStatus'));
     }
     
     public static function displayPortal($token) {
@@ -29,16 +25,13 @@ class GMS_Guest_Portal {
         
         // Check if already completed
         $agreement = GMS_Database::getAgreementByReservation($reservation['id']);
-        $verification = GMS_Database::getVerificationByReservation($reservation['id']);
-        
-        $is_complete = $agreement && $verification &&
-                      $agreement['status'] === 'signed' &&
-                      $verification['verification_status'] === 'verified';
 
-        self::displayPortalInterface($reservation, $agreement, $verification, $is_complete);
+        $is_complete = $agreement && $agreement['status'] === 'signed';
+
+        self::displayPortalInterface($reservation, $agreement, $is_complete);
     }
 
-    private static function displayPortalInterface($reservation, $agreement, $verification, $is_complete = false) {
+    private static function displayPortalInterface($reservation, $agreement, $is_complete = false) {
         $company_name = get_option('gms_company_name', get_option('blogname'));
         $company_logo = get_option('gms_company_logo');
         $primary_color = get_option('gms_portal_primary_color', '#0073aa');
@@ -866,13 +859,6 @@ class GMS_Guest_Portal {
                                             <div class="checklist-description"><?php esc_html_e('Review the house rules and sign to confirm your reservation.', 'gms'); ?></div>
                                         </div>
                                     </div>
-                                    <div class="checklist-item <?php echo ($verification && $verification['verification_status'] === 'verified') ? 'completed' : ''; ?>" id="verification-checklist">
-                                        <div class="checklist-icon"><?php echo ($verification && $verification['verification_status'] === 'verified') ? '✓' : '3'; ?></div>
-                                        <div class="checklist-content">
-                                            <div class="checklist-title"><?php esc_html_e('Identity verification', 'gms'); ?></div>
-                                            <div class="checklist-description"><?php esc_html_e('Verify your identity with a government ID and quick selfie for security.', 'gms'); ?></div>
-                                        </div>
-                                    </div>
                                 </div>
                             </div>
                         </details>
@@ -1004,34 +990,6 @@ class GMS_Guest_Portal {
                             </section>
                         <?php endif; ?>
 
-                        <details class="portal-card portal-accordion requires-contact-info <?php echo $contact_info_complete ? '' : 'hidden'; ?>" <?php echo ($verification && $verification['verification_status'] === 'verified') ? '' : 'open'; ?>>
-                            <summary>
-                                <span class="portal-card__icon" aria-hidden="true">🆔</span>
-                                <span class="portal-card__title"><?php esc_html_e('Identity verification', 'gms'); ?></span>
-                                <span class="portal-card__chevron" aria-hidden="true">▾</span>
-                            </summary>
-                            <div class="portal-card__body" id="verification-section" <?php echo (!$agreement || $agreement['status'] !== 'signed') ? 'style="display: none;"' : ''; ?>>
-                                <p class="text-muted"><?php esc_html_e('Please verify your identity by uploading a photo of your government-issued ID and a matching selfie. This keeps the property secure for everyone.', 'gms'); ?></p>
-                                <div id="verification-content">
-                                    <?php if ($verification && $verification['verification_status'] === 'verified'): ?>
-                                        <div class="success-message">✅ <?php esc_html_e('Identity verification completed successfully!', 'gms'); ?></div>
-                                    <?php elseif ($verification && $verification['verification_status'] === 'processing'): ?>
-                                        <div class="loading">
-                                            <div class="spinner"></div>
-                                            <p><?php esc_html_e('Verifying your identity...', 'gms'); ?></p>
-                                            <button id="check-verification" class="btn btn-secondary"><?php esc_html_e('Check status', 'gms'); ?></button>
-                                        </div>
-                                    <?php else: ?>
-                                        <div class="verification-help">
-                                            <p class="text-muted" style="margin-bottom: 0.75rem;"><?php esc_html_e('When you start, Stripe will guide you through capturing your ID and a quick selfie. Please make sure you\'re in a well-lit area.', 'gms'); ?></p>
-                                        </div>
-                                        <button id="start-verification" class="btn btn-primary"><?php esc_html_e('Start identity verification', 'gms'); ?></button>
-                                    <?php endif; ?>
-                                </div>
-                                <div id="verification-message"></div>
-                            </div>
-                        </details>
-
                         <a class="portal-card portal-card--link" href="https://240jordanview.com/handbook" target="_blank" rel="noopener noreferrer">
                             <span class="portal-card__icon" aria-hidden="true">📖</span>
                             <div>
@@ -1082,11 +1040,9 @@ class GMS_Guest_Portal {
                     </div>
                 </main>
             </div>
-            <script src="https://js.stripe.com/v3/"></script>
             <script>
                 // Initialize variables
                 let signaturePad = null;
-                let stripe = null;
                 let contactInfoComplete = <?php echo $contact_info_complete ? 'true' : 'false'; ?>;
                 let portalComplete = <?php echo $is_complete ? 'true' : 'false'; ?>;
                 let completionStatusReported = portalComplete;
@@ -1124,11 +1080,6 @@ class GMS_Guest_Portal {
                     updateLabel: contactButtonLabels.update,
                     missingConfig: contactMissingConfigMessage
                 };
-                
-                // Initialize Stripe
-                <?php if (get_option('gms_stripe_pk')): ?>
-                stripe = Stripe('<?php echo esc_js(get_option('gms_stripe_pk')); ?>');
-                <?php endif; ?>
                 
                 document.addEventListener('DOMContentLoaded', function() {
                     initializeSignaturePad();
@@ -1485,17 +1436,6 @@ class GMS_Guest_Portal {
                         submitBtn.addEventListener('click', submitAgreement);
                     }
                     
-                    // Start verification button
-                    const startVerificationBtn = document.getElementById('start-verification');
-                    if (startVerificationBtn) {
-                        startVerificationBtn.addEventListener('click', startIdentityVerification);
-                    }
-                    
-                    // Check verification button
-                    const checkVerificationBtn = document.getElementById('check-verification');
-                    if (checkVerificationBtn) {
-                        checkVerificationBtn.addEventListener('click', checkVerificationStatus);
-                    }
                 }
                 
                 function checkFormValidity() {
@@ -1538,90 +1478,6 @@ class GMS_Guest_Portal {
                     .catch(error => {
                         messageDiv.innerHTML = '<div class="error-message">❌ Network error occurred</div>';
                         submitBtn.disabled = false;
-                    });
-                }
-                
-                function startIdentityVerification() {
-                    if (!stripe) {
-                        document.getElementById('verification-message').innerHTML = 
-                            '<div class="error-message">❌ Identity verification is not configured</div>';
-                        return;
-                    }
-                    
-                    const messageDiv = document.getElementById('verification-message');
-                    const startBtn = document.getElementById('start-verification');
-                    
-                    startBtn.disabled = true;
-                    messageDiv.innerHTML = '<div class="loading"><div class="spinner"></div><p>Setting up identity verification...</p></div>';
-                    
-                    const formData = new FormData();
-                    formData.append('action', 'gms_create_verification_session');
-                    formData.append('reservation_id', reservationId);
-                    formData.append('nonce', guestNonce);
-
-                    fetch(ajaxUrl, {
-                        method: 'POST',
-                        body: formData
-                    })
-                    .then(response => response.json())
-                    .then(data => {
-                        if (data.success) {
-                            return stripe.verifyIdentity(data.data.client_secret);
-                        } else {
-                            throw new Error(data.data || 'Failed to create verification session');
-                        }
-                    })
-                    .then(result => {
-                        if (result.error) {
-                            throw new Error(result.error.message);
-                        } else {
-                            // Verification completed, check status
-                            checkVerificationStatus();
-                        }
-                    })
-                    .catch(error => {
-                        messageDiv.innerHTML = '<div class="error-message">❌ Error: ' + error.message + '</div>';
-                        startBtn.disabled = false;
-                    });
-                }
-                
-                function checkVerificationStatus() {
-                    const messageDiv = document.getElementById('verification-message');
-                    
-                    const formData = new FormData();
-                    formData.append('action', 'gms_check_verification_status');
-                    formData.append('reservation_id', reservationId);
-                    formData.append('nonce', guestNonce);
-
-                    fetch(ajaxUrl, {
-                        method: 'POST',
-                        body: formData
-                    })
-                    .then(response => response.json())
-                    .then(data => {
-                        if (data.success) {
-                            const status = data.data.status;
-                            if (status === 'verified') {
-                                document.getElementById('verification-content').innerHTML = 
-                                    '<div class="success-message">✅ Identity verification completed successfully!</div>';
-                                document.getElementById('verification-checklist').classList.add('completed');
-                                document.getElementById('verification-checklist').querySelector('.checklist-icon').textContent = '✓';
-                                updateProgress();
-                            } else if (status === 'requires_input') {
-                                messageDiv.innerHTML = '<div class="error-message">❌ Additional information required. Please try again.</div>';
-                                document.getElementById('verification-content').innerHTML = 
-                                    '<button id="start-verification" class="btn btn-primary">Retry Identity Verification</button>';
-                                setupEventListeners();
-                            } else {
-                                messageDiv.innerHTML = '<div class="loading"><div class="spinner"></div><p>Still processing...</p><button id="check-verification" class="btn btn-secondary">Check Again</button></div>';
-                                setupEventListeners();
-                            }
-                        } else {
-                            messageDiv.innerHTML = '<div class="error-message">❌ Error checking status: ' + (data.data || 'Unknown error') + '</div>';
-                        }
-                    })
-                    .catch(error => {
-                        messageDiv.innerHTML = '<div class="error-message">❌ Network error occurred</div>';
                     });
                 }
                 
@@ -2009,78 +1865,4 @@ class GMS_Guest_Portal {
         ));
     }
 
-    public function createVerificationSession() {
-        if (!wp_verify_nonce($_POST['nonce'], 'gms_guest_nonce')) {
-            wp_send_json_error('Security check failed');
-        }
-        
-        $reservation_id = intval($_POST['reservation_id']);
-        
-        $reservation = GMS_Database::getReservationById($reservation_id);
-        if (!$reservation) {
-            wp_send_json_error('Invalid reservation');
-        }
-
-        $contact_confirmed_at = isset($reservation['contact_info_confirmed_at'])
-            ? trim((string) $reservation['contact_info_confirmed_at'])
-            : '';
-        $contact_confirmed = $contact_confirmed_at !== ''
-            && $contact_confirmed_at !== '0000-00-00 00:00:00'
-            && self::getPortalTimestamp($contact_confirmed_at) !== false;
-
-        if (!$contact_confirmed) {
-            wp_send_json_error(__('Please confirm your contact information before starting verification.', 'gms'));
-        }
-
-        $stripe_integration = new GMS_Stripe_Integration();
-        $session = $stripe_integration->createVerificationSession($reservation);
-        
-        if ($session) {
-            // Save verification record
-            GMS_Database::createVerification(array(
-                'reservation_id' => $reservation_id,
-                'guest_id' => $reservation['guest_id'],
-                'stripe_session_id' => $session['id'],
-                'status' => 'processing'
-            ));
-            
-            wp_send_json_success(array(
-                'client_secret' => $session['client_secret']
-            ));
-        } else {
-            wp_send_json_error('Failed to create verification session');
-        }
-    }
-    
-    public function checkVerificationStatus() {
-        if (!wp_verify_nonce($_POST['nonce'], 'gms_guest_nonce')) {
-            wp_send_json_error('Security check failed');
-        }
-        
-        $reservation_id = intval($_POST['reservation_id']);
-        
-        $verification = GMS_Database::getVerificationByReservation($reservation_id);
-        if (!$verification) {
-            wp_send_json_error('No verification found');
-        }
-        
-        // Check status with Stripe
-        $stripe_integration = new GMS_Stripe_Integration();
-        $status = $stripe_integration->checkVerificationStatus($verification['stripe_verification_session_id']);
-        
-        if ($status) {
-            // Update database
-            GMS_Database::updateVerification($verification['stripe_verification_session_id'], array(
-                'status' => $status['status'],
-                'verification_data' => $status
-            ));
-            
-            wp_send_json_success(array(
-                'status' => $status['status'],
-                'last_error' => isset($status['last_error']) ? $status['last_error'] : null
-            ));
-        } else {
-            wp_send_json_error('Failed to check verification status');
-        }
-    }
 }

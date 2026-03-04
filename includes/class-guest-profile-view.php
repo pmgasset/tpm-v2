@@ -216,7 +216,7 @@ class GMS_Guest_Profile_View {
         }
 
         if ($stored_url !== '') {
-            return array('src' => $stored_url, 'mime' => '', 'note' => __('Stored from Stripe verification', 'guest-management-system'));
+            return array('src' => $stored_url, 'mime' => '', 'note' => __('Stored profile photo', 'guest-management-system'));
         }
 
         if (!is_array($verification)) {
@@ -226,7 +226,7 @@ class GMS_Guest_Profile_View {
         $relative_path = isset($verification['selfie_path']) ? trim((string) $verification['selfie_path']) : '';
         $mime = isset($verification['selfie_mime']) ? sanitize_mime_type($verification['selfie_mime']) : '';
 
-        if ($relative_path !== '' && strpos($relative_path, 'stripe-file:') !== 0) {
+        if ($relative_path !== '') {
             $upload_dir = wp_upload_dir();
             if (empty($upload_dir['error'])) {
                 $baseurl = trailingslashit($upload_dir['baseurl']);
@@ -235,14 +235,6 @@ class GMS_Guest_Profile_View {
                     return array('src' => $src, 'mime' => $mime, 'note' => __('Retrieved from secure uploads', 'guest-management-system'));
                 }
             }
-        }
-
-        if (!empty($verification['selfie_file_id'])) {
-            return array(
-                'src' => '',
-                'mime' => '',
-                'note' => __('Selfie stored securely with Stripe. Request access from the property manager if needed.', 'guest-management-system'),
-            );
         }
 
         return array('src' => '', 'mime' => '', 'note' => '');
