@@ -13,6 +13,10 @@ class GMS_Guest_Portal {
         add_action('wp_ajax_nopriv_gms_submit_agreement', array($this, 'submitAgreement'));
         add_action('wp_ajax_gms_update_contact_info', array($this, 'updateContactInfo'));
         add_action('wp_ajax_nopriv_gms_update_contact_info', array($this, 'updateContactInfo'));
+        add_action('wp_ajax_gms_confirm_stay_details', array($this, 'confirmStayDetails'));
+        add_action('wp_ajax_nopriv_gms_confirm_stay_details', array($this, 'confirmStayDetails'));
+        add_action('wp_ajax_gms_request_stay_change', array($this, 'requestStayChange'));
+        add_action('wp_ajax_nopriv_gms_request_stay_change', array($this, 'requestStayChange'));
     }
     
     public static function displayPortal($token) {
@@ -76,6 +80,14 @@ class GMS_Guest_Portal {
         $contact_info_confirmed = $contact_info_confirmed_at !== ''
             && $contact_info_confirmed_at !== '0000-00-00 00:00:00'
             && self::getPortalTimestamp($contact_info_confirmed_at) !== false;
+
+        $stay_details_confirmed_at = isset($reservation['stay_details_confirmed_at'])
+            ? trim((string) $reservation['stay_details_confirmed_at'])
+            : '';
+
+        $stay_details_confirmed = $stay_details_confirmed_at !== ''
+            && $stay_details_confirmed_at !== '0000-00-00 00:00:00'
+            && self::getPortalTimestamp($stay_details_confirmed_at) !== false;
 
         $contact_full_name = trim($contact_first_name . ' ' . $contact_last_name);
 
@@ -409,6 +421,41 @@ class GMS_Guest_Portal {
                     font-size: 1.15rem;
                     font-weight: 600;
                     color: #0f172a;
+                }
+
+                .stay-confirm-status {
+                    margin-top: 1.25rem;
+                    padding-top: 1rem;
+                    border-top: 1px solid #e2e8f0;
+                }
+
+                .stay-confirm-badge {
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 0.35rem;
+                    color: #16a34a;
+                    font-weight: 600;
+                    font-size: 0.95rem;
+                    margin-right: 1rem;
+                }
+
+                .btn-sm {
+                    padding: 0.45rem 1.1rem;
+                    font-size: 0.875rem;
+                }
+
+                .btn-link {
+                    background: none;
+                    border: none;
+                    color: var(--portal-primary);
+                    cursor: pointer;
+                    font-size: 0.875rem;
+                    padding: 0;
+                    text-decoration: underline;
+                }
+
+                .btn-link:hover {
+                    opacity: 0.8;
                 }
 
                 .progress-bar {
@@ -898,6 +945,48 @@ class GMS_Guest_Portal {
                                         <div class="detail-value"><?php echo esc_html($reservation['booking_reference']); ?></div>
                                     </div>
                                 </div>
+
+                                <?php if ($stay_details_confirmed): ?>
+                                <div class="stay-confirm-status confirmed" id="stay-details-status">
+                                    <span class="stay-confirm-badge">&#10003; <?php esc_html_e('Stay details confirmed', 'gms'); ?></span>
+                                    <button type="button" class="btn-link" id="stay-request-change-toggle"><?php esc_html_e('Request a change', 'gms'); ?></button>
+                                </div>
+                                <?php else: ?>
+                                <div class="stay-confirm-status" id="stay-details-status">
+                                    <p class="text-muted" style="margin-bottom:0.75rem;"><?php esc_html_e('Please review your stay dates and times above, then confirm everything looks correct.', 'gms'); ?></p>
+                                    <div style="display:flex;gap:0.75rem;flex-wrap:wrap;align-items:center;">
+                                        <button type="button" class="btn btn-primary btn-sm" id="confirm-stay-details"><?php esc_html_e('Confirm details', 'gms'); ?></button>
+                                        <button type="button" class="btn-link" id="stay-request-change-toggle"><?php esc_html_e('Request a change instead', 'gms'); ?></button>
+                                    </div>
+                                    <div id="stay-confirm-message" style="margin-top:0.5rem;"></div>
+                                </div>
+                                <?php endif; ?>
+
+                                <div class="stay-change-form hidden" id="stay-change-form">
+                                    <hr style="margin:1rem 0;border:none;border-top:1px solid #e2e8f0;">
+                                    <p class="text-muted" style="margin-bottom:0.75rem;font-size:0.875rem;">
+                                        <?php esc_html_e('Use this form to request updated check-in or check-out times. Changes are not guaranteed until you receive written confirmation from us. Modifications may result in additional charges that must be paid prior to arrival.', 'gms'); ?>
+                                    </p>
+                                    <div class="form-grid" style="margin-bottom:0.75rem;">
+                                        <div class="form-group">
+                                            <label for="requested-checkin"><?php esc_html_e('Requested check-in', 'gms'); ?></label>
+                                            <input type="datetime-local" id="requested-checkin" name="requested_checkin">
+                                        </div>
+                                        <div class="form-group">
+                                            <label for="requested-checkout"><?php esc_html_e('Requested check-out', 'gms'); ?></label>
+                                            <input type="datetime-local" id="requested-checkout" name="requested_checkout">
+                                        </div>
+                                        <div class="form-group" style="grid-column:1/-1;">
+                                            <label for="change-request-notes"><?php esc_html_e('Additional notes (optional)', 'gms'); ?></label>
+                                            <textarea id="change-request-notes" name="notes" rows="3" style="width:100%;resize:vertical;"></textarea>
+                                        </div>
+                                    </div>
+                                    <div style="display:flex;gap:0.75rem;flex-wrap:wrap;align-items:center;">
+                                        <button type="button" class="btn btn-primary btn-sm" id="submit-stay-change"><?php esc_html_e('Submit request', 'gms'); ?></button>
+                                        <button type="button" class="btn-link" id="stay-change-cancel"><?php esc_html_e('Cancel', 'gms'); ?></button>
+                                    </div>
+                                    <div id="stay-change-message" style="margin-top:0.5rem;"></div>
+                                </div>
                             </div>
                         </details>
 
@@ -1044,6 +1133,7 @@ class GMS_Guest_Portal {
                 // Initialize variables
                 let signaturePad = null;
                 let contactInfoComplete = <?php echo $contact_info_complete ? 'true' : 'false'; ?>;
+                let stayDetailsConfirmed = <?php echo $stay_details_confirmed ? 'true' : 'false'; ?>;
                 let portalComplete = <?php echo $is_complete ? 'true' : 'false'; ?>;
                 let completionStatusReported = portalComplete;
                 const reservationId = <?php echo intval($reservation['id']); ?>;
@@ -1421,7 +1511,7 @@ class GMS_Guest_Portal {
                     if (checkbox) {
                         checkbox.addEventListener('change', checkFormValidity);
                     }
-                    
+
                     // Clear signature button
                     const clearBtn = document.getElementById('clear-signature');
                     if (clearBtn) {
@@ -1429,13 +1519,46 @@ class GMS_Guest_Portal {
                             signaturePad.clear();
                         });
                     }
-                    
+
                     // Submit agreement button
                     const submitBtn = document.getElementById('submit-agreement');
                     if (submitBtn) {
                         submitBtn.addEventListener('click', submitAgreement);
                     }
-                    
+
+                    // Confirm stay details button
+                    const confirmStayBtn = document.getElementById('confirm-stay-details');
+                    if (confirmStayBtn) {
+                        confirmStayBtn.addEventListener('click', handleConfirmStayDetails);
+                    }
+
+                    // Toggle request-change form
+                    const changeToggle = document.getElementById('stay-request-change-toggle');
+                    if (changeToggle) {
+                        changeToggle.addEventListener('click', function() {
+                            const form = document.getElementById('stay-change-form');
+                            if (form) {
+                                form.classList.toggle('hidden');
+                            }
+                        });
+                    }
+
+                    // Cancel change request
+                    const changeCancel = document.getElementById('stay-change-cancel');
+                    if (changeCancel) {
+                        changeCancel.addEventListener('click', function() {
+                            const form = document.getElementById('stay-change-form');
+                            if (form) {
+                                form.classList.add('hidden');
+                            }
+                        });
+                    }
+
+                    // Submit change request
+                    const submitChangeBtn = document.getElementById('submit-stay-change');
+                    if (submitChangeBtn) {
+                        submitChangeBtn.addEventListener('click', handleRequestStayChange);
+                    }
                 }
                 
                 function checkFormValidity() {
@@ -1481,6 +1604,85 @@ class GMS_Guest_Portal {
                     });
                 }
                 
+                function handleConfirmStayDetails() {
+                    const btn = document.getElementById('confirm-stay-details');
+                    const messageDiv = document.getElementById('stay-confirm-message');
+                    if (btn) { btn.disabled = true; btn.textContent = '<?php echo esc_js(__('Confirming…', 'gms')); ?>'; }
+
+                    const formData = new FormData();
+                    formData.append('action', 'gms_confirm_stay_details');
+                    formData.append('reservation_id', reservationId);
+                    formData.append('nonce', guestNonce);
+
+                    fetch(ajaxUrl, { method: 'POST', body: formData })
+                        .then(r => r.json())
+                        .then(data => {
+                            if (data.success) {
+                                stayDetailsConfirmed = true;
+                                const statusDiv = document.getElementById('stay-details-status');
+                                if (statusDiv) {
+                                    statusDiv.innerHTML = '<span class="stay-confirm-badge">&#10003; <?php echo esc_js(__('Stay details confirmed', 'gms')); ?></span>'
+                                        + ' <button type="button" class="btn-link" id="stay-request-change-toggle"><?php echo esc_js(__('Request a change', 'gms')); ?></button>';
+                                    const newToggle = statusDiv.querySelector('#stay-request-change-toggle');
+                                    if (newToggle) {
+                                        newToggle.addEventListener('click', function() {
+                                            const form = document.getElementById('stay-change-form');
+                                            if (form) { form.classList.toggle('hidden'); }
+                                        });
+                                    }
+                                }
+                            } else {
+                                if (messageDiv) { messageDiv.innerHTML = '<div class="error-message">&#10060; ' + (data.data || '<?php echo esc_js(__('Unable to confirm. Please try again.', 'gms')); ?>') + '</div>'; }
+                                if (btn) { btn.disabled = false; btn.textContent = '<?php echo esc_js(__('Confirm details', 'gms')); ?>'; }
+                            }
+                        })
+                        .catch(() => {
+                            if (messageDiv) { messageDiv.innerHTML = '<div class="error-message">&#10060; <?php echo esc_js(__('Network error. Please try again.', 'gms')); ?></div>'; }
+                            if (btn) { btn.disabled = false; btn.textContent = '<?php echo esc_js(__('Confirm details', 'gms')); ?>'; }
+                        });
+                }
+
+                function handleRequestStayChange() {
+                    const btn = document.getElementById('submit-stay-change');
+                    const messageDiv = document.getElementById('stay-change-message');
+                    const checkinVal  = (document.getElementById('requested-checkin')  || {}).value || '';
+                    const checkoutVal = (document.getElementById('requested-checkout') || {}).value || '';
+                    const notesVal    = (document.getElementById('change-request-notes') || {}).value || '';
+
+                    if (!checkinVal && !checkoutVal && !notesVal.trim()) {
+                        if (messageDiv) { messageDiv.innerHTML = '<div class="error-message"><?php echo esc_js(__('Please enter the dates, times, or details you would like changed.', 'gms')); ?></div>'; }
+                        return;
+                    }
+
+                    if (btn) { btn.disabled = true; btn.textContent = '<?php echo esc_js(__('Sending…', 'gms')); ?>'; }
+
+                    const formData = new FormData();
+                    formData.append('action', 'gms_request_stay_change');
+                    formData.append('reservation_id', reservationId);
+                    formData.append('nonce', guestNonce);
+                    formData.append('requested_checkin', checkinVal);
+                    formData.append('requested_checkout', checkoutVal);
+                    formData.append('notes', notesVal);
+
+                    fetch(ajaxUrl, { method: 'POST', body: formData })
+                        .then(r => r.json())
+                        .then(data => {
+                            if (data.success) {
+                                const form = document.getElementById('stay-change-form');
+                                if (form) {
+                                    form.innerHTML = '<p class="success-message" style="padding:0.75rem 0;">&#10003; ' + (data.data.message || '<?php echo esc_js(__('Request sent.', 'gms')); ?>') + '</p>';
+                                }
+                            } else {
+                                if (messageDiv) { messageDiv.innerHTML = '<div class="error-message">&#10060; ' + (data.data || '<?php echo esc_js(__('Unable to send request. Please try again.', 'gms')); ?>') + '</div>'; }
+                                if (btn) { btn.disabled = false; btn.textContent = '<?php echo esc_js(__('Submit request', 'gms')); ?>'; }
+                            }
+                        })
+                        .catch(() => {
+                            if (messageDiv) { messageDiv.innerHTML = '<div class="error-message">&#10060; <?php echo esc_js(__('Network error. Please try again.', 'gms')); ?></div>'; }
+                            if (btn) { btn.disabled = false; btn.textContent = '<?php echo esc_js(__('Submit request', 'gms')); ?>'; }
+                        });
+                }
+
                 function updateProgress() {
                     const completedItems = document.querySelectorAll('.checklist-item.completed').length;
                     const totalItems = document.querySelectorAll('.checklist-item').length;
@@ -1862,6 +2064,125 @@ class GMS_Guest_Portal {
             'display_phone' => $display_phone,
             'agreement_html' => $agreement_html,
             'contact_info_confirmed_at' => $confirmed_at,
+        ));
+    }
+
+    public function confirmStayDetails() {
+        $nonce = isset($_POST['nonce']) ? sanitize_text_field(wp_unslash($_POST['nonce'])) : '';
+        if (!wp_verify_nonce($nonce, 'gms_guest_nonce')) {
+            wp_send_json_error(__('Security check failed.', 'gms'));
+        }
+
+        $reservation_id = isset($_POST['reservation_id']) ? intval($_POST['reservation_id']) : 0;
+        if ($reservation_id <= 0) {
+            wp_send_json_error(__('Invalid reservation.', 'gms'));
+        }
+
+        $reservation = GMS_Database::getReservationById($reservation_id);
+        if (!$reservation) {
+            wp_send_json_error(__('Invalid reservation.', 'gms'));
+        }
+
+        $confirmed_at = current_time('mysql');
+
+        $updated = GMS_Database::updateReservation($reservation_id, array(
+            'stay_details_confirmed_at' => $confirmed_at,
+        ));
+
+        if ($updated === false) {
+            wp_send_json_error(__('Unable to save confirmation. Please try again.', 'gms'));
+        }
+
+        wp_send_json_success(array(
+            'stay_details_confirmed_at' => $confirmed_at,
+        ));
+    }
+
+    public function requestStayChange() {
+        $nonce = isset($_POST['nonce']) ? sanitize_text_field(wp_unslash($_POST['nonce'])) : '';
+        if (!wp_verify_nonce($nonce, 'gms_guest_nonce')) {
+            wp_send_json_error(__('Security check failed.', 'gms'));
+        }
+
+        $reservation_id = isset($_POST['reservation_id']) ? intval($_POST['reservation_id']) : 0;
+        if ($reservation_id <= 0) {
+            wp_send_json_error(__('Invalid reservation.', 'gms'));
+        }
+
+        $reservation = GMS_Database::getReservationById($reservation_id);
+        if (!$reservation) {
+            wp_send_json_error(__('Invalid reservation.', 'gms'));
+        }
+
+        $requested_checkin  = sanitize_text_field(trim(wp_unslash($_POST['requested_checkin'] ?? '')));
+        $requested_checkout = sanitize_text_field(trim(wp_unslash($_POST['requested_checkout'] ?? '')));
+        $notes              = sanitize_textarea_field(trim(wp_unslash($_POST['notes'] ?? '')));
+
+        if ($requested_checkin === '' && $requested_checkout === '' && $notes === '') {
+            wp_send_json_error(__('Please provide the dates, times, or details you would like changed.', 'gms'));
+        }
+
+        // Log the change request as an outbound note in communications.
+        $log_message = 'Stay change request submitted by guest.';
+        if ($requested_checkin !== '') {
+            $log_message .= ' Requested check-in: ' . $requested_checkin . '.';
+        }
+        if ($requested_checkout !== '') {
+            $log_message .= ' Requested check-out: ' . $requested_checkout . '.';
+        }
+        if ($notes !== '') {
+            $log_message .= ' Notes: ' . $notes;
+        }
+
+        GMS_Database::logCommunication(array(
+            'reservation_id' => $reservation_id,
+            'guest_id'       => intval($reservation['guest_id'] ?? 0),
+            'type'           => 'note',
+            'recipient'      => '',
+            'message'        => $log_message,
+            'status'         => 'sent',
+            'channel'        => 'note',
+            'direction'      => 'inbound',
+        ));
+
+        // Send admin notification email.
+        $admin_email = sanitize_email(get_option('gms_notification_email', get_option('admin_email', '')));
+        if ($admin_email !== '' && is_email($admin_email)) {
+            $company_name = get_option('gms_company_name', get_option('blogname'));
+            $subject = sprintf(
+                '[%s] Stay change request — %s',
+                $company_name,
+                $reservation['booking_reference']
+            );
+
+            $portal_timezone = self::getPortalTimezone();
+            $checkin_ts  = self::getPortalTimestamp($reservation['checkin_date'] ?? '');
+            $checkout_ts = self::getPortalTimestamp($reservation['checkout_date'] ?? '');
+            $current_checkin  = $checkin_ts  ? wp_date('M j, Y g:i A', $checkin_ts, $portal_timezone)  : __('not set', 'gms');
+            $current_checkout = $checkout_ts ? wp_date('M j, Y g:i A', $checkout_ts, $portal_timezone) : __('not set', 'gms');
+
+            $body  = "A guest has submitted a stay change request.\n\n";
+            $body .= "Guest: {$reservation['guest_name']}\n";
+            $body .= "Property: {$reservation['property_name']}\n";
+            $body .= "Booking Reference: {$reservation['booking_reference']}\n\n";
+            $body .= "Current check-in:  {$current_checkin}\n";
+            $body .= "Current check-out: {$current_checkout}\n\n";
+            if ($requested_checkin !== '') {
+                $body .= "Requested check-in:  {$requested_checkin}\n";
+            }
+            if ($requested_checkout !== '') {
+                $body .= "Requested check-out: {$requested_checkout}\n";
+            }
+            if ($notes !== '') {
+                $body .= "\nAdditional notes:\n{$notes}\n";
+            }
+            $body .= "\nPlease review and contact the guest to confirm any changes.";
+
+            wp_mail($admin_email, $subject, $body);
+        }
+
+        wp_send_json_success(array(
+            'message' => __('Your change request has been received. We will contact you to confirm any modifications.', 'gms'),
         ));
     }
 

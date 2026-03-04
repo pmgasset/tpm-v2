@@ -12,7 +12,7 @@ if (!defined('ABSPATH')) {
 class GMS_Database {
 
     const GUEST_PLACEHOLDER_DOMAIN = 'guest.invalid';
-    const DB_VERSION = '1.7.0';
+    const DB_VERSION = '1.8.0';
     const OPTION_DB_VERSION = 'gms_db_version';
 
     public static function getConversationalChannels() {
@@ -65,6 +65,7 @@ class GMS_Database {
             guest_email varchar(255) NOT NULL DEFAULT '',
             guest_phone varchar(50) NOT NULL DEFAULT '',
             contact_info_confirmed_at datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
+            stay_details_confirmed_at datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
             property_id varchar(100) NOT NULL DEFAULT '',
             property_name varchar(255) NOT NULL DEFAULT '',
             booking_reference varchar(191) NOT NULL DEFAULT '',
@@ -435,6 +436,7 @@ class GMS_Database {
         self::maybeAddHousekeeperTokenColumn($installed);
         self::maybeCreateHousekeeperTables($installed);
         self::maybeCreateHousekeeperContactsTable($installed);
+        self::maybeAddStayDetailsColumn($installed);
         self::maybeSeedMessageTemplates();
         self::recalculateAllCommunicationContexts();
 
@@ -518,6 +520,28 @@ class GMS_Database {
         }
 
         self::backfillHousekeeperTokens($table_name);
+    }
+
+    private static function maybeAddStayDetailsColumn($previous_version) {
+        global $wpdb;
+
+        if (!empty($previous_version) && version_compare($previous_version, '1.8.0', '>=')) {
+            return;
+        }
+
+        $table_name = $wpdb->prefix . 'gms_reservations';
+
+        if (!self::tableExists($table_name)) {
+            return;
+        }
+
+        $columns = self::getTableColumns($table_name);
+
+        if (!isset($columns['stay_details_confirmed_at'])) {
+            $wpdb->query(
+                "ALTER TABLE {$table_name} ADD stay_details_confirmed_at datetime NOT NULL DEFAULT '0000-00-00 00:00:00' AFTER contact_info_confirmed_at"
+            );
+        }
     }
 
     private static function maybeCreateHousekeeperTables($previous_version) {
