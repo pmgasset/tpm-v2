@@ -115,6 +115,22 @@ class GMS_Agreement_Handler {
             $agreement_text = get_option('gms_agreement_template', '');
         }
 
+        // Replace template variables with actual reservation data.
+        $company_name = get_option('gms_company_name', get_option('blogname'));
+        $replacements = array(
+            '{guest_name}'        => $reservation['guest_name'] ?? '',
+            '{guest_email}'       => $reservation['guest_email'] ?? '',
+            '{guest_phone}'       => $reservation['guest_phone'] ?? '',
+            '{property_name}'     => $reservation['property_name'] ?? '',
+            '{booking_reference}' => $reservation['booking_reference'] ?? '',
+            '{checkin_date}'      => !empty($reservation['checkin_date'])  ? date('F j, Y', strtotime($reservation['checkin_date']))  : '',
+            '{checkout_date}'     => !empty($reservation['checkout_date']) ? date('F j, Y', strtotime($reservation['checkout_date'])) : '',
+            '{checkin_time}'      => !empty($reservation['checkin_date'])  ? date('g:i A', strtotime($reservation['checkin_date']))   : '',
+            '{checkout_time}'     => !empty($reservation['checkout_date']) ? date('g:i A', strtotime($reservation['checkout_date'])) : '',
+            '{company_name}'      => $company_name,
+        );
+        $agreement_text = str_replace(array_keys($replacements), array_values($replacements), $agreement_text);
+
         $pdf->Write(0, 'Guest Agreement', '', 0, 'C', true, 0, false, false, 0);
         $pdf->Ln(5);
         $pdf->MultiCell(0, 10, wp_strip_all_tags($agreement_text));
