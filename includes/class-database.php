@@ -12,7 +12,7 @@ if (!defined('ABSPATH')) {
 class GMS_Database {
 
     const GUEST_PLACEHOLDER_DOMAIN = 'guest.invalid';
-    const DB_VERSION = '1.8.0';
+    const DB_VERSION = '1.9.0';
     const OPTION_DB_VERSION = 'gms_db_version';
 
     public static function getConversationalChannels() {
@@ -437,6 +437,7 @@ class GMS_Database {
         self::maybeCreateHousekeeperTables($installed);
         self::maybeCreateHousekeeperContactsTable($installed);
         self::maybeAddStayDetailsColumn($installed);
+        self::maybeRegroupCommunicationThreads($installed);
         self::maybeSeedMessageTemplates();
         self::recalculateAllCommunicationContexts();
 
@@ -542,6 +543,27 @@ class GMS_Database {
                 "ALTER TABLE {$table_name} ADD stay_details_confirmed_at datetime NOT NULL DEFAULT '0000-00-00 00:00:00' AFTER contact_info_confirmed_at"
             );
         }
+    }
+
+    private static function maybeRegroupCommunicationThreads($previous_version) {
+        // Thread keys generated before 1.9.0 included reservation_id and guest_id,
+        // causing the same guest to appear as multiple threads. From 1.9.0 onward,
+        // keys use only channel + phone number pair. The full recalculation that runs
+        // after this method will rewrite all thread_key values with the new schema.
+        // This method is intentionally a no-op beyond version-gating so the
+        // recalculation only runs once during the upgrade.
+        if (!empty($previous_version) && version_compare($previous_version, '1.9.0', '>=')) {
+            return;
+        }
+
+        $table = $GLOBALS['wpdb']->prefix . 'gms_communications';
+        if (!self::tableExists($table)) {
+            return;
+        }
+
+        // Reset all thread_keys so recalculateAllCommunicationContexts regenerates
+        // them from scratch using the new phone-number-only schema.
+        $GLOBALS['wpdb']->query("UPDATE {$table} SET thread_key = ''");
     }
 
     private static function maybeCreateHousekeeperTables($previous_version) {
@@ -4708,16 +4730,9 @@ class GMS_Database {
             $parts[] = 'channel:' . $channel;
         }
 
-        $reservation_id = intval($reservation_id);
-        if ($reservation_id > 0) {
-            $parts[] = 'reservation:' . $reservation_id;
-        }
-
-        $guest_id = intval($guest_id);
-        if ($guest_id > 0) {
-            $parts[] = 'guest:' . $guest_id;
-        }
-
+        // Thread key is based on phone number pair only so all messages with a guest
+        // are grouped into a single conversation regardless of which reservation they
+        // are linked to. reservation_id and guest_id are intentionally excluded here.
         $numbers = array_filter(array($from_number_e164, $to_number_e164));
         if (!empty($numbers)) {
             sort($numbers);

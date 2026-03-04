@@ -630,7 +630,39 @@
                 return;
             }
 
+            var lastDateLabel = null;
             messages.forEach(function(message) {
+                // Date separator
+                var sentAt = message.sent_at ? message.sent_at.replace(' ', 'T') : '';
+                if (sentAt) {
+                    var msgDate = new Date(sentAt);
+                    var dateLabel = '';
+                    if (!Number.isNaN(msgDate.getTime())) {
+                        var now = new Date();
+                        var today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+                        var yesterday = new Date(today.getTime() - 86400000);
+                        var msgDay = new Date(msgDate.getFullYear(), msgDate.getMonth(), msgDate.getDate());
+                        if (msgDay.getTime() === today.getTime()) {
+                            dateLabel = strings.dateToday || 'Today';
+                        } else if (msgDay.getTime() === yesterday.getTime()) {
+                            dateLabel = strings.dateYesterday || 'Yesterday';
+                        } else {
+                            try {
+                                dateLabel = new Intl.DateTimeFormat(config.locale || undefined, { dateStyle: 'long' }).format(msgDate);
+                            } catch (e) {
+                                dateLabel = (msgDate.getMonth() + 1) + '/' + msgDate.getDate() + '/' + msgDate.getFullYear();
+                            }
+                        }
+                    }
+                    if (dateLabel && dateLabel !== lastDateLabel) {
+                        var sep = document.createElement('div');
+                        sep.className = 'gms-message-date-sep';
+                        sep.textContent = dateLabel;
+                        messagesList.appendChild(sep);
+                        lastDateLabel = dateLabel;
+                    }
+                }
+
                 var bubble = document.createElement('article');
                 bubble.className = 'gms-message gms-message--' + (message.direction === 'inbound' ? 'inbound' : 'outbound');
                 if (message.pending) {

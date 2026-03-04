@@ -141,7 +141,7 @@ class GMS_AJAX_Handler {
         }
 
         wp_send_json_success(array(
-            'messages' => $messages,
+            'messages' => isset($messages['items']) ? $messages['items'] : array(),
             'thread' => $context,
         ));
     }
