@@ -213,8 +213,18 @@ class GuestManagementSystem {
         return $vars;
     }
 
-    public function handleGuestPortal() {
+    private function isWifiPortalRequest() {
         if (get_query_var('gms_wifi_portal')) {
+            return true;
+        }
+        $path = isset($_SERVER['REQUEST_URI'])
+            ? parse_url(wp_unslash($_SERVER['REQUEST_URI']), PHP_URL_PATH)
+            : '';
+        return $path !== false && preg_match('#^/?wifi-portal/?$#i', ltrim((string) $path, '/'));
+    }
+
+    public function handleGuestPortal() {
+        if ($this->isWifiPortalRequest()) {
             $this->handleWifiPortalRedirect();
             return;
         }
@@ -360,7 +370,7 @@ class GuestManagementSystem {
     }
 
     public function preHandlePortal404($preempt, $wp_query) {
-        if (get_query_var('gms_wifi_portal')) {
+        if ($this->isWifiPortalRequest()) {
             add_filter('redirect_canonical', '__return_false', 10, 2);
             if (function_exists('status_header')) {
                 status_header(200);
