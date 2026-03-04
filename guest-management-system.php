@@ -190,6 +190,12 @@ class GuestManagementSystem {
             'index.php?gms_staff_overview=1&gms_staff_token=$matches[1]',
             'top'
         );
+
+        add_rewrite_rule(
+            '^wifi-portal/?$',
+            'index.php?gms_wifi_portal=1',
+            'top'
+        );
     }
 
     public function addQueryVars($vars) {
@@ -201,10 +207,18 @@ class GuestManagementSystem {
         $vars[] = 'gms_housekeeper_token';
         $vars[] = 'gms_staff_overview';
         $vars[] = 'gms_staff_token';
+        $vars[] = 'gms_wifi_portal';
+        $vars[] = 'gms_wifi_property_id';
+        $vars[] = 'gms_wifi_property_name';
         return $vars;
     }
 
     public function handleGuestPortal() {
+        if (get_query_var('gms_wifi_portal')) {
+            $this->handleWifiPortalRedirect();
+            return;
+        }
+
         $portal_context = $this->resolvePortalRequest();
 
         if ($portal_context['is_portal']) {
@@ -276,7 +290,84 @@ class GuestManagementSystem {
         exit;
     }
 
+    private function handleWifiPortalRedirect() {
+        $filters = array();
+
+        $property_id = get_query_var('gms_wifi_property_id');
+        if ($property_id === '') {
+            $property_id = sanitize_text_field((string) ($_GET['property_id'] ?? ''));
+        }
+        if ($property_id !== '') {
+            $filters['property_id'] = $property_id;
+        }
+
+        $property_name = get_query_var('gms_wifi_property_name');
+        if ($property_name === '') {
+            $property_name = sanitize_text_field((string) ($_GET['property_name'] ?? ''));
+        }
+        if ($property_name !== '') {
+            $filters['property_name'] = $property_name;
+        }
+
+        $reservation = GMS_Database::getActiveReservationForProperty($filters);
+
+        if ($reservation && !empty($reservation['portal_token'])) {
+            $portal_url = gms_build_portal_url($reservation['portal_token']);
+            if ($portal_url) {
+                nocache_headers();
+                wp_redirect($portal_url, 302);
+                exit;
+            }
+        }
+
+        // No active reservation — show a friendly holding page.
+        nocache_headers();
+        status_header(200);
+        $company_name = get_option('gms_company_name', get_bloginfo('name'));
+        $logo_url     = get_option('gms_company_logo', '');
+        $primary      = get_option('gms_portal_primary_color', '#0073aa');
+        ?><!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title><?php echo esc_html($company_name); ?> &mdash; Welcome</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f5f5f5;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px}
+  .card{background:#fff;border-radius:12px;box-shadow:0 4px 24px rgba(0,0,0,.1);max-width:440px;width:100%;padding:40px 32px;text-align:center}
+  .logo{max-height:72px;margin-bottom:24px}
+  h1{font-size:1.5rem;color:#1a1a1a;margin-bottom:8px}
+  p{color:#555;line-height:1.6;margin-bottom:0}
+  .badge{display:inline-block;margin-top:28px;padding:10px 22px;background:<?php echo esc_attr($primary); ?>;color:#fff;border-radius:6px;font-size:.9rem}
+</style>
+</head>
+<body>
+<div class="card">
+  <?php if ($logo_url): ?>
+    <img src="<?php echo esc_url($logo_url); ?>" alt="<?php echo esc_attr($company_name); ?>" class="logo">
+  <?php else: ?>
+    <h1><?php echo esc_html($company_name); ?></h1>
+  <?php endif; ?>
+  <p>Welcome! You're connected to our WiFi network.</p>
+  <p style="margin-top:12px">If you have a reservation, please use the check-in link we sent to your email or the QR code provided in your unit.</p>
+  <span class="badge">You&rsquo;re online &mdash; enjoy your stay</span>
+</div>
+</body>
+</html>
+<?php
+        exit;
+    }
+
     public function preHandlePortal404($preempt, $wp_query) {
+        if (get_query_var('gms_wifi_portal')) {
+            add_filter('redirect_canonical', '__return_false', 10, 2);
+            if (function_exists('status_header')) {
+                status_header(200);
+            }
+            return false;
+        }
+
         $portal_context = $this->resolvePortalRequest();
 
         if ($portal_context['is_portal']) {
